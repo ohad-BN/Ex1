@@ -3,7 +3,7 @@
 **Course:** Introduction to Software Engineering (OOP / OOD) — Ex2: *Vibe Coding & Deep Designing: Web-based Teaching Tool*  
 **Institution:** Ariel University  
 **Instructor:** Prof. Boaz Ben-Moshe  
-**Author:** Ohad Ben Nun
+**Author:** Ohad Ben Nun Einav Shlomov
 
 ---
 
