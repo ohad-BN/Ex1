@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ClassPulse — Lecturer Sign-In &amp; Class Setup</title>
+  <style>
+    :root {
+      --bg: #0b1120;
+      --panel: #1e293b;
+      --border: #334155;
+      --text: #f8fafc;
+      --muted: #94a3b8;
+      --accent: #38bdf8;
+      --green: #22c55e;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: radial-gradient(circle at top right, #1e293b 0%, #0b1120 75%);
+      color: var(--text);
+      font-family: system-ui, -apple-system, sans-serif;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .container {
+      width: 100%;
+      max-width: 500px;
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 28px;
+      box-shadow: 0 18px 40px rgba(0, 0, 0, 0.4);
+      margin-bottom: 16px;
+    }
+    .badge {
+      display: inline-block;
+      padding: 4px 12px;
+      border-radius: 999px;
+      background: rgba(56, 189, 248, 0.16);
+      color: var(--accent);
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 10px;
+    }
+    h1 {
+      margin: 0 0 8px 0;
+      font-size: 24px;
+    }
+    p.sub {
+      color: var(--muted);
+      font-size: 14px;
+      margin: 0 0 20px 0;
+      line-height: 1.5;
+    }
+    label {
+      display: block;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+    input[type="text"], input[type="email"] {
+      width: 100%;
+      padding: 11px 12px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: #0f172a;
+      color: var(--text);
+      font-size: 14px;
+      margin-bottom: 14px;
+    }
+    button {
+      width: 100%;
+      padding: 13px;
+      border-radius: 10px;
+      border: none;
+      background: var(--accent);
+      color: #0f172a;
+      font-weight: 800;
+      font-size: 15px;
+      cursor: pointer;
+    }
+    .btn-green {
+      background: var(--green);
+      color: #052e16;
+    }
+    .step-indicator {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 18px;
+    }
+    .step-pill {
+      flex: 1;
+      text-align: center;
+      padding: 6px;
+      border-radius: 8px;
+      font-size: 11px;
+      font-weight: 700;
+      background: #0f172a;
+      color: var(--muted);
+      border: 1px solid var(--border);
+    }
+    .step-pill.active {
+      border-color: var(--accent);
+      color: var(--accent);
+      background: rgba(56, 189, 248, 0.12);
+    }
+    .err-msg {
+      display: none;
+      background: rgba(239, 68, 68, 0.18);
+      border: 1px solid #ef4444;
+      color: #fca5a5;
+      padding: 10px 12px;
+      border-radius: 10px;
+      font-size: 13px;
+      margin-bottom: 14px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="step-indicator">
+      <div id="pill-step-1" class="step-pill active">1. Lecturer Sign-In</div>
+      <div id="pill-step-2" class="step-pill">2. Create Class &amp; Lecture</div>
+      <div id="pill-step-3" class="step-pill">3. Live QR Dashboard</div>
+    </div>
+
+    <!-- STEP 1: LECTURER SIGN-IN -->
+    <div id="card-step-1" class="card">
+      <span class="badge">Teacher &amp; Lecturer Portal</span>
+      <h1>Lecturer Sign-In</h1>
+      <p class="sub">
+        Sign in with your name and university email to manage your school courses, create lectures, and launch 5-second rotating QR attendance.
+      </p>
+
+      <div id="login-error" class="err-msg"></div>
+
+      <label for="lec-name">Lecturer Full Name</label>
+      <input type="text" id="lec-name" value="{{ lecturer.full_name if lecturer else 'Prof. Boaz Ben-Moshe' }}" placeholder="e.g. Prof. Boaz Ben-Moshe" />
+
+      <label for="lec-email">University Email</label>
+      <input type="email" id="lec-email" value="{{ lecturer.email if lecturer else 'boaz@ariel.ac.il' }}" placeholder="e.g. boaz@ariel.ac.il" />
+
+      <label for="lec-dept">Department / Faculty</label>
+      <input type="text" id="lec-dept" value="{{ lecturer.department if lecturer else 'Computer Science' }}" placeholder="e.g. Computer Science" />
+
+      <button type="button" onclick="handleLecturerSignIn()">Sign In &amp; Continue &rarr;</button>
+
+      {% if lecturer %}
+      <div style="margin-top:12px; text-align:center;">
+        <a href="/teacher?course_id=1" style="color:var(--accent); font-size:13px; text-decoration:none;">
+          Already signed in as {{ lecturer.full_name }} — Go directly to Dashboard &rarr;
+        </a>
+      </div>
+      {% endif %}
+    </div>
+
+    <!-- STEP 2: CREATE CLASS (COURSE) & FIRST LECTURE -->
+    <div id="card-step-2" class="card" style="display:none;">
+      <span class="badge">Step 2 &bull; Class &amp; Lecture Setup</span>
+      <h1>Create a Class &amp; Lecture</h1>
+      <p class="sub">
+        Create a new school course and its first lecture session, or jump straight into your existing classes.
+      </p>
+
+      <div id="course-error" class="err-msg"></div>
+
+      <label for="setup-course-code">Course Code</label>
+      <input type="text" id="setup-course-code" placeholder="e.g. CS204 or SE101" value="CS204" />
+
+      <label for="setup-course-name">Course Name (Class Title)</label>
+      <input type="text" id="setup-course-name" placeholder="e.g. Object-Oriented Programming & SE" value="Object-Oriented Programming & SE" />
+
+      <label for="setup-lecture-title">First Lecture Title</label>
+      <input type="text" id="setup-lecture-title" placeholder="e.g. Lecture 1 — Architecture & Design" value="Lecture 1 — Architecture & Design" />
+
+      <button type="button" class="btn-green" onclick="handleCreateClassAndLecture()" style="margin-bottom:10px;">
+        Create Class &amp; Launch Live Lecture QR &rarr;
+      </button>
+
+      <button type="button" style="background:#334155; color:var(--text);" onclick="window.location.href='/teacher?course_id=1'">
+        Open Existing Classes in Workspace
+      </button>
+    </div>
+
+    <div style="text-align:center; font-size:13px; color:var(--muted);">
+      Are you a student? <a href="/student" style="color:var(--accent); text-decoration:none; font-weight:700;">Open Student App &rarr;</a>
+    </div>
+  </div>
+
+  <script>
+    async function handleLecturerSignIn() {
+      const errEl = document.getElementById("login-error");
+      errEl.style.display = "none";
+
+      const full_name = document.getElementById("lec-name").value.trim();
+      const email = document.getElementById("lec-email").value.trim();
+      const department = document.getElementById("lec-dept").value.trim() || "Computer Science";
+
+      if (!full_name || !email) {
+        errEl.textContent = "Please enter both your full name and email.";
+        errEl.style.display = "block";
+        return;
+      }
+
+      const res = await fetch("/api/teacher/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ full_name, email, department }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        errEl.textContent = data.error || "Sign-in failed.";
+        errEl.style.display = "block";
+        return;
+      }
+
+      // Advance to Step 2: Create a Class & Lecture
+      document.getElementById("card-step-1").style.display = "none";
+      document.getElementById("card-step-2").style.display = "block";
+      document.getElementById("pill-step-1").classList.remove("active");
+      document.getElementById("pill-step-2").classList.add("active");
+    }
+
+    async function handleCreateClassAndLecture() {
+      const errEl = document.getElementById("course-error");
+      errEl.style.display = "none";
+
+      const course_code = document.getElementById("setup-course-code").value.trim().toUpperCase();
+      const name = document.getElementById("setup-course-name").value.trim();
+      const initial_lecture_title = document.getElementById("setup-lecture-title").value.trim() || "Lecture 1";
+
+      if (!course_code || !name) {
+        errEl.textContent = "Please enter a Course Code and Course Name.";
+        errEl.style.display = "block";
+        return;
+      }
+
+      // 1. Create or fetch the Course
+      const res = await fetch("/api/courses", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ course_code, name, initial_lecture_title }),
+      });
+      const courseData = await res.json();
+      if (!res.ok) {
+        errEl.textContent = courseData.error || "Failed to create class.";
+        errEl.style.display = "block";
+        return;
+      }
+
+      // 2. Create the requested lecture session inside that course
+      const sessRes = await fetch(`/api/courses/${courseData.id}/sessions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: initial_lecture_title }),
+      });
+      const sessData = await sessRes.json();
+
+      document.getElementById("pill-step-2").classList.remove("active");
+      document.getElementById("pill-step-3").classList.add("active");
+
+      const targetSession = sessData.session_code || courseData.active_session_code || "";
+      window.location.href = `/teacher?course_id=${courseData.id}&session=${targetSession}`;
+    }
+  </script>
+</body>
+</html>

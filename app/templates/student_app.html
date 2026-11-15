@@ -1,0 +1,1015 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+  <title>ClassPulse — Student Classroom App</title>
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <style>
+    :root {
+      --bg: #0b1120;
+      --panel: #151f32;
+      --panel-elevated: #1e293b;
+      --border: #2d3d54;
+      --text: #f8fafc;
+      --muted: #94a3b8;
+      --accent: #38bdf8;
+      --green: #22c55e;
+      --amber: #f59e0b;
+      --purple: #a855f7;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      display: flex;
+      justify-content: center;
+      padding-bottom: 24px;
+    }
+    .app-shell {
+      width: 100%;
+      max-width: 600px;
+      padding: 10px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    /* Compact Sticky Top Bar (TopHat + Slido Inspired) */
+    header.top-bar {
+      position: sticky;
+      top: 6px;
+      z-index: 800;
+      background: rgba(21, 31, 50, 0.94);
+      backdrop-filter: blur(12px);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 9px 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+    }
+    .brand-col {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+    .brand-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      background: var(--green);
+      box-shadow: 0 0 10px var(--green);
+      flex-shrink: 0;
+    }
+    .brand-title {
+      font-size: 13px;
+      font-weight: 800;
+      color: var(--accent);
+      white-space: nowrap;
+    }
+    .identity-pill {
+      font-size: 11px;
+      color: #cbd5e1;
+      background: #0f172a;
+      border: 1px solid var(--border);
+      padding: 3px 8px;
+      border-radius: 999px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 210px;
+    }
+
+    /* Segmented 3-Mode Switcher (Live Class | Courses & Logs | AI Study Hub) */
+    .mode-tabs {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      background: #0f172a;
+      border: 1px solid var(--border);
+      border-radius: 11px;
+      padding: 3px;
+      gap: 4px;
+    }
+    .mode-tab {
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      padding: 8px 10px;
+      border-radius: 8px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      transition: all 0.15s ease;
+    }
+    .mode-tab.active {
+      background: var(--panel-elevated);
+      color: var(--text);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+    }
+    .live-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      background: var(--muted);
+    }
+    .live-dot.hot {
+      background: #ef4444;
+      box-shadow: 0 0 8px #ef4444;
+    }
+
+    /* Compact Session & Attendance Strip */
+    .session-strip {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 8px 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .pill {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 6px;
+      background: rgba(56, 189, 248, 0.15);
+      color: var(--accent);
+      font-weight: 700;
+    }
+    .pill.green {
+      background: rgba(34, 197, 94, 0.18);
+      color: #4ade80;
+      border: 1px solid rgba(34, 197, 94, 0.35);
+    }
+    .pill.amber {
+      background: rgba(245, 158, 11, 0.18);
+      color: #fbbf24;
+    }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 14px;
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.24);
+    }
+    .card h2, .card h3 {
+      margin: 0 0 8px 0;
+      font-size: 15px;
+    }
+
+    /* Slido/Mentimeter Auto-Expanding Poll Stage */
+    .poll-stage {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 12px 14px;
+      transition: all 0.2s ease;
+    }
+    .poll-stage.active-poll {
+      background: linear-gradient(160deg, #172554 0%, #0f172a 100%);
+      border: 2px solid var(--accent);
+      box-shadow: 0 0 28px rgba(56, 189, 248, 0.22);
+      padding: 16px;
+    }
+    .poll-opt {
+      position: relative;
+      overflow: hidden;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      width: 100%;
+      padding: 12px 14px;
+      margin-bottom: 8px;
+      border-radius: 11px;
+      border: 1.5px solid #334155;
+      background: rgba(15, 23, 42, 0.9);
+      color: var(--text);
+      font-weight: 700;
+      font-size: 14px;
+      text-align: left;
+      cursor: pointer;
+      transition: border-color 0.15s, transform 0.08s;
+    }
+    .poll-opt:active:not(:disabled) {
+      transform: scale(0.99);
+    }
+    .poll-opt.selected {
+      border-color: var(--accent);
+      background: rgba(56, 189, 248, 0.16);
+    }
+    .poll-opt.correct {
+      border-color: var(--green);
+      background: rgba(34, 197, 94, 0.18);
+    }
+    .poll-opt-fill {
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      background: rgba(56, 189, 248, 0.15);
+      z-index: 0;
+      transition: width 0.3s ease;
+    }
+    .poll-opt.correct .poll-opt-fill {
+      background: rgba(34, 197, 94, 0.22);
+    }
+    .poll-opt-content {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      width: 100%;
+      gap: 8px;
+    }
+    .opt-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 24px;
+      height: 24px;
+      border-radius: 7px;
+      font-size: 12px;
+      font-weight: 800;
+      color: #0f172a;
+      flex-shrink: 0;
+    }
+
+    /* Inputs & Buttons */
+    input[type="text"], input[type="email"], select {
+      width: 100%;
+      padding: 9px 11px;
+      border-radius: 9px;
+      border: 1px solid var(--border);
+      background: #0f172a;
+      color: var(--text);
+      font-size: 13px;
+    }
+    button.primary-btn {
+      padding: 9px 14px;
+      border-radius: 9px;
+      border: none;
+      background: var(--accent);
+      color: #0f172a;
+      font-weight: 800;
+      font-size: 13px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    /* Course & Session Chips */
+    .course-card {
+      background: #0f172a;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px;
+      margin-bottom: 10px;
+    }
+    .course-card.selected {
+      border-color: var(--accent);
+    }
+    .session-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 5px 10px;
+      border-radius: 999px;
+      background: var(--panel-elevated);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      margin: 4px 4px 0 0;
+    }
+    .session-chip.active {
+      border-color: var(--accent);
+      background: rgba(56, 189, 248, 0.2);
+      color: var(--accent);
+    }
+
+    .view-pane { display: none; flex-direction: column; gap: 10px; }
+    .view-pane.active { display: flex; }
+
+    /* High-Density Chat Stream */
+    .chat-composer {
+      display: grid;
+      grid-template-columns: 105px 1fr auto;
+      gap: 6px;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+    .chat-item {
+      background: #0f172a;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 8px 11px;
+      margin-bottom: 6px;
+      font-size: 13px;
+    }
+    .chat-item.pinned {
+      border-color: var(--amber);
+      background: rgba(245, 158, 11, 0.07);
+    }
+    .upvote-pill {
+      border: 1px solid var(--border);
+      background: var(--panel-elevated);
+      color: #4ade80;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 999px;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <!-- Top Compact Header -->
+    <header class="top-bar">
+      <div class="brand-col">
+        <span class="brand-dot"></span>
+        <span class="brand-title">ClassPulse Student App</span>
+        <span class="identity-pill" id="student-identity-line">
+          {% if dashboard.authenticated %}
+            &#10003; {{ dashboard.student.full_name }}
+          {% else %}
+            Guest Student
+          {% endif %}
+        </span>
+      </div>
+      <a href="/teacher" style="font-size:11px; color:var(--muted); text-decoration:none; border:1px solid var(--border); padding:4px 8px; border-radius:7px;">
+        Lecturer
+      </a>
+    </header>
+
+    {% if not dashboard.authenticated %}
+    <!-- Compact One-Time Sign-In Bar -->
+    <div class="card" id="login-card" style="padding:12px;">
+      <div style="font-size:13px; font-weight:700; margin-bottom:6px; color:var(--accent);">
+        &#128075; Quick One-Time Student Sign-In
+      </div>
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:6px; margin-bottom:6px;">
+        <input type="text" id="login-name" placeholder="Full Name (e.g. Ohad Ben Nun)" />
+        <input type="email" id="login-email" placeholder="Email (e.g. ohad@ariel.ac.il)" />
+      </div>
+      <div style="display:grid; grid-template-columns: 1fr auto; gap:6px;">
+        <input type="text" id="login-course" placeholder="Course Code (optional, e.g. CS204)" />
+        <button class="primary-btn" onclick="signInStudent()">Sign In &amp; Sync</button>
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Active Lecture Status Strip + Mode Switcher -->
+    <div class="session-strip">
+      <div style="display:flex; align-items:center; gap:8px; min-width:0;">
+        <span id="active-session-pill" class="pill">—</span>
+        <strong id="active-session-label" style="font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+          Select a lecture
+        </strong>
+      </div>
+      <div id="live-attendance-box" style="font-size:11px;"></div>
+    </div>
+
+    <div class="mode-tabs">
+      <button id="tab-btn-live" class="mode-tab active" onclick="switchView('view-live', this)">
+        <span id="poll-live-dot" class="live-dot"></span>
+        <span>&#9889; Live Class</span>
+      </button>
+      <button id="tab-btn-classes" class="mode-tab" onclick="switchView('view-classes', this)">
+        <span>&#127891; Courses &amp; Logs</span>
+      </button>
+      <button id="tab-btn-study" class="mode-tab" onclick="switchView('view-study', this)">
+        <span>&#129302; AI Study Hub</span>
+      </button>
+    </div>
+
+    <!-- MODE 1 (DEFAULT): SLIDO-STYLE UNIFIED LIVE CLASSROOM (POLL STAGE + Q&A STREAM) -->
+    <section id="view-live" class="view-pane active">
+      <!-- Top Stage: Auto-Expanding Live Poll -->
+      <div id="poll-stage-card" class="poll-stage">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span style="font-size:14px;">&#128202;</span>
+            <strong style="font-size:13px;" id="poll-header-title">Live Classroom Poll</strong>
+          </div>
+          <span id="student-poll-badge" class="pill">Waiting for Lecturer</span>
+        </div>
+        <div id="student-poll-box" style="margin-top:6px; font-size:12px; color:var(--muted);">
+          When your lecturer launches a poll, it will pop up right here automatically.
+        </div>
+      </div>
+
+      <!-- Main Stage: Timestamped Classroom Q&A & Chat Stream -->
+      <div class="card" style="flex:1;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <h2 style="margin:0; font-size:14px;">&#128172; Live Q&amp;A &amp; Class Feed (<span id="chat-room-code">—</span>)</h2>
+          <span style="font-size:11px; color:var(--muted);">Synced with Lecturer &amp; Zoom</span>
+        </div>
+
+        <div class="chat-composer">
+          <select id="student-chat-cat">
+            <option value="Question">&#10067; Question</option>
+            <option value="Comment">&#128172; Comment</option>
+            <option value="Suggestion">&#128161; Idea</option>
+          </select>
+          <input type="text" id="student-chat-body" placeholder="Ask a question (+MM:SS)..." onkeydown="if(event.key==='Enter') sendStudentChat()" />
+          <button class="primary-btn" onclick="sendStudentChat()">Send</button>
+        </div>
+
+        <div id="student-chat-feed" style="max-height:360px; overflow-y:auto;"></div>
+      </div>
+    </section>
+
+    <!-- MODE 2: MY ENROLLED COURSES, LECTURE SWITCHER & ATTENDANCE LOGS -->
+    <section id="view-classes" class="view-pane">
+      <div class="card" style="padding:12px;">
+        <div style="display:grid; grid-template-columns: 1fr auto; gap:8px; align-items:center;">
+          <input type="text" id="join-code-input" placeholder="Join another course by code (e.g. CS204 or CS101)" />
+          <button class="primary-btn" onclick="joinCourseByCode()">+ Join Course</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+          <h2 style="margin:0;">My Enrolled Courses &amp; Attendance Logs</h2>
+          <span style="font-size:11px; color:var(--muted);">Tap any lecture chip to switch room</span>
+        </div>
+        <div id="courses-list"></div>
+      </div>
+    </section>
+
+    <!-- MODE 3: AI STUDY HUB (PUBLISHED LECTURE SUMMARIES & HOMEWORK REVIEW) -->
+    <section id="view-study" class="view-pane">
+      <div class="card">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <h2 style="margin:0;">&#127908; AI Lecture Summaries (<span id="study-course-code">—</span>)</h2>
+          <button class="upvote-pill" onclick="loadStudyHub()">&#8635; Refresh</button>
+        </div>
+        <div id="student-lecture-summaries" style="font-size:12px; color:var(--muted);">
+          Loading course lecture summaries...
+        </div>
+      </div>
+
+      <div class="card">
+        <h2 style="margin-bottom:8px;">&#128221; Course Homework &amp; Deep AI Review</h2>
+        <div id="student-assignments-list" style="font-size:12px; color:var(--muted);">
+          Loading course assignments...
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    let STATE = {{ dashboard | tojson }};
+    let ACTIVE_SESSION = null;
+    let CURRENT_POLL = null;
+    let MY_VOTE = null;
+    let CHAT_MESSAGES = [];
+    const OPT_COLORS = ["#38bdf8", "#a855f7", "#f59e0b", "#22c55e", "#ec4899", "#14b8a6"];
+    const LETTERS = ["A", "B", "C", "D", "E", "F", "G", "H"];
+
+    const socket = io({ transports: ["websocket", "polling"] });
+
+    function switchView(viewId, btnEl) {
+      document.querySelectorAll(".view-pane").forEach(el => el.classList.remove("active"));
+      document.querySelectorAll(".mode-tab").forEach(el => el.classList.remove("active"));
+      document.getElementById(viewId).classList.add("active");
+      if (btnEl) {
+        btnEl.classList.add("active");
+      } else {
+        const map = {
+          "view-live": "tab-btn-live",
+          "view-classes": "tab-btn-classes",
+          "view-study": "tab-btn-study",
+        };
+        const fallbackBtn = document.getElementById(map[viewId] || "tab-btn-live");
+        if (fallbackBtn) fallbackBtn.classList.add("active");
+      }
+      if (viewId === "view-study") loadStudyHub();
+    }
+
+    async function signInStudent() {
+      const full_name = document.getElementById("login-name").value.trim();
+      const email = document.getElementById("login-email").value.trim();
+      const course_code = document.getElementById("login-course").value.trim();
+      const res = await fetch("/api/student/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ full_name, email, course_code }),
+      });
+      const data = await res.json();
+      if (!res.ok) return alert(data.error || "Sign-in failed");
+      window.location.reload();
+    }
+
+    async function joinCourseByCode() {
+      const code = document.getElementById("join-code-input").value.trim();
+      if (!code) return;
+      if (!STATE.authenticated) {
+        return alert("Please sign in with your name and email above first.");
+      }
+      const res = await fetch("/api/student/enroll", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ course_code: code }),
+      });
+      const data = await res.json();
+      if (!res.ok) return alert(data.error || "Could not join course");
+      STATE = data.dashboard;
+      document.getElementById("join-code-input").value = "";
+      renderCourses();
+    }
+
+    function selectSession(sessionObj, courseObj) {
+      ACTIVE_SESSION = {
+        ...sessionObj,
+        course_id: courseObj.id,
+        course_code: courseObj.course_code,
+        course_name: courseObj.name,
+      };
+      document.getElementById("active-session-label").textContent = `${courseObj.course_code}: ${sessionObj.title}`;
+      document.getElementById("active-session-pill").textContent = sessionObj.session_code;
+      document.getElementById("chat-room-code").textContent = sessionObj.session_code;
+      const studyCodeEl = document.getElementById("study-course-code");
+      if (studyCodeEl) studyCodeEl.textContent = courseObj.course_code;
+
+      const attBox = document.getElementById("live-attendance-box");
+      if (sessionObj.checked_in) {
+        attBox.innerHTML = `<span class="pill green">&#10003; Checked In</span>`;
+      } else {
+        attBox.innerHTML = `<span class="pill amber">Scan QR to Check In</span>`;
+      }
+
+      socket.emit("join_session", {
+        session_code: sessionObj.session_code,
+        student_id: STATE.student ? STATE.student.id : null,
+      });
+      fetchLatestSessionPolls();
+      loadStudyHub();
+      renderCourses();
+    }
+
+    function renderCourses() {
+      const listEl = document.getElementById("courses-list");
+      const myCourses = STATE.my_courses || [];
+      const courses = myCourses.length > 0 ? myCourses : (STATE.all_courses || []);
+      if (!courses.length) {
+        listEl.innerHTML = `<div style="color:var(--muted); font-size:13px;">No courses yet. Scan a classroom QR code or join above!</div>`;
+        return;
+      }
+
+      listEl.innerHTML = courses.map(c => {
+        const sessionsHtml = (c.sessions || []).map(s => {
+          const isSelected = ACTIVE_SESSION && ACTIVE_SESSION.session_code === s.session_code;
+          return `
+            <span class="session-chip ${isSelected ? 'active' : ''}"
+                  onclick='event.stopPropagation(); selectSession(${JSON.stringify(s)}, ${JSON.stringify({id: c.id, course_code: c.course_code, name: c.name})}); switchView("view-live");'>
+              ${s.checked_in ? '&#10003;' : '&#9679;'} ${s.title} (${s.session_code})
+            </span>
+          `;
+        }).join("");
+
+        const logsHtml = (c.my_attendance_logs || []).map(log => `
+          <div style="display:flex; justify-content:space-between; font-size:11px; color:var(--muted); padding:4px 0; border-top:1px solid #1e293b;">
+            <span>${log.lecture_title} (<code>${log.session_code}</code>)</span>
+            <span style="color:${log.status !== 'ABSENT' ? '#4ade80' : '#f87171'}; font-weight:700;">
+              ${log.status} &bull; ${log.checked_in_at}
+            </span>
+          </div>
+        `).join("");
+
+        return `
+          <div class="course-card ${ACTIVE_SESSION && ACTIVE_SESSION.course_code === c.course_code ? 'selected' : ''}">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+              <div>
+                <span class="pill">${c.course_code}</span>
+                <strong style="margin-left:6px; font-size:14px;">${c.name}</strong>
+              </div>
+              <span class="pill ${c.is_enrolled ? 'green' : ''}">
+                ${c.is_enrolled ? `${c.attended_count}/${c.total_sessions} (${c.attendance_pct}%)` : 'Course'}
+              </span>
+            </div>
+            <div style="font-size:11px; color:var(--muted); margin-bottom:6px;">
+              ${c.lecturer_name} &bull; ${c.department}
+            </div>
+            <div style="margin-bottom:6px;">${sessionsHtml}</div>
+            ${c.is_enrolled && logsHtml ? `
+              <div style="margin-top:6px; padding-top:6px; border-top:1px dashed var(--border);">
+                <div style="font-size:10px; font-weight:700; color:var(--accent); text-transform:uppercase; margin-bottom:3px;">
+                  My Lecture Attendance Logs
+                </div>
+                ${logsHtml}
+              </div>
+            ` : ''}
+          </div>
+        `;
+      }).join("");
+    }
+
+    function applyIncomingPoll(poll, autoFocus = false) {
+      if (!poll) return;
+      const isNewActive = poll.status === "ACTIVE" && (!CURRENT_POLL || CURRENT_POLL.id !== poll.id || CURRENT_POLL.status !== "ACTIVE");
+      if (poll.my_vote_index !== undefined && poll.my_vote_index !== null) {
+        MY_VOTE = poll.my_vote_index;
+      } else if (CURRENT_POLL && CURRENT_POLL.id !== poll.id) {
+        MY_VOTE = null;
+      }
+      CURRENT_POLL = poll;
+      renderStudentPoll();
+      if (isNewActive && autoFocus) {
+        switchView("view-live");
+      }
+    }
+
+    function renderStudentPoll() {
+      const stageCard = document.getElementById("poll-stage-card");
+      const box = document.getElementById("student-poll-box");
+      const badge = document.getElementById("student-poll-badge");
+      const dot = document.getElementById("poll-live-dot");
+
+      if (!CURRENT_POLL) {
+        stageCard.classList.remove("active-poll");
+        dot.classList.remove("hot");
+        badge.className = "pill";
+        badge.textContent = "Waiting for Lecturer";
+        box.innerHTML = "When your lecturer launches a poll, it will pop up right here automatically.";
+        return;
+      }
+
+      const isActive = CURRENT_POLL.status === "ACTIVE";
+      const isClosed = CURRENT_POLL.status === "CLOSED";
+      const hasVoted = MY_VOTE !== null && MY_VOTE !== undefined;
+
+      if (isActive) {
+        stageCard.classList.add("active-poll");
+        dot.classList.add("hot");
+        badge.className = "pill green";
+        badge.textContent = hasVoted ? "✓ Vote Recorded • Live" : "🔴 LIVE — Tap to Vote";
+      } else {
+        stageCard.classList.remove("active-poll");
+        dot.classList.remove("hot");
+        badge.className = "pill amber";
+        badge.textContent = "Poll Closed";
+      }
+
+      const optionsHtml = (CURRENT_POLL.options || []).map((opt, idx) => {
+        const isSelected = MY_VOTE === idx;
+        const isCorrect = isClosed && CURRENT_POLL.correct_index === idx;
+        const pct = (CURRENT_POLL.percentages && CURRENT_POLL.percentages[idx]) || 0;
+        const count = (CURRENT_POLL.counts && CURRENT_POLL.counts[idx]) || 0;
+        const showBars = hasVoted || isClosed;
+        const color = OPT_COLORS[idx % OPT_COLORS.length];
+        const letter = LETTERS[idx] || (idx + 1);
+
+        return `
+          <button type="button"
+                  class="poll-opt ${isSelected ? 'selected' : ''} ${isCorrect ? 'correct' : ''}"
+                  ${(!isActive || hasVoted) ? 'disabled' : ''}
+                  onclick="castStudentVote(${idx})">
+            ${showBars ? `<div class="poll-opt-fill" style="width:${pct}%;"></div>` : ''}
+            <div class="poll-opt-content">
+              <div style="display:flex; align-items:center; gap:9px;">
+                <span class="opt-badge" style="background:${color};">${letter}</span>
+                <span>${opt} ${isSelected ? '&#10003;' : ''} ${isCorrect ? '&#11088;' : ''}</span>
+              </div>
+              ${showBars ? `<span style="font-size:12px; color:#cbd5e1; font-weight:800;">${pct}% <span style="font-weight:400; color:var(--muted);">(${count})</span></span>` : ''}
+            </div>
+          </button>
+        `;
+      }).join("");
+
+      box.innerHTML = `
+        <div style="font-weight:800; color:var(--text); margin:8px 0 10px 0; font-size:16px;">
+          ${CURRENT_POLL.question}
+        </div>
+        ${optionsHtml}
+        <div style="display:flex; justify-content:space-between; font-size:11px; color:var(--muted); margin-top:4px;">
+          <span>${hasVoted ? '✓ Your answer is locked in.' : (isActive ? 'Tap an option above to submit your answer.' : 'Final poll results.')}</span>
+          <span>Total class votes: <strong>${CURRENT_POLL.total_votes || 0}</strong></span>
+        </div>
+      `;
+    }
+
+    async function castStudentVote(optionIndex) {
+      if (!CURRENT_POLL || CURRENT_POLL.status !== "ACTIVE") return;
+      const studentId = STATE.student ? STATE.student.id : null;
+      if (!studentId) {
+        return alert("Please sign in with your Name & Email at the top first so your vote is counted!");
+      }
+      MY_VOTE = optionIndex;
+      renderStudentPoll();
+
+      try {
+        const res = await fetch(`/api/polls/${CURRENT_POLL.id}/vote`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ option_index: optionIndex, student_id: studentId }),
+        });
+        if (res.ok) {
+          const updated = await res.json();
+          applyIncomingPoll(updated, false);
+        }
+      } catch (_e) {
+        socket.emit("poll:vote", {
+          poll_id: CURRENT_POLL.id,
+          option_index: optionIndex,
+          student_id: studentId,
+        });
+      }
+    }
+
+    async function fetchLatestSessionPolls() {
+      if (!ACTIVE_SESSION || !ACTIVE_SESSION.id) return;
+      try {
+        const stParam = STATE.student && STATE.student.id ? `?student_id=${STATE.student.id}&_ts=${Date.now()}` : `?_ts=${Date.now()}`;
+        const res = await fetch(`/api/sessions/${ACTIVE_SESSION.id}/polls${stParam}`, { cache: "no-store" });
+        if (!res.ok) return;
+        const data = await res.json();
+        const polls = data.polls || [];
+        const active = polls.find(p => p.status === "ACTIVE");
+        if (active) {
+          applyIncomingPoll(active, true);
+        } else if (polls.length > 0) {
+          const latest = polls[polls.length - 1];
+          if (CURRENT_POLL && CURRENT_POLL.id === latest.id) {
+            applyIncomingPoll(latest, false);
+          }
+        }
+      } catch (_err) {}
+    }
+
+    function renderStudentChat() {
+      const feed = document.getElementById("student-chat-feed");
+      if (!CHAT_MESSAGES.length) {
+        feed.innerHTML = `<div style="color:var(--muted); font-size:12px; text-align:center; padding:18px 0;">No questions yet in this lecture. Ask the first question above!</div>`;
+        return;
+      }
+      const sorted = [...CHAT_MESSAGES].sort((a, b) => (b.is_pinned - a.is_pinned) || (b.id - a.id));
+      feed.innerHTML = sorted.map(m => `
+        <div class="chat-item ${m.is_pinned ? 'pinned' : ''}">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:3px;">
+            <div>
+              <span class="pill">[${m.offset_mmss}]</span>
+              <strong style="margin-left:5px;">${m.author_name}</strong>
+              <span style="font-size:11px; color:var(--muted); margin-left:4px;">${m.category}</span>
+              ${m.is_pinned ? '<span style="color:var(--amber); font-size:11px; font-weight:700; margin-left:5px;">&#128204; Pinned</span>' : ''}
+            </div>
+            <button class="upvote-pill" onclick="upvoteStudentChat(${m.id})">
+              &#9650; ${m.upvotes}
+            </button>
+          </div>
+          <div style="color:#e2e8f0; line-height:1.35;">${m.body}</div>
+        </div>
+      `).join("");
+    }
+
+    async function sendStudentChat() {
+      if (!ACTIVE_SESSION) return alert("Select a lecture first.");
+      const bodyEl = document.getElementById("student-chat-body");
+      const catEl = document.getElementById("student-chat-cat");
+      const body = bodyEl.value.trim();
+      if (!body) return;
+      bodyEl.value = "";
+      await fetch(`/api/sessions/${ACTIVE_SESSION.id}/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          student_id: STATE.student ? STATE.student.id : null,
+          author_name: STATE.student ? STATE.student.full_name : "Student",
+          category: catEl.value,
+          body,
+        }),
+      });
+    }
+
+    async function upvoteStudentChat(msgId) {
+      await fetch(`/api/chat/${msgId}/upvote`, { method: "POST" });
+    }
+
+    socket.on("connect", () => {
+      if (ACTIVE_SESSION) {
+        socket.emit("join_session", {
+          session_code: ACTIVE_SESSION.session_code,
+          student_id: STATE.student ? STATE.student.id : null,
+        });
+      }
+    });
+
+    socket.on("poll:sync", (data) => {
+      const incoming = data ? (data.poll || data.active_poll) : null;
+      if (data && data.my_vote !== undefined && data.my_vote !== null) {
+        MY_VOTE = data.my_vote;
+      }
+      if (incoming) applyIncomingPoll(incoming, incoming.status === "ACTIVE");
+    });
+    socket.on("poll:activated", (poll) => {
+      MY_VOTE = null;
+      applyIncomingPoll(poll, true);
+    });
+    socket.on("poll:opened", (poll) => {
+      MY_VOTE = null;
+      applyIncomingPoll(poll, true);
+    });
+    socket.on("poll:results_update", (poll) => {
+      if (!CURRENT_POLL || CURRENT_POLL.id === poll.id) {
+        applyIncomingPoll({ ...CURRENT_POLL, ...poll }, false);
+      }
+    });
+    socket.on("poll:voted_ack", (poll) => {
+      applyIncomingPoll(poll, false);
+    });
+    socket.on("poll:closed", (poll) => {
+      if (!CURRENT_POLL || CURRENT_POLL.id === poll.id) {
+        applyIncomingPoll({ ...CURRENT_POLL, ...poll }, false);
+      }
+    });
+
+    socket.on("chat:init", (d) => {
+      CHAT_MESSAGES = d.messages || [];
+      renderStudentChat();
+    });
+    socket.on("chat:new", (m) => {
+      if (!CHAT_MESSAGES.find(x => x.id === m.id)) CHAT_MESSAGES.push(m);
+      renderStudentChat();
+    });
+    socket.on("chat:updated", (m) => {
+      const idx = CHAT_MESSAGES.findIndex(x => x.id === m.id);
+      if (idx >= 0) CHAT_MESSAGES[idx] = m;
+      renderStudentChat();
+    });
+
+    function escapeHtml(str) {
+      return String(str || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+    }
+
+    async function loadStudyHub() {
+      if (!ACTIVE_SESSION || !ACTIVE_SESSION.course_id) return;
+      const cid = ACTIVE_SESSION.course_id;
+      const stQuery = STATE.student && STATE.student.id ? `?student_id=${STATE.student.id}&_ts=${Date.now()}` : `?_ts=${Date.now()}`;
+      try {
+        const [lecRes, hwRes] = await Promise.all([
+          fetch(`/api/courses/${cid}/lectures?_ts=${Date.now()}`, { cache: "no-store" }),
+          fetch(`/api/courses/${cid}/assignments${stQuery}`, { cache: "no-store" }),
+        ]);
+        if (lecRes.ok) {
+          const lecData = await lecRes.json();
+          renderStudyLectures(lecData.artifacts || []);
+        }
+        if (hwRes.ok) {
+          const hwData = await hwRes.json();
+          renderStudyAssignments(hwData.assignments || []);
+        }
+      } catch (err) {
+        console.error("loadStudyHub error:", err);
+      }
+    }
+
+    function renderStudyLectures(artifacts) {
+      const el = document.getElementById("student-lecture-summaries");
+      if (!el) return;
+      if (!artifacts.length) {
+        el.innerHTML = `<div style="color:var(--muted); padding:8px 0;">No published AI lecture summaries yet for this course.</div>`;
+        return;
+      }
+      el.innerHTML = artifacts.map(a => {
+        const segHtml = (a.corrected_transcript || []).map(seg =>
+          `<div style="font-size:11px; padding:3px 0; border-bottom:1px solid #1e293b;"><span class="pill">[${escapeHtml(seg.offset_mmss)}]</span> <span style="color:#cbd5e1;">${escapeHtml(seg.text)}</span></div>`
+        ).join("");
+        return `
+          <div style="background:#0f172a; border:1px solid var(--border); border-radius:10px; padding:10px; margin-bottom:8px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+              <strong style="color:#f8fafc;">${escapeHtml(a.lecture_title || a.session_code)}</strong>
+              <span class="pill green">${escapeHtml(a.session_code)}</span>
+            </div>
+            <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px;">
+              <a class="upvote-pill" style="text-decoration:none; color:#22c55e; border-color:rgba(34,197,94,0.45);" href="/api/lectures/${a.id}/download/summary.md">&#11015; Download Summary (.md)</a>
+              <a class="upvote-pill" style="text-decoration:none;" href="/api/lectures/${a.id}/download/transcript.txt">&#11015; Transcript (.txt)</a>
+            </div>
+            <pre style="white-space:pre-wrap; font-family:inherit; font-size:12px; line-height:1.45; color:#cbd5e1; margin:0 0 6px 0;">${escapeHtml(a.summary_markdown)}</pre>
+            <details>
+              <summary style="cursor:pointer; font-size:11px; color:var(--accent); font-weight:700;">Read Corrected Transcript ([MM:SS])</summary>
+              <div style="margin-top:6px;">${segHtml}</div>
+            </details>
+          </div>
+        `;
+      }).join("");
+    }
+
+    function renderStudyAssignments(assignments) {
+      const el = document.getElementById("student-assignments-list");
+      if (!el) return;
+      if (!assignments.length) {
+        el.innerHTML = `<div style="color:var(--muted); padding:8px 0;">No assignments posted yet for this course.</div>`;
+        return;
+      }
+      el.innerHTML = assignments.map(a => {
+        const stats = a.cohort_stats || {};
+        const sub = a.my_submission;
+        const myScore = sub && sub.metrics ? sub.metrics.overall_score : null;
+        const myPct = sub && sub.cohort_snapshot ? sub.cohort_snapshot.student_percentile : null;
+        return `
+          <div style="background:#0f172a; border:1px solid var(--border); border-radius:10px; padding:12px; margin-bottom:10px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:6px;">
+              <strong style="font-size:14px; color:#f8fafc;">${escapeHtml(a.title)}</strong>
+              ${myScore !== null
+                ? `<span class="pill green">Score: ${myScore}/100 &bull; ${myPct}th pct</span>`
+                : `<span class="pill amber">Cohort Avg: ${stats.mean_overall_score || 0} (${stats.submission_count || 0} subs)</span>`}
+            </div>
+            <div style="font-size:11px; color:var(--muted); margin-bottom:8px;">${escapeHtml(a.rubric_text)}</div>
+
+            ${sub ? `
+              <div style="background:#151f32; border:1px solid rgba(56,189,248,0.3); border-radius:9px; padding:10px; margin-bottom:8px;">
+                <div style="font-size:11px; font-weight:700; color:var(--accent); margin-bottom:4px;">MY COMPARATIVE AI REVIEW (v${sub.version})</div>
+                <pre style="white-space:pre-wrap; font-family:inherit; font-size:12px; line-height:1.45; color:#e2e8f0; margin:0;">${escapeHtml(sub.deep_review_md)}</pre>
+              </div>
+            ` : ''}
+
+            <details ${sub ? '' : 'open'}>
+              <summary style="cursor:pointer; font-size:12px; color:var(--accent); font-weight:700; margin-bottom:6px;">
+                ${sub ? 'Resubmit Improved Version' : 'Submit Solution for Instant AI Review'}
+              </summary>
+              <textarea id="hw-code-${a.id}" rows="4" placeholder="Paste your code/solution or notes..." style="width:100%; background:#151f32; color:#f8fafc; border:1px solid var(--border); border-radius:8px; padding:8px; font-family:monospace; font-size:12px; margin-bottom:6px;"></textarea>
+              <div style="display:grid; grid-template-columns: 1fr auto; gap:6px; margin-bottom:6px;">
+                <input type="text" id="hw-git-${a.id}" placeholder="Or GitHub URL (optional)" />
+                <button class="primary-btn" onclick="submitStudentHomework(${a.id})">Submit &amp; Review</button>
+              </div>
+              <input type="file" id="hw-file-${a.id}" style="font-size:11px; color:var(--muted);" />
+            </details>
+          </div>
+        `;
+      }).join("");
+    }
+
+    async function submitStudentHomework(assignId) {
+      if (!STATE.student) return alert("Sign in with Name & Email above first.");
+      const code = document.getElementById(`hw-code-${assignId}`).value.trim();
+      const git = document.getElementById(`hw-git-${assignId}`).value.trim();
+      const fileEl = document.getElementById(`hw-file-${assignId}`);
+      let res;
+      if (fileEl && fileEl.files.length > 0) {
+        const fd = new FormData();
+        fd.append("file", fileEl.files[0]);
+        fd.append("student_id", STATE.student.id);
+        res = await fetch(`/api/assignments/${assignId}/submissions`, { method: "POST", body: fd });
+      } else {
+        res = await fetch(`/api/assignments/${assignId}/submissions`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            student_id: STATE.student.id,
+            content_text: code,
+            github_url: git,
+            generate_review: true,
+          }),
+        });
+      }
+      const data = await res.json();
+      if (!res.ok) return alert(data.error || "Homework submission failed");
+      loadStudyHub();
+    }
+
+    socket.on("lecture:summary_ready", () => loadStudyHub());
+
+    // Initialize default selected session + resilient 2.5s poll sync
+    (function initStudentApp() {
+      renderCourses();
+      const targetCode = "{{ initial_session_code }}";
+      const myCourses = STATE.my_courses || [];
+      const searchPool = myCourses.length > 0 ? myCourses : (STATE.all_courses || []);
+      const allCourses = STATE.all_courses || [];
+
+      for (const c of allCourses) {
+        for (const s of (c.sessions || [])) {
+          if (targetCode && s.session_code === targetCode) {
+            selectSession(s, c);
+            return;
+          }
+        }
+      }
+      if (searchPool.length && searchPool[0].sessions && searchPool[0].sessions.length) {
+        selectSession(searchPool[0].sessions[0], searchPool[0]);
+      }
+    })();
+
+    setInterval(fetchLatestSessionPolls, 2500);
+  </script>
+</body>
+</html>

@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ClassPulse — School-Wide Interactive Classroom Platform</title>
+  <style>
+    :root {
+      --bg: #0b1120;
+      --panel: #1e293b;
+      --border: #334155;
+      --text: #f8fafc;
+      --muted: #94a3b8;
+      --accent: #38bdf8;
+      --green: #22c55e;
+      --purple: #a855f7;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: radial-gradient(circle at top right, #1e293b 0%, #0b1120 70%);
+      color: var(--text);
+      font-family: system-ui, -apple-system, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+    .hero {
+      max-width: 860px;
+      width: 100%;
+      text-align: center;
+      margin-bottom: 32px;
+    }
+    .badge {
+      display: inline-block;
+      padding: 5px 14px;
+      border-radius: 999px;
+      background: rgba(56, 189, 248, 0.15);
+      color: var(--accent);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      margin-bottom: 12px;
+    }
+    h1 {
+      font-size: 36px;
+      margin: 0 0 10px 0;
+    }
+    p.lead {
+      color: var(--muted);
+      font-size: 16px;
+      margin: 0;
+    }
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(310px, 1fr));
+      gap: 22px;
+      max-width: 860px;
+      width: 100%;
+    }
+    .portal-card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 28px;
+      text-decoration: none;
+      color: var(--text);
+      transition: transform 0.15s ease, border-color 0.15s ease;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      box-shadow: 0 14px 32px rgba(0, 0, 0, 0.35);
+    }
+    .portal-card:hover {
+      transform: translateY(-4px);
+      border-color: var(--accent);
+    }
+    .portal-card h2 {
+      margin: 0 0 10px 0;
+      font-size: 22px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .portal-card ul {
+      padding-left: 18px;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.65;
+      margin: 12px 0 22px 0;
+    }
+    .cta {
+      display: inline-block;
+      padding: 12px 18px;
+      border-radius: 10px;
+      font-weight: 700;
+      font-size: 14px;
+      text-align: center;
+      background: var(--accent);
+      color: #0f172a;
+    }
+    .cta.student {
+      background: var(--green);
+    }
+  </style>
+</head>
+<body>
+  <div class="hero">
+    <span class="badge">Ariel University &bull; School-Wide Classroom Platform</span>
+    <h1>ClassPulse Multi-Course Hub</h1>
+    <p class="lead">Select your workspace to manage school courses, live attendance, real-time polls, and classroom Q&amp;A.</p>
+  </div>
+
+  <div class="cards">
+    <a class="portal-card" href="/teacher">
+      <div>
+        <h2>&#127891; Teacher &amp; Lecturer Portal</h2>
+        <p style="color:var(--muted); font-size:14px; margin:0;">
+          Modular multi-course control center for lecturers and teaching assistants.
+        </p>
+        <ul>
+          <li>Manage multiple school courses &amp; lecture sessions</li>
+          <li>5-Second Rolling QR Attendance &amp; Projector Mode</li>
+          <li>Tiled SCRFD Computer-Vision Classroom Headcounter &amp; Excel Audit</li>
+          <li>Pre-Class Poll Bank &amp; Live Kahoot-Style Polls</li>
+          <li>Timestamped Classroom Q&amp;A + Zoom Bridge Companion</li>
+        </ul>
+      </div>
+      <span class="cta">Enter Teacher Portal &rarr;</span>
+    </a>
+
+    <a class="portal-card" href="/student">
+      <div>
+        <h2>&#128241; Student Classroom App</h2>
+        <p style="color:var(--muted); font-size:14px; margin:0;">
+          All-in-one mobile &amp; desktop web app for students across all enrolled courses.
+        </p>
+        <ul>
+          <li>View all enrolled courses &amp; cumulative attendance streak</li>
+          <li>1-Tap QR Attendance Check-In with persistent device binding</li>
+          <li>Answer live interactive classroom polls in real time</li>
+          <li>Ask timestamped (`+MM:SS`) lecture questions &amp; upvote peers</li>
+          <li>Access AI lecture summaries &amp; comparative homework feedback</li>
+        </ul>
+      </div>
+      <span class="cta student">Open Student App &rarr;</span>
+    </a>
+  </div>
+</body>
+</html>
