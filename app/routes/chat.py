@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from typing import Optional
 
-from flask import Blueprint, Response, current_app, jsonify, render_template, request
+from flask import Blueprint, Response, current_app, jsonify, redirect, render_template, request, url_for
 
 from app import socketio
-from app.models import ClassSession, Student
+from app.models import ChatMessage, ClassSession, Student
+from app.routes.guards import require_session_access
 from app.services.chat_service import ChatError, ChatService
 from app.services.qr_service import DeviceBindingManager
 
@@ -89,6 +90,13 @@ def upvote_chat_message(message_id: int):
 @chat_bp.post("/api/chat/<int:message_id>/pin")
 def pin_chat_message(message_id: int):
     db = current_app.extensions["db_session"]
+    target_msg = db.get(ChatMessage, message_id)
+    if target_msg is None:
+        return jsonify({"error": "Message not found."}), 404
+    _sess, _lec, err = require_session_access(target_msg.session_id)
+    if err is not None:
+        return err
+
     svc = _get_chat_service()
     try:
         msg = svc.toggle_pin(message_id)
@@ -126,6 +134,11 @@ def chat_popout_view(session_code: str):
     session = db.query(ClassSession).filter_by(session_code=code).one_or_none()
     if session is None:
         return "Session not found", 404
+    _sess, _lec, err = require_session_access(session.id)
+    if err is not None:
+        if err[1] == 401:
+            return redirect(url_for("courses.teacher_login_page"))
+        return "Access denied: this lecture belongs to another lecturer.", 403
     svc = _get_chat_service()
     messages = svc.list_messages(session.id)
     return render_template(

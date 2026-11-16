@@ -27,11 +27,13 @@ from app.models import (
     HeadcountSnapshot,
     Student,
 )
+from app.routes.guards import get_current_lecturer, require_session_access
 from app.services.attendance_service import (
     AttendanceError,
     AttendanceService,
 )
 from app.services.course_service import CourseService
+from app.services.identity_helpers import validate_image_magic_bytes
 from app.services.face_counter import BoundingBox, read_image_unicode
 from app.services.qr_service import DeviceBindingManager, resolve_effective_base_url
 from app.services.report_exporter import SpreadsheetExporter
@@ -67,12 +69,21 @@ def lecturer_dashboard():
 
 @attendance_bp.get("/projector/<session_code>")
 def projector_view(session_code: str):
-    att_service, qr_service, _device_mgr, _exporter = _get_services()
+    att_service, qr_service, device_mgr, _exporter = _get_services()
     db = current_app.extensions["db_session"]
     code = session_code.strip().upper()
     session = db.query(ClassSession).filter_by(session_code=code).one_or_none()
     if session is None:
         session = att_service.get_or_create_default_session()
+    ptok = request.args.get("ptok", "")
+    if session.course_id is not None and not device_mgr.verify_projector_token(
+        ptok, session.session_code
+    ):
+        _sess, _lec, err = require_session_access(session.id)
+        if err is not None:
+            if err[1] == 401:
+                return redirect(url_for("courses.teacher_login_page"))
+            return "Access denied: projector display belongs to another lecturer.", 403
     qr_payload = qr_service.build_qr_payload(_resolve_base_url(), session.session_code)
     qr_count = db.query(AttendanceRecord).filter_by(session_id=session.id).count()
     return render_template(
@@ -80,6 +91,7 @@ def projector_view(session_code: str):
         session=session,
         qr_payload=qr_payload,
         qr_count=qr_count,
+        projector_token=ptok or device_mgr.create_projector_token(session.session_code),
     )
 
 
@@ -156,6 +168,7 @@ def student_entry(session_code: str):
                     token=sig_param,
                     full_name=known_student.full_name,
                     email=known_student.email,
+                    student_id_number=known_student.student_id_number,
                     device_id=device_id,
                     existing_student_id=known_student.id,
                 )
@@ -232,9 +245,10 @@ def create_or_update_session():
     action = str(data.get("action", "create")).strip()
     if action == "toggle_open":
         session_id = int(data["session_id"])
-        session = db.get(ClassSession, session_id)
-        if session is None:
-            return jsonify({"error": "Session not found"}), 404
+        session, _lec, err = require_session_access(session_id)
+        if err is not None:
+            return err
+        assert session is not None
         session.attendance_open = not session.attendance_open
         db.commit()
         return jsonify(
@@ -285,6 +299,7 @@ def api_student_checkin():
     session_code = str(data.get("session_code", "")).strip().upper()
     full_name = str(data.get("full_name", "")).strip() or None
     email = str(data.get("email", "")).strip() or None
+    student_id_number = str(data.get("student_id_number", "")).strip() or None
     onboarding_grant = str(data.get("onboarding_grant", "")).strip() or None
     sig = str(data.get("sig", "")).strip() or None
     t_raw = data.get("t")
@@ -307,6 +322,7 @@ def api_student_checkin():
             token=sig,
             full_name=full_name,
             email=email,
+            student_id_number=student_id_number,
             device_id=device_id,
             existing_student_id=existing_student_id,
             onboarding_grant=onboarding_grant,
@@ -349,6 +365,7 @@ def api_student_checkin():
                 "status": "checked_in",
                 "is_new_checkin": is_new,
                 "student_id": student.id,
+                "student_id_number": student.student_id_number,
                 "full_name": student.full_name,
                 "email": student.email,
                 "checked_in_at": rec.checked_in_at.isoformat(),
@@ -386,10 +403,10 @@ def api_student_checkin():
 @attendance_bp.post("/api/sessions/<int:session_id>/roster")
 def import_session_roster(session_id: int):
     att_service, _qr_service, _device_mgr, _exporter = _get_services()
-    db = current_app.extensions["db_session"]
-    session = db.get(ClassSession, session_id)
-    if session is None:
-        return jsonify({"error": "Session not found"}), 404
+    session, _lec, err = require_session_access(session_id)
+    if err is not None:
+        return err
+    assert session is not None
 
     csv_text = ""
     if "roster_file" in request.files and request.files["roster_file"].filename:
@@ -421,9 +438,10 @@ def upload_and_count_classroom_photo(session_id: int):
     cfg = current_app.config["CLASSPULSE_CONFIG"]
     detector = current_app.extensions["face_detector"]
 
-    session = db.get(ClassSession, session_id)
-    if session is None:
-        return jsonify({"error": "Session not found"}), 404
+    session, _lec, err = require_session_access(session_id)
+    if err is not None:
+        return err
+    assert session is not None
 
     data = request.get_json(silent=True) or request.form.to_dict()
     use_sample = str(data.get("use_sample", "")).lower() in ("1", "true", "yes")
@@ -440,6 +458,8 @@ def upload_and_count_classroom_photo(session_id: int):
     elif "photo" in request.files and request.files["photo"].filename:
         photo_file = request.files["photo"]
         file_bytes = photo_file.read()
+        if not validate_image_magic_bytes(file_bytes):
+            return jsonify({"error": "Invalid image upload: expected JPEG, PNG, GIF, or WebP file."}), 400
         raw_dest.write_bytes(file_bytes)
     else:
         return jsonify({"error": "No classroom photo file provided."}), 400
@@ -498,9 +518,10 @@ def update_headcount_verification(session_id: int):
     db = current_app.extensions["db_session"]
     detector = current_app.extensions["face_detector"]
 
-    session = db.get(ClassSession, session_id)
-    if session is None:
-        return jsonify({"error": "Session not found"}), 404
+    session, _lec, err = require_session_access(session_id)
+    if err is not None:
+        return err
+    assert session is not None
 
     snap = (
         db.query(HeadcountSnapshot)
@@ -548,6 +569,10 @@ def update_headcount_verification(session_id: int):
 
 @attendance_bp.get("/api/sessions/<int:session_id>/headcount/image/<kind>")
 def get_headcount_image(session_id: int, kind: str):
+    _sess, _lec, err = require_session_access(session_id)
+    if err is not None:
+        return err
+
     db = current_app.extensions["db_session"]
     snap_id = request.args.get("snap_id", type=int)
     query = db.query(HeadcountSnapshot).filter_by(session_id=session_id)
@@ -618,10 +643,10 @@ def get_session_live_status(session_id: int):
 @attendance_bp.get("/api/sessions/<int:session_id>/report")
 def download_attendance_report(session_id: int):
     att_service, _qr_service, _device_mgr, exporter = _get_services()
-    db = current_app.extensions["db_session"]
-    session = db.get(ClassSession, session_id)
-    if session is None:
-        return jsonify({"error": "Session not found"}), 404
+    session, _lec, err = require_session_access(session_id)
+    if err is not None:
+        return err
+    assert session is not None
 
     fmt = request.args.get("format", "xlsx").lower()
     verdict = att_service.get_audit_summary(session.id)
@@ -644,3 +669,16 @@ def download_attendance_report(session_id: int):
         as_attachment=True,
         download_name=filename,
     )
+
+
+@attendance_bp.post("/api/maintenance/purge-expired-photos")
+def purge_expired_photos():
+    lecturer = get_current_lecturer()
+    if lecturer is None:
+        return jsonify({"error": "Lecturer sign-in required."}), 401
+    att_service, _qr, _dm, _exp = _get_services()
+    cfg = current_app.config["CLASSPULSE_CONFIG"]
+    payload = request.get_json(silent=True) or {}
+    hours = int(payload.get("retention_hours", cfg.HEADCOUNT_RETENTION_HOURS or 72))
+    removed = att_service.purge_expired_headcount_photos(hours)
+    return jsonify({"deleted_files": removed, "retention_hours": hours})

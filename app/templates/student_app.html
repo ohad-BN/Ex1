@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
   <title>ClassPulse — Student Classroom App</title>
+  <script src="/static/js/csrf.js"></script>
   <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
   <style>
     :root {
@@ -346,7 +347,7 @@
         <span class="brand-title">ClassPulse Student App</span>
         <span class="identity-pill" id="student-identity-line">
           {% if dashboard.authenticated %}
-            &#10003; {{ dashboard.student.full_name }}
+            &#10003; {{ dashboard.student.full_name }}{% if dashboard.student.student_id_number %} (ID {{ dashboard.student.student_id_number }}){% endif %}
           {% else %}
             Guest Student
           {% endif %}
@@ -365,10 +366,11 @@
       </div>
       <div style="display:grid; grid-template-columns: 1fr 1fr; gap:6px; margin-bottom:6px;">
         <input type="text" id="login-name" placeholder="Full Name (e.g. Ohad Ben Nun)" />
-        <input type="email" id="login-email" placeholder="Email (e.g. ohad@ariel.ac.il)" />
+        <input type="text" id="login-sid" placeholder="Student ID (e.g. 208123456)" />
       </div>
-      <div style="display:grid; grid-template-columns: 1fr auto; gap:6px;">
-        <input type="text" id="login-course" placeholder="Course Code (optional, e.g. CS204)" />
+      <div style="display:grid; grid-template-columns: 1fr 1fr auto; gap:6px;">
+        <input type="email" id="login-email" placeholder="Email (e.g. ohad@ariel.ac.il)" />
+        <input type="text" id="login-course" placeholder="Course Code (optional)" />
         <button class="primary-btn" onclick="signInStudent()">Sign In &amp; Sync</button>
       </div>
     </div>
@@ -505,12 +507,13 @@
 
     async function signInStudent() {
       const full_name = document.getElementById("login-name").value.trim();
+      const student_id_number = (document.getElementById("login-sid")?.value || "").trim();
       const email = document.getElementById("login-email").value.trim();
       const course_code = document.getElementById("login-course").value.trim();
       const res = await fetch("/api/student/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ full_name, email, course_code }),
+        body: JSON.stringify({ full_name, student_id_number, email, course_code }),
       });
       const data = await res.json();
       if (!res.ok) return alert(data.error || "Sign-in failed");

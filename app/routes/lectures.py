@@ -9,6 +9,7 @@ from werkzeug.utils import secure_filename
 
 from app import socketio
 from app.models import ClassSession, LectureArtifact
+from app.routes.guards import require_course_access, require_session_access
 from app.services.lecture_pipeline import LecturePipelineError, LectureSummarizerService
 
 lectures_bp = Blueprint("lectures", __name__)
@@ -46,6 +47,9 @@ def list_session_lectures(session_id: int):
 
 @lectures_bp.get("/api/courses/<int:course_id>/lectures")
 def list_course_lectures(course_id: int):
+    _course, _lec, err = require_course_access(course_id)
+    if err is not None:
+        return err
     svc = _get_lecture_service()
     return jsonify({"artifacts": svc.list_course_artifacts(course_id)})
 
@@ -78,17 +82,40 @@ def download_lecture_transcript_txt(artifact_id: int):
     )
 
 
+@lectures_bp.delete("/api/lectures/<int:artifact_id>")
+def delete_lecture_artifact(artifact_id: int):
+    db = current_app.extensions["db_session"]
+    artifact = db.get(LectureArtifact, artifact_id)
+    if artifact is None:
+        return jsonify({"error": "Lecture artifact not found."}), 404
+    _sess, _lec, err = require_session_access(artifact.session_id)
+    if err is not None:
+        return err
+
+    if artifact.media_path and not artifact.media_path.startswith(("sample://", "inline://")):
+        media_file = Path(artifact.media_path)
+        if media_file.exists() and media_file.is_file():
+            try:
+                media_file.unlink()
+            except OSError:
+                pass
+    db.delete(artifact)
+    db.commit()
+    return jsonify({"status": "deleted", "artifact_id": artifact_id})
+
+
 @lectures_bp.post("/api/sessions/<int:session_id>/lectures/summarize")
 def summarize_session_lecture(session_id: int):
+    session, _lec, err = require_session_access(session_id)
+    if err is not None:
+        return err
+    assert session is not None
+
     db = current_app.extensions["db_session"]
     engine = current_app.extensions["db_engine"]
     llm_client = current_app.extensions.get("llm_client")
     cfg = current_app.config["CLASSPULSE_CONFIG"]
     svc = _get_lecture_service()
-
-    session = db.get(ClassSession, session_id)
-    if session is None:
-        return jsonify({"error": "Session not found."}), 404
 
     saved_path: Path | None = None
     transcript_text: str | None = None

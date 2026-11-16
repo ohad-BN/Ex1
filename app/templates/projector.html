@@ -71,12 +71,13 @@
 
   <script>
     const SESSION_CODE = "{{ session.session_code }}";
+    const PROJECTOR_TOKEN = "{{ projector_token or '' }}";
     const STEP_MS = {{ qr_payload.step_seconds * 1000 }};
     let lastRotate = Date.now();
 
     const socket = io();
     socket.on("connect", () => {
-      socket.emit("join_session", { session_code: SESSION_CODE });
+      socket.emit("join_session", { session_code: SESSION_CODE, projector_token: PROJECTOR_TOKEN });
     });
     socket.on("qr:rotate", (data) => {
       if (data.session_code !== SESSION_CODE) return;
@@ -89,7 +90,7 @@
     });
 
     setInterval(() => {
-      socket.emit("qr:request_refresh", { session_code: SESSION_CODE });
+      socket.emit("qr:request_refresh", { session_code: SESSION_CODE, projector_token: PROJECTOR_TOKEN });
     }, STEP_MS);
 
     setInterval(() => {

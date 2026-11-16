@@ -6,7 +6,8 @@ from flask import current_app, request
 from flask_socketio import emit
 
 from app import socketio
-from app.models import ClassSession, Student
+from app.models import ClassSession, Course, Student
+from app.routes.guards import get_current_lecturer, is_lecturer_authorized_for_course
 from app.services.chat_service import ChatError, ChatService
 from app.services.qr_service import DeviceBindingManager
 
@@ -32,20 +33,34 @@ def handle_socket_chat_send(data: dict[str, Any] | None) -> None:
     if session is None:
         return
 
+    lecturer = get_current_lecturer()
+    course = db.get(Course, session.course_id) if session.course_id else None
+    if (
+        lecturer is not None
+        and course is not None
+        and course.lecturer_id is not None
+        and not is_lecturer_authorized_for_course(db, course, lecturer.id)
+    ):
+        emit("chat:error", {"error": "Access denied: cannot post in another lecturer's course."})
+        return
+
     student = None
     parsed = device_mgr.parse_device_cookie(
         request.cookies.get(DeviceBindingManager.COOKIE_NAME)
     )
     if parsed is not None:
         student = db.get(Student, parsed[1])
-    elif payload.get("student_id") is not None:
+    elif course is None and payload.get("student_id") is not None:
         student = db.get(Student, int(payload["student_id"]))
 
-    author_name = (
-        student.full_name
-        if student is not None
-        else str(payload.get("author_name", "Student")).strip()
-    )
+    if lecturer is not None and (
+        course is None or course.lecturer_id is None or is_lecturer_authorized_for_course(db, course, lecturer.id)
+    ):
+        author_name = lecturer.full_name
+    elif student is not None:
+        author_name = student.full_name
+    else:
+        author_name = str(payload.get("author_name", "Student")).strip()
 
     svc = ChatService(db=db)
     try:

@@ -6,6 +6,7 @@ from flask import Blueprint, current_app, jsonify, request
 
 from app import socketio
 from app.models import ClassSession, Poll, Student
+from app.routes.guards import require_session_access
 from app.services.poll_service import PollError, PollService
 from app.services.qr_service import DeviceBindingManager
 
@@ -39,6 +40,9 @@ def list_polls(session_id: int):
 
 @polls_bp.post("/api/sessions/<int:session_id>/polls")
 def create_poll(session_id: int):
+    _sess, _lec, err = require_session_access(session_id)
+    if err is not None:
+        return err
     db = current_app.extensions["db_session"]
     svc = PollService(db)
     data = request.get_json(silent=True) or request.form.to_dict()
@@ -88,6 +92,13 @@ def create_poll(session_id: int):
 @polls_bp.post("/api/polls/<int:poll_id>/launch")
 def launch_poll(poll_id: int):
     db = current_app.extensions["db_session"]
+    target_poll = db.get(Poll, poll_id)
+    if target_poll is None:
+        return jsonify({"error": "Poll not found."}), 404
+    _sess, _lec, err = require_session_access(target_poll.session_id)
+    if err is not None:
+        return err
+
     svc = PollService(db)
     try:
         poll = svc.launch_poll(poll_id)
@@ -106,6 +117,13 @@ def launch_poll(poll_id: int):
 @polls_bp.post("/api/polls/<int:poll_id>/close")
 def close_poll(poll_id: int):
     db = current_app.extensions["db_session"]
+    target_poll = db.get(Poll, poll_id)
+    if target_poll is None:
+        return jsonify({"error": "Poll not found."}), 404
+    _sess, _lec, err = require_session_access(target_poll.session_id)
+    if err is not None:
+        return err
+
     svc = PollService(db)
     try:
         poll = svc.close_poll(poll_id)

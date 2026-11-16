@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ClassPulse — Lecturer Sign-In &amp; Class Setup</title>
+  <script src="/static/js/csrf.js"></script>
   <style>
     :root {
       --bg: #0b1120;
@@ -67,7 +68,7 @@
       color: var(--muted);
       margin-bottom: 6px;
     }
-    input[type="text"], input[type="email"] {
+    input[type="text"], input[type="email"], input[type="password"] {
       width: 100%;
       padding: 11px 12px;
       border-radius: 10px;
@@ -75,6 +76,37 @@
       background: #0f172a;
       color: var(--text);
       font-size: 14px;
+      margin-bottom: 14px;
+    }
+    .auth-tabs {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    .auth-tab {
+      padding: 9px 10px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: #0f172a;
+      color: var(--muted);
+      font-weight: 700;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .auth-tab.active {
+      background: rgba(56, 189, 248, 0.16);
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+    .ok-msg {
+      display: none;
+      background: rgba(34, 197, 94, 0.16);
+      border: 1px solid #22c55e;
+      color: #86efac;
+      padding: 10px 12px;
+      border-radius: 10px;
+      font-size: 13px;
       margin-bottom: 14px;
     }
     button {
@@ -133,61 +165,125 @@
       <div id="pill-step-3" class="step-pill">3. Live QR Dashboard</div>
     </div>
 
-    <!-- STEP 1: LECTURER SIGN-IN -->
+    <!-- STEP 1: LECTURER SIGN IN / REGISTER -->
     <div id="card-step-1" class="card">
-      <span class="badge">Teacher &amp; Lecturer Portal</span>
-      <h1>Lecturer Sign-In</h1>
-      <p class="sub">
-        Sign in with your name and university email to manage your school courses, create lectures, and launch 5-second rotating QR attendance.
+      <span class="badge">Professor &amp; Lecturer Portal</span>
+      <h1 id="auth-heading">Lecturer Sign In</h1>
+      <p class="sub" id="auth-sub">
+        Sign in with your username or email and password, or register a new professor account to get your own isolated dashboard.
       </p>
 
+      <div class="auth-tabs">
+        <button type="button" id="tab-btn-signin" class="auth-tab active" onclick="switchAuthTab('signin')">Sign In</button>
+        <button type="button" id="tab-btn-register" class="auth-tab" onclick="switchAuthTab('register')">Create Account</button>
+      </div>
+
       <div id="login-error" class="err-msg"></div>
+      <div id="login-ok" class="ok-msg"></div>
 
-      <label for="lec-name">Lecturer Full Name</label>
-      <input type="text" id="lec-name" value="{{ lecturer.full_name if lecturer else 'Prof. Boaz Ben-Moshe' }}" placeholder="e.g. Prof. Boaz Ben-Moshe" />
+      <!-- SIGN IN PANEL -->
+      <div id="panel-signin">
+        <label for="login-identifier">Username or University Email</label>
+        <input type="text" id="login-identifier" autocomplete="username" placeholder="e.g. boaz or boaz@ariel.ac.il" />
 
-      <label for="lec-email">University Email</label>
-      <input type="email" id="lec-email" value="{{ lecturer.email if lecturer else 'boaz@ariel.ac.il' }}" placeholder="e.g. boaz@ariel.ac.il" />
+        <label for="login-password">Password</label>
+        <input type="password" id="login-password" autocomplete="current-password" placeholder="Enter your password" onkeydown="if(event.key==='Enter') handleLecturerSignIn()" />
 
-      <label for="lec-dept">Department / Faculty</label>
-      <input type="text" id="lec-dept" value="{{ lecturer.department if lecturer else 'Computer Science' }}" placeholder="e.g. Computer Science" />
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; font-size:12px; color:var(--muted);">
+          <label style="display:flex; align-items:center; gap:6px; margin:0; cursor:pointer;">
+            <input type="checkbox" id="login-remember" checked style="width:auto; margin:0;" />
+            <span>Keep me signed in (7 days)</span>
+          </label>
+          <a href="javascript:void(0)" onclick="toggleForgotBox()" style="color:var(--accent); text-decoration:none; font-weight:600;">Forgot password?</a>
+        </div>
 
-      <button type="button" onclick="handleLecturerSignIn()">Sign In &amp; Continue &rarr;</button>
+        <button type="button" onclick="handleLecturerSignIn()">Sign In &amp; Continue &rarr;</button>
+
+        <div id="forgot-box" style="display:none; margin-top:14px; padding-top:14px; border-top:1px solid var(--border);">
+          <label for="forgot-identifier">Reset Password — Username or Email</label>
+          <input type="text" id="forgot-identifier" placeholder="Enter your username or email" />
+          <button type="button" style="background:#334155; color:var(--text); margin-bottom:8px;" onclick="handleForgotPassword()">Send Reset Link / Token</button>
+          <div id="reset-confirm-box" style="display:none; margin-top:10px;">
+            <label for="reset-token">Reset Token</label>
+            <input type="text" id="reset-token" placeholder="Paste reset token" />
+            <label for="reset-new-pw">New Password</label>
+            <input type="password" id="reset-new-pw" placeholder="Min 8 chars, letters + number/symbol" />
+            <button type="button" class="btn-green" onclick="handleResetPassword()">Set New Password</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- REGISTER PANEL -->
+      <div id="panel-register" style="display:none;">
+        <label for="reg-name">Full Name</label>
+        <input type="text" id="reg-name" placeholder="e.g. Dr. Daniel Levi" />
+
+        <label for="reg-username">Username</label>
+        <input type="text" id="reg-username" autocomplete="username" placeholder="e.g. daniel.levi (lowercase letters, digits, ._-)" />
+
+        <label for="reg-email">University Email</label>
+        <input type="email" id="reg-email" autocomplete="email" placeholder="e.g. daniel@ariel.ac.il" />
+
+        <label for="reg-dept">Department / Faculty</label>
+        <input type="text" id="reg-dept" value="Computer Science" placeholder="e.g. Computer Science" />
+
+        <label for="reg-password">Password</label>
+        <input type="password" id="reg-password" autocomplete="new-password" placeholder="At least 8 chars (letter + number/symbol)" />
+
+        <label for="reg-confirm">Confirm Password</label>
+        <input type="password" id="reg-confirm" autocomplete="new-password" placeholder="Repeat password" onkeydown="if(event.key==='Enter') handleLecturerRegister()" />
+
+        <button type="button" class="btn-green" onclick="handleLecturerRegister()">Register Professor Account &rarr;</button>
+      </div>
 
       {% if lecturer %}
-      <div style="margin-top:12px; text-align:center;">
-        <a href="/teacher?course_id=1" style="color:var(--accent); font-size:13px; text-decoration:none;">
-          Already signed in as {{ lecturer.full_name }} — Go directly to Dashboard &rarr;
+      <div style="margin-top:14px; padding-top:12px; border-top:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap;">
+        {% if lecturer_courses %}
+        <a href="/teacher" style="color:var(--accent); font-size:13px; text-decoration:none;">
+          Signed in as <strong>{{ lecturer.full_name }}</strong> (@{{ lecturer.username or 'lecturer' }}) &mdash; Open Dashboard &rarr;
         </a>
+        {% else %}
+        <span style="color:var(--muted); font-size:13px;">Signed in as {{ lecturer.full_name }}</span>
+        {% endif %}
+        <button type="button" onclick="handleLecturerLogout()" style="width:auto; padding:6px 12px; font-size:12px; background:#334155; color:var(--text);">
+          Sign Out
+        </button>
       </div>
       {% endif %}
     </div>
 
     <!-- STEP 2: CREATE CLASS (COURSE) & FIRST LECTURE -->
     <div id="card-step-2" class="card" style="display:none;">
-      <span class="badge">Step 2 &bull; Class &amp; Lecture Setup</span>
-      <h1>Create a Class &amp; Lecture</h1>
-      <p class="sub">
-        Create a new school course and its first lecture session, or jump straight into your existing classes.
+      <span class="badge" id="step2-badge">Step 2 &bull; Class &amp; Lecture Setup</span>
+      <h1 id="step2-title">Your Classes &amp; New Course</h1>
+      <p class="sub" id="step2-sub">
+        Create your own course and its first lecture session, or open one of your existing classes below.
       </p>
+
+      <div id="my-courses-box" style="margin-bottom:16px; display:none;">
+        <div style="font-size:12px; font-weight:700; color:var(--accent); text-transform:uppercase; margin-bottom:8px;">
+          Your Existing Courses
+        </div>
+        <div id="my-courses-list" style="display:flex; flex-direction:column; gap:8px;"></div>
+      </div>
 
       <div id="course-error" class="err-msg"></div>
 
       <label for="setup-course-code">Course Code</label>
-      <input type="text" id="setup-course-code" placeholder="e.g. CS204 or SE101" value="CS204" />
+      <input type="text" id="setup-course-code" placeholder="e.g. CS204 or DAN101" value="" />
 
       <label for="setup-course-name">Course Name (Class Title)</label>
-      <input type="text" id="setup-course-name" placeholder="e.g. Object-Oriented Programming & SE" value="Object-Oriented Programming & SE" />
+      <input type="text" id="setup-course-name" placeholder="e.g. Object-Oriented Programming & SE" value="" />
 
       <label for="setup-lecture-title">First Lecture Title</label>
-      <input type="text" id="setup-lecture-title" placeholder="e.g. Lecture 1 — Architecture & Design" value="Lecture 1 — Architecture & Design" />
+      <input type="text" id="setup-lecture-title" placeholder="e.g. Lecture 1 — Architecture & Design" value="" />
 
       <button type="button" class="btn-green" onclick="handleCreateClassAndLecture()" style="margin-bottom:10px;">
         Create Class &amp; Launch Live Lecture QR &rarr;
       </button>
 
-      <button type="button" style="background:#334155; color:var(--text);" onclick="window.location.href='/teacher?course_id=1'">
-        Open Existing Classes in Workspace
+      <button type="button" id="btn-open-existing" style="display:none; background:#334155; color:var(--text);" onclick="window.location.href='/teacher'">
+        Open My Courses Dashboard &rarr;
       </button>
     </div>
 
@@ -197,24 +293,83 @@
   </div>
 
   <script>
+    const INITIAL_LECTURER_COURSES = {{ lecturer_courses | tojson }};
+    const FORCE_SETUP = {{ 'true' if force_setup else 'false' }};
+
+    function renderLecturerCoursesStep2(courses, lecturerName) {
+      const box = document.getElementById("my-courses-box");
+      const list = document.getElementById("my-courses-list");
+      const openBtn = document.getElementById("btn-open-existing");
+      const sub = document.getElementById("step2-sub");
+      list.innerHTML = "";
+
+      if (courses && courses.length > 0) {
+        box.style.display = "block";
+        openBtn.style.display = "block";
+        sub.textContent = `Welcome back${lecturerName ? ", " + lecturerName : ""}. Open one of your courses or create a new class below.`;
+        courses.forEach((c) => {
+          const row = document.createElement("a");
+          row.href = `/teacher?course_id=${c.id}`;
+          row.style.cssText = "display:flex; justify-content:space-between; align-items:center; padding:10px 12px; border-radius:10px; background:#0f172a; border:1px solid #334155; color:#f8fafc; text-decoration:none; font-size:13px;";
+          row.innerHTML = `<span><strong>${c.course_code}</strong> &mdash; ${c.name}</span><span style="color:#38bdf8; font-weight:700;">Open &rarr;</span>`;
+          list.appendChild(row);
+        });
+      } else {
+        box.style.display = "none";
+        openBtn.style.display = "none";
+        sub.textContent = `Welcome${lecturerName ? ", " + lecturerName : ""}! You don't have any courses yet. Create your first course and lecture below to launch your personal dashboard.`;
+      }
+    }
+
+    function showStep2(courses, lecturerName) {
+      renderLecturerCoursesStep2(courses, lecturerName);
+      document.getElementById("card-step-1").style.display = "none";
+      document.getElementById("card-step-2").style.display = "block";
+      document.getElementById("pill-step-1").classList.remove("active");
+      document.getElementById("pill-step-2").classList.add("active");
+    }
+
+    function switchAuthTab(tab) {
+      document.getElementById("login-error").style.display = "none";
+      document.getElementById("login-ok").style.display = "none";
+      const isSignIn = tab === "signin";
+      document.getElementById("panel-signin").style.display = isSignIn ? "block" : "none";
+      document.getElementById("panel-register").style.display = isSignIn ? "none" : "block";
+      document.getElementById("tab-btn-signin").classList.toggle("active", isSignIn);
+      document.getElementById("tab-btn-register").classList.toggle("active", !isSignIn);
+      document.getElementById("auth-heading").textContent = isSignIn ? "Lecturer Sign In" : "Create Professor Account";
+    }
+
+    function toggleForgotBox() {
+      const el = document.getElementById("forgot-box");
+      el.style.display = el.style.display === "none" ? "block" : "none";
+    }
+
+    async function handleLecturerLogout() {
+      await fetch("/api/auth/lecturer/logout", { method: "POST" });
+      window.location.href = "/teacher/login";
+    }
+
     async function handleLecturerSignIn() {
       const errEl = document.getElementById("login-error");
+      const okEl = document.getElementById("login-ok");
       errEl.style.display = "none";
+      okEl.style.display = "none";
 
-      const full_name = document.getElementById("lec-name").value.trim();
-      const email = document.getElementById("lec-email").value.trim();
-      const department = document.getElementById("lec-dept").value.trim() || "Computer Science";
+      const identifier = document.getElementById("login-identifier").value.trim();
+      const password = document.getElementById("login-password").value;
+      const remember_me = document.getElementById("login-remember").checked;
 
-      if (!full_name || !email) {
-        errEl.textContent = "Please enter both your full name and email.";
+      if (!identifier || !password) {
+        errEl.textContent = "Please enter your username/email and password.";
         errEl.style.display = "block";
         return;
       }
 
-      const res = await fetch("/api/teacher/login", {
+      const res = await fetch("/api/auth/lecturer/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ full_name, email, department }),
+        body: JSON.stringify({ identifier, password, remember_me }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -223,11 +378,84 @@
         return;
       }
 
-      // Advance to Step 2: Create a Class & Lecture
-      document.getElementById("card-step-1").style.display = "none";
-      document.getElementById("card-step-2").style.display = "block";
-      document.getElementById("pill-step-1").classList.remove("active");
-      document.getElementById("pill-step-2").classList.add("active");
+      showStep2(data.courses || [], data.lecturer ? data.lecturer.full_name : identifier);
+    }
+
+    async function handleLecturerRegister() {
+      const errEl = document.getElementById("login-error");
+      const okEl = document.getElementById("login-ok");
+      errEl.style.display = "none";
+      okEl.style.display = "none";
+
+      const full_name = document.getElementById("reg-name").value.trim();
+      const username = document.getElementById("reg-username").value.trim();
+      const email = document.getElementById("reg-email").value.trim();
+      const department = document.getElementById("reg-dept").value.trim() || "Computer Science";
+      const password = document.getElementById("reg-password").value;
+      const confirm_password = document.getElementById("reg-confirm").value;
+
+      if (!full_name || !username || !email || !password) {
+        errEl.textContent = "Please complete all registration fields.";
+        errEl.style.display = "block";
+        return;
+      }
+
+      const res = await fetch("/api/auth/lecturer/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ full_name, username, email, department, password, confirm_password }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        errEl.textContent = data.error || "Registration failed.";
+        errEl.style.display = "block";
+        return;
+      }
+
+      showStep2(data.courses || [], data.lecturer ? data.lecturer.full_name : full_name);
+    }
+
+    async function handleForgotPassword() {
+      const errEl = document.getElementById("login-error");
+      const okEl = document.getElementById("login-ok");
+      errEl.style.display = "none";
+      const identifier = document.getElementById("forgot-identifier").value.trim();
+      const res = await fetch("/api/auth/lecturer/forgot-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ identifier }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        errEl.textContent = data.error || "Could not process request.";
+        errEl.style.display = "block";
+        return;
+      }
+      okEl.textContent = data.message || "Reset instructions generated.";
+      okEl.style.display = "block";
+      document.getElementById("reset-confirm-box").style.display = "block";
+    }
+
+    async function handleResetPassword() {
+      const errEl = document.getElementById("login-error");
+      const okEl = document.getElementById("login-ok");
+      errEl.style.display = "none";
+      const token = document.getElementById("reset-token").value.trim();
+      const new_password = document.getElementById("reset-new-pw").value;
+      const res = await fetch("/api/auth/lecturer/reset-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token, new_password }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        errEl.textContent = data.error || "Reset failed.";
+        errEl.style.display = "block";
+        return;
+      }
+      okEl.textContent = "Password updated cleanly. You can sign in now.";
+      okEl.style.display = "block";
+      document.getElementById("forgot-box").style.display = "none";
     }
 
     async function handleCreateClassAndLecture() {
@@ -236,7 +464,7 @@
 
       const course_code = document.getElementById("setup-course-code").value.trim().toUpperCase();
       const name = document.getElementById("setup-course-name").value.trim();
-      const initial_lecture_title = document.getElementById("setup-lecture-title").value.trim() || "Lecture 1";
+      const initial_lecture_title = document.getElementById("setup-lecture-title").value.trim() || `Lecture 1 — ${name}`;
 
       if (!course_code || !name) {
         errEl.textContent = "Please enter a Course Code and Course Name.";
@@ -244,7 +472,6 @@
         return;
       }
 
-      // 1. Create or fetch the Course
       const res = await fetch("/api/courses", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -257,19 +484,17 @@
         return;
       }
 
-      // 2. Create the requested lecture session inside that course
-      const sessRes = await fetch(`/api/courses/${courseData.id}/sessions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title: initial_lecture_title }),
-      });
-      const sessData = await sessRes.json();
-
       document.getElementById("pill-step-2").classList.remove("active");
       document.getElementById("pill-step-3").classList.add("active");
 
-      const targetSession = sessData.session_code || courseData.active_session_code || "";
-      window.location.href = `/teacher?course_id=${courseData.id}&session=${targetSession}`;
+      const targetSession = courseData.active_session_code || "";
+      window.location.href = targetSession
+        ? `/teacher?course_id=${courseData.id}&session=${targetSession}`
+        : `/teacher?course_id=${courseData.id}`;
+    }
+
+    if (FORCE_SETUP) {
+      showStep2(INITIAL_LECTURER_COURSES, {{ (lecturer.full_name if lecturer else '') | tojson }});
     }
   </script>
 </body>

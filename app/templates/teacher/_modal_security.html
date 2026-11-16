@@ -1,0 +1,36 @@
+  <!-- Modal: Account Security & Audit Trail -->
+  <div id="modal-account-security" class="modal-backdrop">
+    <div class="modal-card" style="width:520px; max-width:95vw; max-height:85vh; overflow-y:auto;">
+      <h3 style="margin-top:0;">Professor Account Security</h3>
+      <p style="font-size:12px; color:var(--muted); margin-top:0;">
+        Signed in as <strong>{{ lecturer.full_name if lecturer else '' }}</strong> (@{{ lecturer.username if lecturer else '' }} &bull; {{ lecturer.email if lecturer else '' }}).
+      </p>
+      <div style="margin-bottom:10px;">
+        <label style="font-size:12px; color:var(--muted);">Current Password</label>
+        <input type="password" id="sec-cur-pw" placeholder="Current password" />
+      </div>
+      <div style="margin-bottom:10px;">
+        <label style="font-size:12px; color:var(--muted);">New Password</label>
+        <input type="password" id="sec-new-pw" placeholder="Min 8 chars (letter + number/symbol)" />
+      </div>
+      <div style="margin-bottom:14px;">
+        <label style="font-size:12px; color:var(--muted);">Confirm New Password</label>
+        <input type="password" id="sec-confirm-pw" placeholder="Repeat new password" />
+      </div>
+      <div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap; margin-bottom:14px;">
+        <button type="button" class="btn-secondary" onclick="logoutAllDevices()">Sign Out All Devices</button>
+        <div style="display:flex; gap:8px;">
+          <button type="button" class="btn-secondary" onclick="closeModal('modal-account-security')">Close</button>
+          <button type="button" onclick="submitChangePassword()">Update Password</button>
+        </div>
+      </div>
+
+      <div style="border-top:1px solid var(--border); padding-top:12px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <strong style="font-size:12px; color:var(--accent);">Recent Security Activity</strong>
+          <button type="button" class="btn-secondary btn-sm" onclick="loadAuditLogs()">Load Logs</button>
+        </div>
+        <div id="security-audit-list" style="max-height:170px; overflow-y:auto; font-size:11px; color:var(--muted);"></div>
+      </div>
+    </div>
+  </div>

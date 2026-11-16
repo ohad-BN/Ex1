@@ -7,6 +7,7 @@ from flask import Blueprint, current_app, jsonify, request
 from werkzeug.utils import secure_filename
 
 from app.models import Assignment, ClassStatsAggregate, Student
+from app.routes.guards import require_course_access
 from app.services.homework_pipeline import HomeworkPipelineError, HomeworkReviewService
 from app.services.qr_service import DeviceBindingManager
 
@@ -46,6 +47,10 @@ def list_course_assignments(course_id: int):
 
 @homework_bp.post("/api/courses/<int:course_id>/assignments")
 def create_course_assignment(course_id: int):
+    _course, _lec, err = require_course_access(course_id)
+    if err is not None:
+        return err
+
     svc = _get_hw_service()
     payload: dict[str, Any] = request.get_json(silent=True) or request.form.to_dict()
     title = str(payload.get("title", "")).strip()
@@ -71,6 +76,10 @@ def create_course_assignment(course_id: int):
 
 @homework_bp.post("/api/courses/<int:course_id>/assignments/seed-sample")
 def seed_sample_assignment(course_id: int):
+    _course, _lec, err = require_course_access(course_id)
+    if err is not None:
+        return err
+
     svc = _get_hw_service()
     try:
         assignment = svc.seed_sample_course_assignment(course_id)

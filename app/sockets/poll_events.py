@@ -30,13 +30,15 @@ def handle_poll_request_sync(data: dict[str, Any] | None) -> None:
     if session is None:
         return
 
-    student_id = payload.get("student_id")
-    if student_id is None:
-        parsed = device_mgr.parse_device_cookie(
-            request.cookies.get(DeviceBindingManager.COOKIE_NAME)
-        )
-        if parsed is not None:
-            student_id = parsed[1]
+    parsed = device_mgr.parse_device_cookie(
+        request.cookies.get(DeviceBindingManager.COOKIE_NAME)
+    )
+    if parsed is not None:
+        student_id = parsed[1]
+    elif session.course_id is None:
+        student_id = payload.get("student_id")
+    else:
+        student_id = None
 
     svc = PollService(db)
     sync_data = svc.build_sync_payload(
@@ -56,13 +58,17 @@ def handle_socket_poll_vote(data: dict[str, Any] | None) -> None:
     db = current_app.extensions["db_session"]
     device_mgr: DeviceBindingManager = current_app.extensions["device_mgr"]
 
-    student_id = payload.get("student_id")
-    if student_id is None:
-        parsed = device_mgr.parse_device_cookie(
-            request.cookies.get(DeviceBindingManager.COOKIE_NAME)
-        )
-        if parsed is not None:
-            student_id = parsed[1]
+    poll_target = db.get(Poll, int(poll_id))
+    poll_sess = db.get(ClassSession, poll_target.session_id) if poll_target else None
+    parsed = device_mgr.parse_device_cookie(
+        request.cookies.get(DeviceBindingManager.COOKIE_NAME)
+    )
+    if parsed is not None:
+        student_id = parsed[1]
+    elif poll_sess is None or poll_sess.course_id is None:
+        student_id = payload.get("student_id")
+    else:
+        student_id = None
 
     if student_id is None:
         emit("poll:error", {"error": "Student check-in required before voting."})

@@ -1,0 +1,58 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: classpulse_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-classpulse}
+      POSTGRES_USER: ${POSTGRES_USER:-classpulse}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-classpulse}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: classpulse_redis
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: classpulse_web_prod
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    ports:
+      - "127.0.0.1:5055:5000"
+    env_file:
+      - .env
+    environment:
+      CLASSPULSE_ENV: production
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-classpulse}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-classpulse}
+      REDIS_URL: redis://redis:6379/0
+      ENABLE_DEMO_SEED: "false"
+      HEADCOUNT_RETENTION_HOURS: "72"
+    volumes:
+      - ./data/uploads:/app/data/uploads
+      - ./data/reports:/app/data/reports
+      - ./models_cache:/app/models_cache
+
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    container_name: classpulse_tunnel_prod
+    restart: unless-stopped
+    depends_on:
+      - web
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN:?Set CLOUDFLARE_TUNNEL_TOKEN}
+
+volumes:
+  postgres_data:

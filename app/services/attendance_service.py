@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import csv
+from datetime import datetime, timedelta, timezone
 import io
+from pathlib import Path
 import re
 import secrets
-from datetime import datetime, timezone
 from typing import Any, Optional
 
 from sqlalchemy.exc import IntegrityError
@@ -19,10 +20,9 @@ from app.models import (
     RosterEntry,
     Student,
 )
+from app.services.identity_helpers import parse_roster_csv_rows, resolve_or_upsert_student
 from app.services.qr_service import DeviceBindingManager, RollingQRService
 from app.services.reconciler import AttendanceReconciler, AuditVerdict
-
-EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 class AttendanceError(Exception):
@@ -160,6 +160,7 @@ class AttendanceService:
         full_name: Optional[str],
         email: Optional[str],
         device_id: str,
+        student_id_number: Optional[str] = None,
         existing_student_id: Optional[int] = None,
         onboarding_grant: Optional[str] = None,
         now_ts: Optional[float] = None,
@@ -217,7 +218,7 @@ class AttendanceService:
                     return device_record, bound_student, False
             raise ProxyAttendanceBlockedError()
 
-        # 2. Resolve Student (by existing cookie student_id or by Name + Email onboarding)
+        # 2. Resolve Student (by existing cookie student_id or by Name + Email + optional Student ID)
         student: Optional[Student] = None
         norm_email = (email or "").strip().lower()
         clean_name = (full_name or "").strip()
@@ -226,32 +227,16 @@ class AttendanceService:
             student = self.db.get(Student, existing_student_id)
 
         if student is None:
-            if not clean_name or not norm_email:
-                raise AttendanceError(
-                    "Full name and email are required for first-time registration.",
-                    status_code=400,
-                )
-            if not EMAIL_RE.match(norm_email):
-                raise AttendanceError(
-                    "Please enter a valid university or personal email address.",
-                    status_code=400,
-                )
-            student = (
-                self.db.query(Student).filter_by(email=norm_email).one_or_none()
+            resolved_student, err = resolve_or_upsert_student(
+                self.db,
+                full_name=clean_name,
+                email=norm_email,
+                student_id_number=student_id_number,
+                device_id=device_id,
             )
-            if student is None:
-                student = Student(
-                    full_name=clean_name,
-                    email=norm_email,
-                    primary_device_id=device_id,
-                )
-                self.db.add(student)
-                self.db.flush()
-            else:
-                student.full_name = clean_name
-                if not student.primary_device_id:
-                    student.primary_device_id = device_id
-                self.db.flush()
+            if err is not None:
+                raise AttendanceError(err[0], status_code=err[1])
+            student = resolved_student
 
         # 3. Check if this student already checked in during this session (e.g. from another device)
         student_record = (
@@ -308,22 +293,9 @@ class AttendanceService:
         return record, student, True
 
     def import_roster_csv(self, session_id: int, csv_content: str) -> int:
-        """Parse a CSV string (name, email) and upsert RosterEntry records."""
-        reader = csv.reader(io.StringIO(csv_content.strip()))
+        """Parse CSV rows into RosterEntry records supporting (Name, Email) and optional Student ID."""
         imported = 0
-        for row in reader:
-            if not row or len(row) < 2:
-                continue
-            col0, col1 = row[0].strip(), row[1].strip()
-            if col0.lower() in ("name", "full_name", "student name") and "mail" in col1.lower():
-                continue
-            # Support either (name, email) or (email, name)
-            if "@" in col0 and "@" not in col1:
-                email_val, name_val = col0.lower(), col1
-            else:
-                name_val, email_val = col0, col1.lower()
-            if not EMAIL_RE.match(email_val) or not name_val:
-                continue
+        for sid_val, name_val, email_val in parse_roster_csv_rows(csv_content):
             existing = (
                 self.db.query(RosterEntry)
                 .filter_by(session_id=session_id, email=email_val)
@@ -332,12 +304,17 @@ class AttendanceService:
             if existing is None:
                 self.db.add(
                     RosterEntry(
-                        session_id=session_id, full_name=name_val, email=email_val
+                        session_id=session_id,
+                        student_id_number=sid_val,
+                        full_name=name_val,
+                        email=email_val,
                     )
                 )
                 imported += 1
             else:
                 existing.full_name = name_val
+                if sid_val is not None:
+                    existing.student_id_number = sid_val
         self.db.commit()
         return imported
 
@@ -373,6 +350,8 @@ class AttendanceService:
                 rec, st = matched
                 rows.append(
                     {
+                        "student_id": st.id,
+                        "student_id_number": st.student_id_number or r_entry.student_id_number or "-",
                         "full_name": st.full_name,
                         "email": st.email,
                         "roster_status": "Registered",
@@ -385,6 +364,8 @@ class AttendanceService:
             else:
                 rows.append(
                     {
+                        "student_id": None,
+                        "student_id_number": r_entry.student_id_number or "-",
                         "full_name": r_entry.full_name,
                         "email": r_entry.email,
                         "roster_status": "Registered",
@@ -400,6 +381,8 @@ class AttendanceService:
             if em not in seen_emails:
                 rows.append(
                     {
+                        "student_id": st.id,
+                        "student_id_number": st.student_id_number or "-",
                         "full_name": st.full_name,
                         "email": st.email,
                         "roster_status": "Walk-In / Unlisted" if roster_list else "Registered (Self)",
@@ -439,3 +422,27 @@ class AttendanceService:
             tolerance=tolerance,
             has_snapshot=latest_snap is not None,
         )
+
+    def purge_expired_headcount_photos(self, retention_hours: int) -> int:
+        """Delete classroom headcount image files older than retention_hours while preserving numeric counts."""
+        if retention_hours <= 0:
+            return 0
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=retention_hours)
+        snaps = self.db.query(HeadcountSnapshot).all()
+        deleted_files = 0
+        for snap in snaps:
+            created = snap.captured_at
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+            if created >= cutoff:
+                continue
+            for p_str in (snap.raw_image_path, snap.annotated_image_path):
+                if p_str:
+                    p = Path(p_str)
+                    if p.exists() and p.is_file():
+                        try:
+                            p.unlink()
+                            deleted_files += 1
+                        except OSError:
+                            pass
+        return deleted_files

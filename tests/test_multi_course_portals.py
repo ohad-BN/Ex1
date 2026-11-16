@@ -33,6 +33,19 @@ def test_multi_course_creation_and_teacher_portal_rendering(school_app) -> None:
     """Phase 10A/10B: Verify multi-course creation, course lecture sessions, and /teacher portal."""
     client = school_app.test_client()
 
+    # 0. Register as a Lecturer first
+    reg_resp = client.post(
+        "/api/auth/lecturer/register",
+        json={
+            "full_name": "Prof. Boaz Ben-Moshe",
+            "username": "boaz.bm",
+            "email": "boaz@ariel.ac.il",
+            "password": "Password123!",
+            "department": "Computer Science",
+        },
+    )
+    assert reg_resp.status_code == 201
+
     # 1. Create a new school course via REST API
     create_resp = client.post(
         "/api/courses",
@@ -73,8 +86,8 @@ def test_qr_checkin_auto_enrolls_student_in_course_and_populates_student_app(
     client = school_app.test_client()
     qr: RollingQRService = school_app.extensions["qr_service"]
 
-    # Ensure default courses (CS204 -> ARIEL1) exist
-    courses_resp = client.get("/api/courses").get_json()
+    # Ensure default courses (CS204 -> ARIEL1) exist in public catalog
+    courses_resp = client.get("/api/student/courses/catalog").get_json()
     assert len(courses_resp["courses"]) >= 2
 
     # Student checks into ARIEL1 via QR
@@ -131,17 +144,19 @@ def test_lecturer_signin_and_class_lecture_creation_workflow(school_app) -> None
     assert unauth_resp.status_code == 302
     assert "/teacher/login" in unauth_resp.headers["Location"]
 
-    # 2. Lecturer signs in via /api/teacher/login
-    login_resp = teacher_client.post(
-        "/api/teacher/login",
+    # 2. Lecturer registers & creates a new Class (Course) + Lecture
+    reg_resp = teacher_client.post(
+        "/api/auth/lecturer/register",
         json={
             "full_name": "Prof. Boaz Ben-Moshe",
+            "username": "boaz_ariel",
             "email": "boaz@ariel.ac.il",
+            "password": "StrongPass1!",
             "department": "Computer Science",
         },
     )
-    assert login_resp.status_code == 200
-    assert login_resp.get_json()["lecturer"]["email"] == "boaz@ariel.ac.il"
+    assert reg_resp.status_code == 201
+    assert reg_resp.get_json()["lecturer"]["email"] == "boaz@ariel.ac.il"
 
     # 3. Signed-in Lecturer creates a new Class (Course) + Lecture
     c_resp = teacher_client.post(

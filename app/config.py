@@ -47,6 +47,24 @@ class Config:
     # Background task executor threads
     MAX_TASK_WORKERS: int = int(os.getenv("MAX_TASK_WORKERS", "2"))
 
+    # Production, security & privacy retention flags (Phases 2-5)
+    CLASSPULSE_ENV: str = os.getenv("CLASSPULSE_ENV", os.getenv("FLASK_ENV", "development")).lower()
+    ENABLE_DEMO_SEED: bool = os.getenv("ENABLE_DEMO_SEED", "true").lower() in ("1", "true", "yes")
+    HEADCOUNT_RETENTION_HOURS: int = int(os.getenv("HEADCOUNT_RETENTION_HOURS", "0"))
+    ENABLE_CSRF: bool = os.getenv("ENABLE_CSRF", "true").lower() in ("1", "true", "yes")
+
+    def validate_production_safety(self) -> None:
+        """Fail fast in production mode if SECRET_KEY uses a weak or default dev value."""
+        if self.CLASSPULSE_ENV == "production":
+            if (
+                not self.SECRET_KEY
+                or self.SECRET_KEY == "dev-classpulse-hmac-secret-key-2026"
+                or len(self.SECRET_KEY) < 32
+            ):
+                raise RuntimeError(
+                    "Production startup blocked: configure a strong SECRET_KEY (>= 32 chars) in environment."
+                )
+
     def ensure_directories(self) -> None:
         """Ensure all required runtime data directories exist on disk."""
         for directory in (

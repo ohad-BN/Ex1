@@ -208,7 +208,7 @@ class RollingQRService:
 
 
 class DeviceBindingManager:
-    """Signs and verifies persistent HttpOnly student device and lecturer cookies."""
+    """Signs, times, and verifies persistent HttpOnly student device, lecturer, and projector tokens."""
 
     COOKIE_NAME = "cp_device"
     LECTURER_COOKIE_NAME = "cp_lecturer"
@@ -216,9 +216,12 @@ class DeviceBindingManager:
     def __init__(
         self, secret_key: str, signer_salt: str = "classpulse-device-v1"
     ) -> None:
-        self._serializer = URLSafeSerializer(secret_key, salt=signer_salt)
-        self._lecturer_serializer = URLSafeSerializer(
-            secret_key, salt="classpulse-lecturer-v1"
+        self._serializer = URLSafeTimedSerializer(secret_key, salt=signer_salt)
+        self._lecturer_serializer = URLSafeTimedSerializer(
+            secret_key, salt="classpulse-lecturer-v2"
+        )
+        self._projector_serializer = URLSafeTimedSerializer(
+            secret_key, salt="classpulse-projector-v1"
         )
 
     def create_device_cookie(self, device_id: str, student_id: int) -> str:
@@ -228,33 +231,65 @@ class DeviceBindingManager:
         )
 
     def parse_device_cookie(
-        self, cookie_val: Optional[str]
+        self,
+        cookie_val: Optional[str],
+        max_age: Optional[int] = 86400 * 180,
     ) -> Optional[tuple[str, int]]:
-        """Verify signed cookie and return (device_id, student_id) or None if tampered."""
+        """Verify signed timed cookie and return (device_id, student_id) or None if expired/tampered."""
         if not cookie_val:
             return None
         try:
-            data = self._serializer.loads(cookie_val)
+            data = self._serializer.loads(cookie_val, max_age=max_age)
             if not isinstance(data, dict):
                 return None
             device_id = str(data["device_id"])
             student_id = int(data["student_id"])
             return device_id, student_id
-        except (BadSignature, KeyError, ValueError, TypeError):
+        except (BadSignature, SignatureExpired, KeyError, ValueError, TypeError):
             return None
 
-    def create_lecturer_cookie(self, lecturer_id: int) -> str:
-        """Serialize and sign lecturer_id for the teacher browser cookie."""
-        return self._lecturer_serializer.dumps({"lecturer_id": int(lecturer_id)})
+    def create_lecturer_cookie(
+        self, lecturer_id: int, token_version: int = 1
+    ) -> str:
+        """Serialize and sign (lecturer_id, token_version) for the teacher browser cookie."""
+        return self._lecturer_serializer.dumps(
+            {"lecturer_id": int(lecturer_id), "tv": int(token_version)}
+        )
 
-    def parse_lecturer_cookie(self, cookie_val: Optional[str]) -> Optional[int]:
-        """Verify signed lecturer cookie and return lecturer_id or None."""
+    def parse_lecturer_cookie(
+        self,
+        cookie_val: Optional[str],
+        max_age: Optional[int] = 86400 * 7,
+    ) -> Optional[tuple[int, int]]:
+        """Verify signed timed lecturer cookie and return (lecturer_id, token_version) or None."""
         if not cookie_val:
             return None
         try:
-            data = self._lecturer_serializer.loads(cookie_val)
+            data = self._lecturer_serializer.loads(cookie_val, max_age=max_age)
             if not isinstance(data, dict):
                 return None
-            return int(data["lecturer_id"])
-        except (BadSignature, KeyError, ValueError, TypeError):
+            return int(data["lecturer_id"]), int(data.get("tv", 1))
+        except (BadSignature, SignatureExpired, KeyError, ValueError, TypeError):
             return None
+
+    def create_projector_token(self, session_code: str) -> str:
+        """Issue a scoped share token for classroom projector displays."""
+        return self._projector_serializer.dumps(
+            {"session_code": str(session_code).strip().upper()}
+        )
+
+    def verify_projector_token(
+        self, token: Optional[str], session_code: str, max_age: int = 43200
+    ) -> bool:
+        """Verify a classroom projector token matches the given session_code."""
+        if not token or not session_code:
+            return False
+        try:
+            data = self._projector_serializer.loads(token, max_age=max_age)
+            return (
+                isinstance(data, dict)
+                and str(data.get("session_code", "")).upper()
+                == str(session_code).strip().upper()
+            )
+        except (BadSignature, SignatureExpired, TypeError):
+            return False

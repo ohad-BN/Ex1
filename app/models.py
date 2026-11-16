@@ -42,12 +42,26 @@ class Lecturer(Base):
     __tablename__ = "lecturers"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    username: Mapped[Optional[str]] = mapped_column(
+        String(40), unique=True, index=True, nullable=True
+    )
     full_name: Mapped[str] = mapped_column(String(120), nullable=False)
     email: Mapped[str] = mapped_column(
         String(160), unique=True, index=True, nullable=False
     )
+    password_hash: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     department: Mapped[str] = mapped_column(
         String(120), default="Computer Science", nullable=False
+    )
+    role: Mapped[str] = mapped_column(String(24), default="lecturer", nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    token_version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    failed_login_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    locked_until: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_login_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False
@@ -55,6 +69,55 @@ class Lecturer(Base):
 
     courses: Mapped[list["Course"]] = relationship(
         back_populates="lecturer", cascade="all, delete-orphan"
+    )
+    staff_roles: Mapped[list["CourseStaff"]] = relationship(
+        back_populates="lecturer", cascade="all, delete-orphan"
+    )
+    reset_tokens: Mapped[list["PasswordResetToken"]] = relationship(
+        back_populates="lecturer", cascade="all, delete-orphan"
+    )
+
+
+class PasswordResetToken(Base):
+    """Single-use hashed password reset token for lecturer accounts."""
+
+    __tablename__ = "password_reset_tokens"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    lecturer_id: Mapped[int] = mapped_column(
+        ForeignKey("lecturers.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    token_hash: Mapped[str] = mapped_column(
+        String(64), unique=True, index=True, nullable=False
+    )
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    used_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+
+    lecturer: Mapped["Lecturer"] = relationship(back_populates="reset_tokens")
+
+
+class AuditLog(Base):
+    """Security and administrative audit trail."""
+
+    __tablename__ = "audit_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    actor_type: Mapped[str] = mapped_column(String(24), nullable=False)
+    actor_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    action: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    target_type: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    target_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    detail: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    ip_address: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
     )
 
 
@@ -69,6 +132,9 @@ class Course(Base):
     )
     course_code: Mapped[str] = mapped_column(
         String(32), unique=True, index=True, nullable=False
+    )
+    join_code: Mapped[Optional[str]] = mapped_column(
+        String(24), unique=True, index=True, nullable=True
     )
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     department: Mapped[str] = mapped_column(
@@ -85,6 +151,9 @@ class Course(Base):
     )
 
     lecturer: Mapped[Optional["Lecturer"]] = relationship(back_populates="courses")
+    staff_members: Mapped[list["CourseStaff"]] = relationship(
+        back_populates="course", cascade="all, delete-orphan"
+    )
     sessions: Mapped[list["ClassSession"]] = relationship(
         back_populates="course", cascade="all, delete-orphan"
     )
@@ -94,6 +163,30 @@ class Course(Base):
     assignments: Mapped[list["Assignment"]] = relationship(
         back_populates="course", cascade="all, delete-orphan"
     )
+
+
+class CourseStaff(Base):
+    """Co-lecturers or Teaching Assistants granted scoped access to a course."""
+
+    __tablename__ = "course_staff"
+    __table_args__ = (
+        UniqueConstraint("course_id", "lecturer_id", name="uq_course_staff_member"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    course_id: Mapped[int] = mapped_column(
+        ForeignKey("courses.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    lecturer_id: Mapped[int] = mapped_column(
+        ForeignKey("lecturers.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    role: Mapped[str] = mapped_column(String(24), default="ta", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+
+    course: Mapped["Course"] = relationship(back_populates="staff_members")
+    lecturer: Mapped["Lecturer"] = relationship(back_populates="staff_roles")
 
 
 class CourseEnrollment(Base):
@@ -164,16 +257,22 @@ class ClassSession(Base):
 
 
 class Student(Base):
-    """Registered student identity (Name + Email + Primary Bound Device ID)."""
+    """Registered student identity (Name + Student ID + Email + Primary Bound Device ID)."""
 
     __tablename__ = "students"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    student_id_number: Mapped[Optional[str]] = mapped_column(
+        String(32), unique=True, index=True, nullable=True
+    )
     full_name: Mapped[str] = mapped_column(String(120), nullable=False)
     email: Mapped[str] = mapped_column(
         String(160), unique=True, index=True, nullable=False
     )
     primary_device_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    device_bound_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False
     )
@@ -187,7 +286,7 @@ class Student(Base):
 
 
 class RosterEntry(Base):
-    """Optional imported course roster entry for a session (Name + Email, no ID#)."""
+    """Optional imported course roster entry for a session (Name, Email, optional Student ID)."""
 
     __tablename__ = "roster_entries"
     __table_args__ = (
@@ -198,6 +297,7 @@ class RosterEntry(Base):
     session_id: Mapped[int] = mapped_column(
         ForeignKey("class_sessions.id", ondelete="CASCADE"), index=True, nullable=False
     )
+    student_id_number: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     full_name: Mapped[str] = mapped_column(String(120), nullable=False)
     email: Mapped[str] = mapped_column(String(160), nullable=False)
 
@@ -465,6 +565,18 @@ def _migrate_sqlite_columns(engine: Engine) -> None:
         ("assignments", "course_id", "INTEGER REFERENCES courses(id) ON DELETE SET NULL"),
         ("courses", "lecturer_id", "INTEGER REFERENCES lecturers(id) ON DELETE SET NULL"),
         ("lecture_artifacts", "error_message", "TEXT"),
+        ("lecturers", "username", "VARCHAR(40)"),
+        ("lecturers", "password_hash", "VARCHAR(255)"),
+        ("lecturers", "role", "VARCHAR(24) NOT NULL DEFAULT 'lecturer'"),
+        ("lecturers", "is_active", "BOOLEAN NOT NULL DEFAULT 1"),
+        ("lecturers", "token_version", "INTEGER NOT NULL DEFAULT 1"),
+        ("lecturers", "failed_login_attempts", "INTEGER NOT NULL DEFAULT 0"),
+        ("lecturers", "locked_until", "DATETIME"),
+        ("lecturers", "last_login_at", "DATETIME"),
+        ("students", "student_id_number", "VARCHAR(32)"),
+        ("students", "device_bound_at", "DATETIME"),
+        ("roster_entries", "student_id_number", "VARCHAR(32)"),
+        ("courses", "join_code", "VARCHAR(24)"),
     )
 
     with engine.begin() as conn:
@@ -479,6 +591,16 @@ def _migrate_sqlite_columns(engine: Engine) -> None:
                     f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_def};"
                 )
                 existing_cols.add(col_name)
+
+        conn.exec_driver_sql(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ix_lecturers_username ON lecturers(username);"
+        )
+        conn.exec_driver_sql(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ix_students_student_id_number ON students(student_id_number);"
+        )
+        conn.exec_driver_sql(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ix_courses_join_code ON courses(join_code);"
+        )
 
 
 def init_db_engine(database_url: str) -> tuple[Engine, scoped_session[Session]]:

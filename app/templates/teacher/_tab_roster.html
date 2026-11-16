@@ -1,0 +1,92 @@
+    <!-- TAB 4: Course Overview, Staff/TAs & Multi-Lecture Roster -->
+    <section id="tab-course-roster" class="tab-pane">
+      <div class="grid-2">
+        <div style="display:flex; flex-direction:column; gap:18px;">
+          <div class="card">
+            <h2>Enroll Students into {{ selected_course.course_code }}</h2>
+            <p style="font-size:12px; color:var(--muted); margin-top:0;">
+              Student Join Code: <span class="code-pill">{{ selected_course.join_code or selected_course.course_code }}</span> &bull; Accepts CSV rows (<code>Student ID, Full Name, Email</code> or <code>Full Name, Email</code>).
+            </p>
+            <textarea id="roster-csv-text" rows="5" placeholder="208123456, Ohad Ben Nun, ohad@ariel.ac.il&#10;208654321, Alice Cohen, alice@ariel.ac.il"></textarea>
+            <div style="margin-top:10px; display:flex; justify-content:space-between; align-items:center;">
+              <button onclick="importCourseRoster()">Import Course Roster CSV</button>
+              <span id="roster-import-msg" style="font-size:12px; color:var(--green);"></span>
+            </div>
+          </div>
+
+          <div class="card">
+            <h2>Co-Lecturers &amp; Teaching Assistants</h2>
+            <p style="font-size:12px; color:var(--muted); margin-top:0;">
+              Grant another registered professor or TA access to manage sessions, polls, and grading for <strong>{{ selected_course.course_code }}</strong>.
+            </p>
+            <div style="display:grid; grid-template-columns: 1fr 120px auto; gap:8px; margin-bottom:10px;">
+              <input type="text" id="staff-identifier" placeholder="TA username or email" />
+              <select id="staff-role">
+                <option value="ta">TA</option>
+                <option value="co_lecturer">Co-Lecturer</option>
+              </select>
+              <button type="button" class="btn-sm" onclick="addCourseStaff()">+ Add</button>
+            </div>
+            <div id="course-staff-list" style="display:flex; flex-direction:column; gap:6px; font-size:12px;">
+              {% for m in selected_course.staff or [] %}
+              <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 10px; border-radius:8px; background:#0f172a; border:1px solid var(--border);">
+                <span><strong>{{ m.full_name }}</strong> (@{{ m.username or m.email }}) &bull; <span class="code-pill">{{ m.role }}</span></span>
+                <button type="button" class="btn-secondary btn-sm" onclick="removeCourseStaff({{ m.lecturer_id }})">Remove</button>
+              </div>
+              {% else %}
+              <div style="color:var(--muted); font-size:12px;">Only the primary owner currently has access to this course.</div>
+              {% endfor %}
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>
+            <span>Enrolled Students &amp; Cumulative Course Attendance</span>
+            <span class="code-pill">{{ selected_course.students|length }} Students</span>
+          </h2>
+          <div style="max-height:420px; overflow-y:auto;">
+            <table>
+              <thead>
+                <tr>
+                  <th>Student Name</th>
+                  <th>Student ID</th>
+                  <th>Email</th>
+                  <th>Lectures Attended</th>
+                  <th>Course Attendance %</th>
+                  <th>Device</th>
+                </tr>
+              </thead>
+              <tbody id="course-students-tbody">
+                {% for st in selected_course.students %}
+                <tr>
+                  <td><strong>{{ st.full_name }}</strong></td>
+                  <td><code>{{ st.student_id_number or '-' }}</code></td>
+                  <td>{{ st.email }}</td>
+                  <td>{{ st.attended_sessions }} / {{ st.total_sessions }}</td>
+                  <td>
+                    <span class="badge {% if st.attendance_rate_pct >= 75 %}VERIFIED{% elif st.attendance_rate_pct >= 50 %}UNDER_SCANNED{% else %}ABSENT{% endif %}">
+                      {{ st.attendance_rate_pct }}%
+                    </span>
+                  </td>
+                  <td>
+                    {% if st.device_bound %}
+                    <button type="button" class="btn-secondary btn-sm" onclick="resetStudentDevice({{ st.student_id }})">Reset Device</button>
+                    {% else %}
+                    <span style="font-size:11px; color:var(--muted);">Unbound</span>
+                    {% endif %}
+                  </td>
+                </tr>
+                {% else %}
+                <tr>
+                  <td colspan="6" style="text-align:center; color:var(--muted);">
+                    No students enrolled yet. Import a CSV or have students scan the lecture QR!
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
