@@ -649,7 +649,7 @@ class HomeworkReviewService:
             (
                 "Alice Cohen",
                 "alice@ariel.ac.il",
-                'class ZoomBridgeAdapter:\n    """Decoupled bridge adapter."""\n    def send(self, msg):\n        try:\n            return True\n        except Exception:\n            return False\n\ndef test_bridge():\n    assert ZoomBridgeAdapter().send("hi") is True\n',
+                'class ReportExporter:\n    """Decoupled spreadsheet exporter."""\n    def export(self, rows):\n        try:\n            return len(rows) > 0\n        except Exception:\n            return False\n\ndef test_exporter():\n    assert ReportExporter().export(["row1"]) is True\n',
             ),
             (
                 "Bob Levi",

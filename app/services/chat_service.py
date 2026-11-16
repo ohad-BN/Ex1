@@ -6,7 +6,6 @@ from typing import Any, Optional
 from sqlalchemy.orm import Session
 
 from app.models import ChatMessage, ClassSession
-from app.services.zoom_bridge import NoOpZoomBridge, ZoomBridgeAdapter
 
 VALID_CATEGORIES = ("Question", "Comment", "Suggestion")
 
@@ -31,15 +30,10 @@ def format_offset_mmss(offset_seconds: int) -> str:
 
 
 class ChatService:
-    """Manages timestamped student Q&A/comments, upvotes, pinning, and Zoom Bridge relay."""
+    """Manages timestamped student Q&A/comments, upvotes, pinning, and timeline export."""
 
-    def __init__(
-        self,
-        db: Session,
-        zoom_bridge: Optional[ZoomBridgeAdapter] = None,
-    ) -> None:
+    def __init__(self, db: Session) -> None:
         self.db = db
-        self.zoom_bridge = zoom_bridge or NoOpZoomBridge()
 
     def serialize_message(self, msg: ChatMessage) -> dict[str, Any]:
         return {
@@ -53,7 +47,6 @@ class ChatService:
             "offset_mmss": format_offset_mmss(msg.offset_seconds),
             "upvotes": msg.upvotes,
             "is_pinned": msg.is_pinned,
-            "synced_to_zoom": msg.synced_to_zoom,
             "created_at": msg.created_at.strftime("%H:%M:%S UTC"),
         }
 
@@ -66,7 +59,7 @@ class ChatService:
         student_id: Optional[int] = None,
         now_ts: Optional[float] = None,
     ) -> ChatMessage:
-        """Create a timestamped classroom message and optionally relay via ZoomBridgeAdapter."""
+        """Create a timestamped classroom message anchored to session start time."""
         session = self.db.get(ClassSession, session_id)
         if session is None:
             raise ChatError("Session not found.", status_code=404)
@@ -99,20 +92,10 @@ class ChatService:
             offset_seconds=offset_sec,
             upvotes=0,
             is_pinned=False,
-            synced_to_zoom=False,
             created_at=now_dt,
         )
         self.db.add(msg)
         self.db.commit()
-
-        # Attempt non-blocking relay through ZoomBridgeAdapter
-        offset_str = format_offset_mmss(offset_sec)
-        if self.zoom_bridge.dispatch_chat_message(
-            msg, offset_mmss=offset_str, session_code=session.session_code
-        ):
-            msg.synced_to_zoom = True
-            self.db.commit()
-
         return msg
 
     def upvote_message(self, message_id: int) -> ChatMessage:

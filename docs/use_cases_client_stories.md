@@ -94,30 +94,29 @@
 
 ---
 
-### UC-06: Timestamped Classroom Chat & Zoom Bridge (P1)
+### UC-06: Timestamped Classroom Chat & Live Popout (P1)
 * **Primary Actor:** Student & Lecturer
 * **Preconditions:** Student is checked into active session.
 * **Main Flow:**
   1. Student opens the **Chat / Q&A** tab, selects category (`Question`, `Comment`, or `Suggestion`), types `"Can you re-explain why SOLID Open/Closed applies here?"`, and taps **Send**.
   2. Server tags the message with lecture-relative timestamp (`+24:15`) and UTC time, persists `ChatMessage` in DB, and broadcasts `chat:new` via Socket.IO.
-  3. Other students upvote the question (`chat:upvote`), surfacing top confusion points to the lecturer.
-  4. If a **Zoom Team Chat channel** is configured in `ZoomBridgeAdapter`, the server asynchronously relays `[+24:15] Dana: Can you re-explain...` to the Team Chat channel. Otherwise, the lecturer keeps the compact **Zoom Companion Popout** visible beside Zoom without needing a Meeting SDK bot.
+  3. Other students upvote the question (`chat:upvote`), surfacing top confusion points to the lecturer in the **Live Q&A Companion Popout**.
 * **Postconditions:** Timestamped Q&A persisted and exported cleanly for Feature 4 lecture summary correlation.
 
 ---
 
-### UC-07: ML Lecture Recording Transcription & Gemini Summary (P2)
+### UC-07: Class Recording Upload → Google Gemini Transcription & Summary (P2)
 * **Primary Actor:** Lecturer
-* **Preconditions:** Lecture video/audio (`.mp4`, `.m4a`, `.wav`, or `.vtt`) is available locally (or Zoom Cloud Meeting ID on a Pro/Edu host account); `GEMINI_API_KEY` is configured.
+* **Preconditions:** A class recording (`.mp4`, `.m4a`, `.mp3`, `.wav`, or `.vtt`) is available locally; `GEMINI_API_KEY` is configured (with `faster-whisper` offline fallback if unset).
 * **Main Flow:**
-  1. Lecturer opens the **Lecture Summary** tab and drags-and-drops the local Zoom/Meet `.mp4` recording (or enters a Zoom Cloud Recording ID).
-  2. Background worker extracts 16kHz mono audio via `ffmpeg` and runs `faster-whisper` locally to generate timestamped transcript segments.
-  3. Stage-1 `LectureSummarizerService` invokes `GeminiStudioClient` (`gemini-2.5-flash`, paced per free-tier RPM/TPM limits) with course vocabulary + Feature 2 student Q&A timestamps to fix technical misrecognitions (e.g., `"socket I owe"` -> `"Socket.IO"`).
-  4. Stage-2 `LectureSummarizerService` synthesizes a structured Markdown summary (TL;DR, Timestamped Topics, Key Definitions, Student Questions Highlighted, Next-Class Reminders) and stores `LectureArtifact` in DB.
-  5. Lecturer edits/publishes the summary so students can browse it from their session tab.
+  1. Lecturer opens **Tab 5 — AI Lecture Summarizer** and selects/uploads the class recording (`.mp4`/`.m4a`/`.mp3`/`.wav`/`.vtt`).
+  2. Background job prepares compact audio via `ffmpeg` if needed and sends it to **Google Gemini API** (`google-genai` Files API + `gemini-3.8-flash`) to transcribe with exact `[MM:SS]` timestamps (falling back to local `faster-whisper` only when offline).
+  3. Pass 1 (`LectureSummarizerService`) refines technical CS/OOP terms while preserving `[MM:SS]` offsets.
+  4. Pass 2 synthesizes a structured Markdown summary (TL;DR, Timestamped Topics, Key Definitions, Answers to Class Chat Q&A, Action Items) and stores `LectureArtifact` in SQLite.
+  5. Lecturer downloads Summary (`.md`) / Transcript (`.txt`), and students view/download published summaries in their **AI Study Hub**.
 * **Alternative Flows:**
-  * *A1 (Gemini `429` Rate Limit):* Worker applies exponential backoff and resumes cleanly from saved transcript chunks without losing Whisper progress.
-* **Postconditions:** Corrected transcript and structured lecture summary stored and viewable/downloadable.
+  * *A1 (Gemini `429` Rate Limit / Retired Model `404`):* `GeminiStudioClient` applies exponential backoff on `429` and automatic `404` model fallback (`gemini-3.8-flash` → `gemini-3.7-flash` → `gemini-3.5-flash`) without crashing.
+* **Postconditions:** Corrected transcript and structured lecture summary stored and downloadable.
 
 ---
 
@@ -167,6 +166,6 @@
 | **US-01** | Student | *As a student in class, I want to scan a rotating QR code and register once with my name and email so I never waste lecture time filling out forms again.* | First scan creates DB profile + signed cookie in $<15\text{ s}$; second lecture scan checks in with 1 tap/auto-confirm; expired (>10s) or multi-student-per-phone attempts are blocked. |
 | **US-02** | Lecturer | *As a lecturer, I want to snap one classroom photo and compare the detected headcount with QR check-ins in an Excel sheet so I can immediately spot proxy attendance.* | Uploaded photo returns annotated face count + boxes; lecturer can click to adjust count; `.xlsx` download contains Roster, Check-in Timestamps, Headcount, Delta, and Audit Flag. |
 | **US-03** | Lecturer | *As a lecturer, I want to prepare quiz polls before class and launch quick comprehension checks on the fly so I know whether students understand the material.* | Pre-created drafts appear in 1-click launch list; quick Yes/No poll launches in $<5\text{ s}$; students reconnecting mid-poll still see the active poll and vote exactly once. |
-| **US-04** | Student | *As a shy student, I want to ask timestamped questions in a mobile chat tab and upvote others' questions without interrupting the lecture or needing Zoom installed.* | Chat messages deliver across tunnel in $<500\text{ ms}$; timestamps align to lecture start; upvotes reorder top questions cleanly; optional Zoom Team Chat adapter never blocks web chat. |
-| **US-05** | Lecturer | *As a lecturer, I want to drop my local Zoom recording into the app and receive a corrected, structured summary referencing students' questions so I don't rely on generic low-quality auto-summaries.* | `.mp4`/`.m4a` transcribes locally via `faster-whisper`; Gemini pass fixes CS terms and produces Markdown summary linked to timestamps. |
+| **US-04** | Student | *As a shy student, I want to ask timestamped questions in a mobile chat tab and upvote others' questions without interrupting the lecture.* | Chat messages deliver across tunnel in $<500\text{ ms}$; timestamps align to lecture start; upvotes reorder top questions cleanly into the Live Q&A Popout. |
+| **US-05** | Lecturer | *As a lecturer, I want to upload my class recording and receive a Google Gemini-transcribed, structured summary referencing students' questions so I can download and share clean study notes.* | Uploaded `.mp4`/`.m4a`/`.mp3`/`.wav` is transcribed via Google Gemini API (or `faster-whisper` fallback), summarized cleanly, and downloadable as `.md` and `.txt`. |
 | **US-06** | Student | *As a student, I want to see how my homework compares anonymously against the rest of the class without exposing anyone's code so I know what to improve.* | Single submission produces structured JSON; cohort stats update without re-analyzing other files; visual percentiles + on-demand LLM comparative prose contain zero peer names/code. |

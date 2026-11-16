@@ -17,8 +17,8 @@ flowchart TD
     P2 --> P3["Phase 3 (P0 Core): 5-Sec Rolling QR, Device Cookie & Onboarding"]
     P3 --> P4["Phase 4 (P0 Core): Tiled SCRFD Face Counter, Canvas UI & Excel Report"]
     P3 --> P5["Phase 5 (P1): Reconnect-Safe Live Polling (Flask-SocketIO)"]
-    P3 --> P6["Phase 6 (P1): Timestamped Chat & ZoomBridgeAdapter"]
-    P6 --> P7["Phase 7 (P2): FFmpeg + faster-whisper + 2-Pass Gemini Summarizer"]
+    P3 --> P6["Phase 6 (P1): Timestamped Classroom Chat & Live Popout"]
+    P6 --> P7["Phase 7 (P2): Recording Upload -> Google Gemini Transcriber & Summary"]
     P2 --> P8["Phase 8 (P2): Homework Incremental JSON Aggregation & Deep Review"]
     P4 --> P9["Phase 9: Automated Pytest Suites (1-8) & Live Classroom Demo Prep"]
     P5 --> P9
@@ -36,8 +36,8 @@ flowchart TD
 | **Phase 3** | **P0 Core** | `RollingQRService`, `DeviceBindingManager`, `AttendanceService` | `app/services/qr_service.py`, `app/services/attendance_service.py`, `app/routes/attendance.py`, `app/sockets/session_events.py` |
 | **Phase 4** | **P0 Core** | `TiledSCRFDDetector`, `AttendanceReconciler`, `SpreadsheetExporter` | `app/services/face_counter.py`, `app/services/reconciler.py`, `app/services/report_exporter.py`, `app/static/js/headcount_canvas.js` |
 | **Phase 5** | **P1 Live** | `PollService`, Socket.IO Poll Events & Reconnect Hydration | `app/services/poll_service.py`, `app/routes/polls.py`, `app/sockets/poll_events.py` |
-| **Phase 6** | **P1 Live** | `ChatService`, `ZoomBridgeAdapter` (`NoOp` & `ZoomOAuthRestBridge`) | `app/services/chat_service.py`, `app/services/zoom_bridge.py`, `app/sockets/chat_events.py` |
-| **Phase 7** | **P2 AI** | `GeminiStudioClient`, `LectureSummarizerService` (`faster-whisper`) | `app/services/llm_client.py`, `app/services/lecture_pipeline.py`, `app/routes/lectures.py` |
+| **Phase 6** | **P1 Live** | `ChatService`, Native Classroom Q&A & Live Companion Popout | `app/services/chat_service.py`, `app/routes/chat.py`, `app/sockets/chat_events.py` |
+| **Phase 7** | **P2 AI** | `GeminiStudioClient` Audio Files API + `LectureSummarizerService` | `app/services/llm_client.py`, `app/services/lecture_pipeline.py`, `app/routes/lectures.py` |
 | **Phase 8** | **P2 AI** | `SubmissionExtractor`, `HomeworkMetrics`, `CohortAggregator`, `HomeworkReviewService` | `app/services/homework_pipeline.py`, `app/routes/homework.py` |
 | **Phase 9** | **QA & Demo** | STP Test Suites 1–8 (`pytest`) & One-Click Demo Seeder | `tests/test_*.py`, `run_all_tests.py`, `scripts/seed_demo.py` |
 | **Phase 10A** | **School-Wide** | Multi-Course & Enrollment ORM (`Course`, `CourseEnrollment`, `Course.course_code`) | `app/models.py`, `app/services/course_service.py`, `app/routes/courses.py` |
@@ -49,10 +49,7 @@ flowchart TD
 | **Phase 12A** | **Realtime Fix** | Fix Socket.IO event name mismatches (`attendance:count_update` & `poll:activated` / `poll:opened`) + Auto-Popup Live Poll Banner | `app/routes/attendance.py`, `app/routes/polls.py`, `app/templates/teacher_portal.html`, `app/templates/student_app.html`, `app/templates/student_checkin.html` |
 | **Phase 12B** | **Lecture Poll History** | Streamlined 1-Click Live Polling + Saved Lecture Poll History with instant **See Results** viewer | `app/routes/polls.py`, `app/services/poll_service.py`, `app/templates/teacher_portal.html` |
 | **Phase 12C** | **Industry UI** | Mentimeter + Slido + TopHat Inspired Split-Screen / Mobile-First UI Overhaul for Student & Teacher Apps | `app/templates/student_app.html`, `app/templates/student_checkin.html`, `app/templates/teacher_portal.html` |
-| **Phase 13A** | **Zoom & Gemini Config** | `ZOOM_WEBHOOK_SECRET_TOKEN`, `ClassSession.zoom_meeting_id`, and `LectureArtifact` stage/error schema extensions | `app/config.py`, `app/models.py`, `.env.example` |
-| **Phase 13B** | **Webhook & Cloud Pull** | Signed `POST /api/webhooks/zoom` (`endpoint.url_validation` + `recording.completed`) & on-demand Zoom Cloud `.vtt`/`.m4a` pull via `AsyncTaskManager` | `app/services/zoom_bridge.py`, `app/routes/lectures.py` |
-| **Phase 13C** | **Chunked Gemini & Export** | Chunked Pass-1 CS auto-correction (`faster-whisper`/`.vtt` + Gemini), Pass-2 summary cross-linked with chat Q&A, `.md`/`.txt` downloads | `app/services/llm_client.py`, `app/services/lecture_pipeline.py`, `app/routes/lectures.py` |
-| **Phase 13D** | **AI Hub & Study Downloads** | Zoom Meeting ID binding, **Fetch from Zoom Cloud**, live stage tracker, Summary/Transcript downloads & screenshot UI polish | `app/templates/teacher_portal.html`, `app/templates/student_app.html`, `app/routes/courses.py` |
+| **Phase 13** | **Google AI Recording Flow** | Direct Recording Upload -> Google Gemini Audio Transcription (`files.upload`) -> Lecturer Summary & `.md`/`.txt` Export (Zero Zoom API Dependency) | `app/services/llm_client.py`, `app/services/lecture_pipeline.py`, `app/routes/lectures.py`, `app/templates/teacher_portal.html`, `app/templates/student_app.html` |
 
 ---
 
@@ -234,13 +231,13 @@ Instead of crowding every feature into one long vertical page, the **Teacher Por
    * **Course Selector & "+ New Course" Modal**: Switch between courses (e.g., `CS204 — Object-Oriented Programming`, `CS101 — Algorithms`, `SE302 — Software Engineering`).
    * **Course Lectures List**: Lists all `ClassSession` lectures inside the selected course (`Lecture 1`, `Lecture 2`, etc.) with a `+ New Lecture Session` button.
 2. **Top Header Bar:**
-   * Shows active Course badge, selected Lecture Session code (`LEC01`), live status indicator, **Projector QR Mode** launch button, and **Zoom Companion Pop-Out** button.
+   * Shows active Course badge, selected Lecture Session code (`LEC01`), live status indicator, **Projector QR Mode** launch button, and **Live Q&A Pop-Out** button.
 3. **5 Modular Workspace Tabs (Only One Tab Visible at a Time):**
    * **Tab 1 — `Overview & Roster`**: Course enrollment list, cumulative attendance rate across all lectures in the course, and CSV Roster Import.
    * **Tab 2 — `Live Attendance & CV Headcount` (Feature 1 P0)**: Side-by-side 5-second rotating QR panel, live check-in table, classroom photo upload + interactive `<canvas>` bounding-box verifier, discrepancy verdict badge ($\Delta$), and `.xlsx` / `.csv` report download.
    * **Tab 3 — `Polls & Quiz Bank` (Feature 3)**: Pre-class Poll Bank (`DRAFT` -> `Launch`), 1-Click Quick Polls, and live real-time histogram chart.
-   * **Tab 4 — `Class Chat & Zoom Bridge` (Feature 2)**: Real-time `+MM:SS` student Q&A feed, category filters (`Question` / `Comment` / `Suggestion`), Lecturer Pin (`📌`), and `.txt` transcript export.
-   * **Tab 5 — `AI Lecture Studio & Homework Hub` (Features 4 & 5)**: Upload lecture recording for Whisper + Gemini 2-pass summary, and manage course Homework Assignments + class-wide $O(1)$ cohort analytics.
+   * **Tab 4 — `Class Chat & Q&A` (Feature 2)**: Real-time `+MM:SS` student Q&A feed, category filters (`Question` / `Comment` / `Suggestion`), Lecturer Pin (`📌`), and `.txt` transcript export.
+   * **Tab 5 — `AI Lecture Studio & Homework Hub` (Features 4 & 5)**: Upload class recordings (`.mp4`/`.m4a`/`.mp3`/`.wav`/`.vtt`) to Google Gemini API for transcription & lecturer summary + `.md`/`.txt` download, and manage course Homework Assignments + class-wide $O(1)$ cohort analytics.
 
 ---
 
@@ -278,8 +275,7 @@ Students get a real **multi-course web app** (`/student`, plus seamless deep-lin
    * **TV-01 (`insightface` + `onnxruntime`):** Load `FaceAnalysis(name="buffalo_l", allowed_modules=["detection"], providers=["CPUExecutionProvider"])`, run both standard `640x640` inference and **2×2 + 3×2 overlapping tiled inference** on `classroom_ariel.jpg`, save `data/samples/classroom_ariel_annotated.jpg`, and log face counts + CPU elapsed time.
    * **TV-02 (`cloudflared` + WebSocket):** Start a minimal Flask-SocketIO server on port `5000`, launch `cloudflared tunnel --url http://localhost:5000`, and verify HTTPS GET + `wss://` Socket.IO ping-pong from a smartphone over mobile data.
    * **TV-03 (5s HMAC Grace Window):** Verify token generation at $t = 4.8\text{ s}$ and validation at $t = 6.2\text{ s}$ across bucket boundaries.
-   * **TV-04 (Zoom API Probe):** Run an HTTP probe confirming Zoom Basic/REST API constraints and verifying `NoOpZoomBridge` / `ZoomOAuthRestBridge` fallback handling.
-   * **TV-05 (`faster-whisper` + `google-genai`):** Transcribe a short sample audio clip via `WhisperModel("base", device="cpu", compute_type="int8")` and test `client.models.generate_content(..., config={"response_mime_type": "application/json", "response_schema": HomeworkMetrics})`.
+   * **TV-04 (`google-genai` Audio + LLM + `faster-whisper`):** Run Google Gemini API (`gemini-3.8-flash`) audio transcription & Pydantic schema extraction (`response_schema=HomeworkMetrics`) plus offline `faster-whisper` fallback verification.
 3. **Output:** Write measured results to `reports/tool_verification_results.md`.
 
 ---
@@ -337,7 +333,7 @@ Students get a real **multi-course web app** (`/student`, plus seamless deep-lin
      * `UniqueConstraint("session_id", "device_id", name="uq_attendance_session_device")`
    * `HeadcountSnapshot`: `id`, `session_id`, `raw_image_path`, `annotated_image_path`, `auto_face_count`, `verified_face_count`, `boxes_json`, `captured_at`.
    * `Poll` & `PollVote`: `Poll` stores `question`, `options_json`, `correct_index`, `time_limit_sec`, `status` (`DRAFT`, `ACTIVE`, `CLOSED`), `activated_at`; `PollVote` enforces `UniqueConstraint("poll_id", "student_id", name="uq_poll_student_vote")`.
-   * `ChatMessage`: `id`, `session_id`, `student_id`, `author_name`, `category` (`Question`/`Comment`/`Suggestion`), `body`, `offset_seconds`, `upvotes`, `is_pinned`, `synced_to_zoom`.
+   * `ChatMessage`: `id`, `session_id`, `student_id`, `author_name`, `category` (`Question`/`Comment`/`Suggestion`), `body`, `offset_seconds`, `upvotes`, `is_pinned`.
    * `LectureArtifact`: `id`, `session_id`, `source_type`, `media_path`, `raw_transcript_json`, `corrected_transcript_json`, `summary_markdown`, `status`.
    * `Assignment`, `HomeworkSubmission`, `ClassStatsAggregate`: Stores rubric, per-student versioned `metrics_json` + `deep_review_md`, and the single cohort aggregate row (`submission_count`, `mean_overall_score`, `topic_sums_json`, `scores_list_json`, `error_tag_counts_json`).
 
@@ -420,36 +416,33 @@ Students get a real **multi-course web app** (`/student`, plus seamless deep-lin
 
 ---
 
-### Phase 6 (Feature 2 — P1): Timestamped Classroom Chat & `ZoomBridgeAdapter`
+### Phase 6 (Feature 2 — P1): Timestamped Classroom Chat & Live Companion Popout
 
-**Goal:** Enable real-time student comments/questions with lecture-relative timestamps, upvotes, and a clean Zoom bridge that respects Zoom Free API realities.
+**Goal:** Enable real-time student comments/questions with lecture-relative timestamps, upvotes, and a clean floating popout view with zero Zoom API dependency.
 
 #### How to Implement:
 1. **`ChatService` (`app/services/chat_service.py`):**
    * Calculates `offset_seconds = int((utcnow() - session.started_at).total_seconds())` formatted as `+MM:SS` (e.g., `[+18:42]`).
-   * Persists `ChatMessage` (`category` in `Question`, `Comment`, `Suggestion`), broadcasts `chat:new` via Socket.IO, and supports `upvote_message(msg_id, student_id)` + `export_timeline_text(session_id)` (used by Feature 4).
-2. **`ZoomBridgeAdapter` Hierarchy (`app/services/zoom_bridge.py`):**
-   * `NoOpZoomBridge` (Default when Zoom credentials are unset): Logs message locally and marks `synced_to_zoom=False` without errors.
-   * `ZoomOAuthRestBridge` (Optional when `ZOOM_ACCOUNT_ID`, `ZOOM_CLIENT_ID`, `ZOOM_CLIENT_SECRET`, `ZOOM_TEAM_CHANNEL_ID` are set): Uses Server-to-Server OAuth token caching to `POST https://api.zoom.us/v2/chat/users/me/messages` (`to_channel`) asynchronously in a background thread with a 3-second timeout so Zoom network latency never delays classroom Socket.IO chat.
-   * **Zoom-Companion Popout View (`/lecturer/chat-popout`):** Compact floating browser window designed to sit beside the lecturer's open Zoom window during live screen-sharing.
+   * Persists `ChatMessage` (`category` in `Question`, `Comment`, `Suggestion`), broadcasts `chat:new` via Socket.IO, and supports `upvote_message(msg_id)` + `export_timeline_text(session_id)` (used by Feature 4).
+2. **Live Q&A Companion Popout (`/lecturer/chat-popout`):**
+   * Compact floating browser window designed for the lecturer during live teaching and screen-sharing.
 
 ---
 
-### Phase 7 (Feature 4 — P2): ML Lecture Recording Transcription & 2-Pass Gemini Summarizer
+### Phase 7 (Feature 4 — P2): Class Recording Upload → Google Gemini Audio Transcription & Lecturer Summary
 
-**Goal:** Turn a recorded class video/audio file into a corrected transcript and structured lecture summary cross-referenced with student chat questions.
+**Goal:** Turn an uploaded class video/audio recording into a `[MM:SS]` Google Gemini transcript and structured lecturer study summary cross-referenced with student chat questions.
 
 #### How to Implement:
 1. **`GeminiStudioClient` (`app/services/llm_client.py`):**
    * Wraps `google.genai.Client(api_key=config.GEMINI_API_KEY)`.
-   * Enforces a thread-safe minimum pacing interval (`min_interval_sec=4.5` -> $\le 13\text{ RPM}$ to stay safely inside Google AI Studio free-tier limits) and exponential backoff (`2s, 4s, 8s`) on HTTP `429` / `503`.
-   * Provides both `generate_text(prompt, system_instruction, model)` and `generate_structured(prompt, schema_cls, system_instruction, model)` (setting `response_mime_type="application/json"` and `response_schema=schema_cls`).
+   * Enforces thread-safe RPM pacing (`min_interval_sec=4.5`), exponential backoff (`2s, 4s, 8s`) on HTTP `429` / `503`, and automatic `404` model fallback (`gemini-3.8-flash` → `gemini-3.7-flash` → `gemini-3.5-flash`).
+   * Provides `transcribe_audio_file(audio_path, prompt, system_instruction)` using Google Gemini Files API (`client.files.upload` + automatic remote cleanup in `finally`), plus `generate_text(...)` and `generate_structured(..., schema_cls)`.
 2. **`LectureSummarizerService` (`app/services/lecture_pipeline.py`):**
-   * **Step 1 — Media Ingestion:** Accepts uploaded `.mp4`, `.m4a`, `.wav`, or `.vtt` (or calls `zoom_bridge.fetch_cloud_recording(meeting_id)` if configured).
-   * **Step 2 — Audio Extraction (`ffmpeg`):** Runs `subprocess.run(["ffmpeg", "-y", "-i", media_path, "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", wav_path], check=True)`.
-   * **Step 3 — Local ASR (`faster-whisper`):** Runs `WhisperModel("base", device="cpu", compute_type="int8").transcribe(wav_path, vad_filter=True)` to produce timestamped segments `[{"start": 0.0, "end": 8.4, "text": "..."}]`.
-   * **Step 4 — Pass 1 (Gemini Transcript Domain Correction):** Sends chunked transcript segments + session title + Feature 2 student chat questions (`export_timeline_text`) to `gemini-2.5-flash` to fix phonetically misrecognized CS/math terms while preserving exact `[MM:SS]` timestamps.
-   * **Step 5 — Pass 2 (Gemini Structured Summary):** Generates the final Markdown summary containing: *Executive TL;DR*, *Chronological Topic Breakdown with `[MM:SS]` links*, *Key Concepts & Code/Design Takeaways*, *Answers to Questions Raised in Class Chat*, and *Action Items*.
+   * **Step 1 — Recording Ingestion & Compression:** Accepts uploaded `.mp4`, `.m4a`, `.mp3`, `.wav`, `.ogg`, `.webm`, `.vtt`, `.srt`, `.txt`. For video or files $> 20\text{ MB}$, `ffmpeg` extracts compact `64kbps` mono `.mp3`.
+   * **Step 2 — Google Gemini Transcription (`faster-whisper` fallback):** Sends audio to `GeminiStudioClient.transcribe_audio_file(...)` requesting `[MM:SS]` timestamped segments; falls back to local `faster-whisper` (`base` INT8) only when offline.
+   * **Step 3 — Pass 1 (Chunked Domain Refinement):** Refines CS/OOP terminology across 80-segment chunks while preserving exact `[MM:SS]` offsets.
+   * **Step 4 — Pass 2 (Lecturer Summary + Export):** Synthesizes structured Markdown (*Executive TL;DR*, *Chronological Breakdown*, *Key Concepts*, *Answers to Student Chat Q&A*, *Action Items*) and serves `.md` & `.txt` downloads.
 
 ---
 
@@ -501,7 +494,7 @@ Students get a real **multi-course web app** (`/student`, plus seamless deep-lin
    * `tests/test_face_counter.py` (`TiledSCRFDDetector` NMS + reference classroom image detection)
    * `tests/test_reconciler_and_exporter.py` (`AttendanceReconciler` + `SpreadsheetExporter` `.xlsx`/`.csv` roundtrip)
    * `tests/test_polls_socketio.py` (`PollService` + `SocketIOTestClient` reconnect `poll:sync`)
-   * `tests/test_chat_zoom.py` (`ChatService` + `ZoomBridgeAdapter` fault isolation)
+   * `tests/test_chat_zoom.py` (`ChatService` + Live Popout + Socket.IO chat tests)
    * `tests/test_lecture_pipeline.py` (`LectureSummarizerService` + `GeminiStudioClient` 429 backoff mock)
    * `tests/test_homework_incremental.py` (`CohortAggregator` $O(1)$ exactness, resubmission subtraction, zero-PII prompt check)
 2. **Create `run_all_tests.py` & `scripts/seed_demo.py`:**
@@ -509,158 +502,42 @@ Students get a real **multi-course web app** (`/student`, plus seamless deep-lin
 
 ---
 
-## 6. Automated Zoom Cloud Recording → Gemini AI Summary & Download Pipeline (Phases 13A–13D)
+## 6. Direct Recording Upload → Google Gemini Transcription → Lecturer Summary (Phase 13)
 
-### 6.1 End-to-End Target Scenario
+### 6.1 End-to-End Target Flow (Zero Zoom API Dependency)
 
-The ideal workflow eliminates manual file exports and prompt pasting after a lecture finishes:
+Rather than integrating with external Zoom tenant APIs, ClassPulse uses a reliable, single-provider **Google Gemini AI** workflow:
 
-1. **Before / During Lecture:** The lecturer links a **Zoom Meeting ID** to the active ClassPulse lecture session (either when creating the session or inside **Tab 5: AI Study Hub**). Students scan the rolling QR and post timestamped questions in Class Chat (`+MM:SS`).
-2. **Lecturer Starts Recording on Zoom:** Zoom records the lecture to **Zoom Cloud Recording**.
-3. **Automatic Cloud Delivery (`recording.completed` Webhook + On-Demand Fallback):**
-   * As soon as Zoom finishes processing the cloud files, Zoom pushes a signed `POST /api/webhooks/zoom` (`recording.completed`) event containing `meeting_id`, `topic`, `download_token` (24-hour TTL), and `recording_files`.
-   * If a transient quick tunnel (`*.trycloudflare.com`) URL rotated or the host prefers manual sync, the lecturer can click **"Fetch from Zoom Cloud"** at any time to pull the recording directly via Server-to-Server OAuth (`GET /v2/meetings/{meetingId}/recordings`).
-4. **Smart File Selection (Fast Path vs. Audio ASR Fallback):**
-   * **Fast Path (`.vtt`):** If Zoom Audio Transcript (`TRANSCRIPT` / `.vtt`) is present, ClassPulse downloads the compact `.vtt` file (~50 KB), parses VTT cues into `[MM:SS]` segments, and skips heavy video downloading and local CPU transcription.
-   * **Fallback Path (`.m4a` -> `.mp4`):** If `.vtt` is absent, ClassPulse downloads audio-only `M4A` first (10–30 MB instead of gigabyte `.mp4` video) and runs local `faster-whisper` (`tiny`/`base` `int8`) to emit `[MM:SS]` segments.
-5. **Two-Pass Gemini AI Pipeline (Background Job + Live Socket Progress):**
-   * Runs non-blocking inside `AsyncTaskManager` (`app/services/task_runner.py`), streaming stage updates (`DOWNLOADING_ZOOM` → `TRANSCRIBING` → `AI_CORRECTING` → `SUMMARIZING` → `COMPLETED`) over Socket.IO `lecture:status`.
-   * **Pass 1 (Auto-Correction):** `GeminiStudioClient` (`gemini-2.5-flash`, chunked across 80–120 segments per batch respecting `GEMINI_MIN_INTERVAL_SEC`) fixes broken CS/OOP terminology, technical acronyms, and mixed Hebrew/English lecture slips while strictly preserving `[MM:SS]` offsets.
-   * **Pass 2 (Structured Synthesis):** Synthesizes structured Markdown lecture notes cross-linked against live `ChatMessage` student questions from `session_id` at matching `+MM:SS` offsets.
-6. **Instant Publication & Download:**
-   * Saves the completed `LectureArtifact` in SQLite, emits `lecture:summary_ready` to Teacher Portal & Student AI Study Hub, and exposes **one-click `.md` Summary & `.txt` Corrected Transcript downloads**.
+1. **Upload Recording or Notes:** Inside **Tab 5: AI Lecture Studio** (`teacher_portal.html`), the lecturer uploads a class recording (`.mp4`, `.m4a`, `.mp3`, `.wav`, `.ogg`, `.webm`, `.vtt`, `.srt`, `.txt`) or pastes transcript text.
+2. **Audio Compression & Google Gemini Transcription (`app/services/llm_client.py` & `lecture_pipeline.py`):**
+   * Video files or audio $> 20\text{ MB}$ are compacted to `64kbps` mono `.mp3` via `ffmpeg`.
+   * `GeminiStudioClient.transcribe_audio_file()` uploads the recording via **Google Gemini Files API** (`client.files.upload`), waits for active processing, requests `[MM:SS]` timestamped Computer Science lecture transcription via `gemini-3.8-flash` (with automatic `404` model fallback & `429` exponential backoff), and deletes the temporary remote file in a `finally:` block.
+   * When running offline (`GEMINI_API_KEY` unset), `LectureSummarizerService` falls back automatically to local `faster-whisper` (`base`, `int8`).
+3. **Chunked Pass-1 Correction & Pass-2 Lecturer Summary:**
+   * Pass 1 refines technical CS/OOP terms across 80-segment chunks while preserving exact `[MM:SS]` timestamps.
+   * Pass 2 synthesizes structured lecturer study notes cross-linked against live `ChatMessage` student Q&A (`+MM:SS`), running asynchronously (`?async=1` → `HTTP 202`) via `AsyncTaskManager` and streaming live Socket.IO `lecture:status` updates.
+4. **Download & Study Hub Publication:**
+   * Serves downloadable `.md` Summary (`GET /api/lectures/<id>/download/summary.md`) and `[MM:SS]` `.txt` Transcript (`GET /api/lectures/<id>/download/transcript.txt`) in both the Teacher Portal and Student AI Study Hub.
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant L as Lecturer (Zoom Host)
-    participant Z as Zoom Cloud & Webhook
+    participant L as Lecturer (Teacher Portal)
     participant W as ClassPulse Flask + AsyncTaskManager
-    participant G as Google Gemini API (AI Studio)
+    participant F as FFmpeg Audio Prep
+    participant G as Google Gemini API (Files + Flash)
     participant DB as SQLite WAL & Socket.IO UI
 
-    L->>Z: Start & Stop Cloud Recording in Zoom Meeting
-    Z->>W: POST /api/webhooks/zoom (recording.completed + download_token)
-    W->>W: Verify x-zm-signature (HMAC-SHA256) & Match ClassSession.zoom_meeting_id
-    W->>DB: Create LectureArtifact (status = DOWNLOADING_ZOOM) & emit lecture:status
-    W->>Z: Download VTT Transcript (preferred) or M4A Audio
-    alt Zoom VTT Transcript Missing
-        W->>W: Run faster-whisper (int8) -> Timestamped [MM:SS] Segments
-    end
-    W->>G: Pass 1 (Chunked gemini-2.5-flash): Domain Auto-Correction
-    G-->>W: Corrected [MM:SS] Segments JSON
-    W->>G: Pass 2 (gemini-2.5-flash/pro): Structured Notes + Session Chat Q&A
-    G-->>W: Final Summary Markdown
-    W->>DB: Save Artifact (status = COMPLETED) & emit lecture:summary_ready
-    DB-->>L: One-Click Download Summary (.md) & Transcript (.txt)
+    L->>W: Upload class recording (.mp4 / .m4a / .mp3 / .wav)
+    W->>DB: Create LectureArtifact (status = TRANSCRIBING) & emit lecture:status
+    W->>F: Extract compact 64kbps mono .mp3 (if video or >20MB)
+    W->>G: client.files.upload(audio) + generate_content([file, prompt])
+    G-->>W: Timestamped [MM:SS] Lecture Transcript
+    W->>G: Pass 1 (Chunked): CS Terminology Cleanup
+    W->>G: Pass 2: Lecturer Summary + Session Chat Q&A (+MM:SS)
+    G-->>W: Final Study Notes Markdown
+    W->>DB: Save COMPLETED Artifact & emit lecture:summary_ready
+    DB-->>L: Download Summary (.md) & Transcript (.txt) + Publish to Study Hub
 ```
 
----
-
-### 6.2 Phase 13A — Configuration, Schema & Credential Wiring
-
-**Target Files:** `app/config.py`, `app/models.py`, `.env.example`, `.env`
-
-1. **Add Webhook Verification Config (`app/config.py` & `.env.example`):**
-   * Add `ZOOM_WEBHOOK_SECRET_TOKEN: str = os.getenv("ZOOM_WEBHOOK_SECRET_TOKEN", "")` to `Config`.
-   * Optionally add `ZOOM_DEFAULT_USER_ID: str = os.getenv("ZOOM_DEFAULT_USER_ID", "me")` for listing recent recordings when a meeting ID wasn't typed ahead of time.
-2. **Extend `ClassSession` (`app/models.py`):**
-   * Add `zoom_meeting_id: Mapped[Optional[str]] = mapped_column(String(32), index=True, nullable=True)` (normalized digits-only meeting ID, e.g., `"81234567890"`).
-   * Add safe `ALTER TABLE class_sessions ADD COLUMN zoom_meeting_id VARCHAR(32)` inside `_migrate_sqlite_columns()` in `app/models.py` so existing SQLite databases upgrade cleanly without data loss.
-3. **Extend `LectureArtifact` (`app/models.py`):**
-   * Add `zoom_meeting_uuid: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)` (prevents duplicate artifact creation if Zoom retries a webhook).
-   * Add `error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)` and expand `status` states to: `PENDING`, `DOWNLOADING_ZOOM`, `TRANSCRIBING`, `AI_CORRECTING`, `SUMMARIZING`, `COMPLETED`, `FAILED`.
-   * Add `_migrate_sqlite_columns()` `ALTER TABLE` entries for `zoom_meeting_uuid` and `error_message`.
-
----
-
-### 6.3 Phase 13B — Zoom Webhook Listener, Security Verification & Smart Cloud Pull
-
-**Target Files:** `app/services/zoom_bridge.py`, `app/routes/lectures.py`
-
-1. **Webhook Signature & URL Validation (`app/services/zoom_bridge.py`):**
-   * Implement `ZoomOAuthRestBridge.verify_webhook_signature(headers, raw_body, webhook_secret) -> bool`:
-     * Checks `x-zm-request-timestamp` is recent (within 5 minutes to prevent replay).
-     * Computes `f"v0={hmac_sha256(webhook_secret, f'v0:{timestamp}:{raw_body}')}"` and validates with `hmac.compare_digest`.
-   * Implement `build_url_validation_response(plain_token, webhook_secret) -> dict`:
-     * Computes `encryptedToken = HMAC-SHA256(webhook_secret, plain_token)` hex digest and returns `{"plainToken": plain_token, "encryptedToken": encryptedToken}`.
-2. **Priority Cloud File Download (`app/services/zoom_bridge.py`):**
-   * Add `download_best_recording_file(recording_files, dest_dir, download_token=None) -> tuple[str, Path]`:
-     * Searches `recording_files` (filtering `status == "completed"`) in priority order:
-       1. `TRANSCRIPT` / `VTT` (`.vtt`) — smallest, instant parsing, zero Whisper CPU cost.
-       2. `M4A` / `AUDIO_ONLY` (`.m4a`) — lightweight audio for `faster-whisper`.
-       3. `MP4` / `SHARED_SCREEN_WITH_SPEAKER_VIEW` (`.mp4`) — video fallback if audio-only disabled.
-     * Downloads with `Authorization: Bearer <download_token>` (if dispatched by webhook within 24h TTL) or falls back to Server-to-Server OAuth token (`_get_access_token()`).
-   * Add `list_meeting_recordings(meeting_id) -> dict` & `list_user_recordings(user_id="me")` to support on-demand pulling when Zoom Webhook URL isn't fixed.
-3. **Webhook & Pull Endpoints (`app/routes/lectures.py`):**
-   * `POST /api/webhooks/zoom`:
-     * Handles `event == "endpoint.url_validation"` immediately (<100ms, well under Zoom's 3s limit).
-     * Verifies `x-zm-signature` on `recording.completed` events (fails closed with HTTP `401` if `ZOOM_WEBHOOK_SECRET_TOKEN` is configured and signature is invalid).
-     * Matches `payload.object.id` (normalized `meeting_id`) to `ClassSession.zoom_meeting_id`, or falls back to finding `session_code` inside `payload.object.topic` (e.g., `"[4BCFB4] OOP Lecture 3"`).
-     * Checks `LectureArtifact.zoom_meeting_uuid` for idempotency so Zoom webhook retries do not trigger duplicate LLM jobs.
-     * Submits background pipeline execution via `current_app.extensions["async_tasks"].submit(...)` and returns `HTTP 202 Accepted`.
-   * `POST /api/sessions/<int:session_id>/lectures/zoom-fetch`:
-     * Protected by lecturer auth; accepts optional `zoom_meeting_id` (saving it to `ClassSession.zoom_meeting_id`), pulls the cloud recording files via `ZoomOAuthRestBridge`, and queues the background AI pipeline immediately (returning `job_id` + provisional `artifact_id`).
-   * `GET /api/sessions/<int:session_id>/lectures/jobs/<job_id>`:
-     * Polling fallback endpoint alongside Socket.IO `lecture:status` updates.
-
----
-
-### 6.4 Phase 13C — Chunked Gemini 2-Pass Pipeline & Summary Download Endpoints
-
-**Target Files:** `app/services/llm_client.py`, `app/services/lecture_pipeline.py`, `app/routes/lectures.py`
-
-1. **Long-Lecture Chunked Pass 1 (`app/services/lecture_pipeline.py`):**
-   * Real 45–90 minute Zoom lectures generate ~600–1,400 transcript segments. Sending all segments in one JSON prompt risks output truncation.
-   * Split `raw_segments` into overlapping batches of ~80 segments (~10 minutes of speech per chunk) while preserving exact `[MM:SS]` timestamps and respecting `GeminiStudioClient`'s `4.5s` pacing (free-tier safe at <=13 RPM).
-   * On Gemini HTTP `429`/`503`, reuse `GeminiStudioClient` exponential backoff; record clear stage errors instead of silently losing the transcript if offline.
-2. **Thread-Safe Background Execution (`app/services/lecture_pipeline.py` & `app/routes/lectures.py`):**
-   * Background worker opens an explicit short-lived SQLAlchemy `Session` (never sharing request-scoped session state across threads), updates `LectureArtifact.status` at each milestone (`DOWNLOADING_ZOOM` → `TRANSCRIBING` → `AI_CORRECTING` → `SUMMARIZING` → `COMPLETED`), and broadcasts `socketio.emit("lecture:status", ..., to=f"session_{session_code}")` followed by `lecture:summary_ready`.
-3. **One-Click File Download Endpoints (`app/routes/lectures.py`):**
-   * `GET /api/lectures/<int:artifact_id>/download/summary.md`:
-     * Serves clean Markdown (`# <Course Code> — <Lecture Title> Summary\n\n...`) with `Content-Type: text/markdown; charset=utf-8` and `Content-Disposition: attachment; filename="<COURSE>_<SESSION>_summary_<id>.md"`.
-   * `GET /api/lectures/<int:artifact_id>/download/transcript.txt`:
-     * Serves formatted `[MM:SS] ...` Pass-1 corrected transcript with `Content-Disposition: attachment; filename="<COURSE>_<SESSION>_transcript_<id>.txt"`.
-   * (Optional printable PDF/HTML preview endpoint `/api/lectures/<int:artifact_id>/print` using browser print-to-PDF without heavy binary PDF dependencies.)
-
----
-
-### 6.5 Phase 13D — AI Hub UI Upgrades & Screenshot Bug Fixes
-
-**Target Files:** `app/templates/teacher_portal.html`, `app/templates/student_app.html`, `app/routes/courses.py`
-
-1. **Fix Screenshot Visual Bugs (`app/templates/teacher_portal.html`, line 723):**
-   * Replace literal Markdown backticks `` (`faster-whisper` / Gemini) `` with proper HTML `<code>faster-whisper</code> / Gemini`.
-   * Tighten button/header alignment and display Gemini + Zoom integration readiness badges (`Gemini Connected` / `Offline Fallback` & `Zoom Cloud Connected` / `Manual Mode` derived safely from non-secret boolean flags, never exposing keys).
-2. **Zoom Cloud Controls in Teacher Tab 5 (`#tab-ai-hub`):**
-   * Add a **Zoom Meeting ID** input (`session.zoom_meeting_id`) + **Save ID** and **"☁️ Fetch from Zoom Cloud"** button right above the manual file upload card, plus optional Webhook URL copy pill (`https://<PUBLIC_BASE_URL>/api/webhooks/zoom`).
-   * Add live progress pill (`#lecture-ai-status`) listening to `socket.on("lecture:status", ...)`.
-3. **Download Actions in Teacher Portal & Student AI Study Hub:**
-   * Add **Download Summary (`.md`)** and **Download Transcript (`.txt`)** buttons to every `LectureArtifact` card in both `teacher_portal.html` (`renderLectureArtifacts`) and `student_app.html` (`loadStudyHub()` inside `#view-study`).
-
----
-
-### 6.6 Required API Keys, Zoom App Setup & Known Constraints
-
-All secrets belong **strictly in `.env`** (git-ignored) and must never be committed to source files or documentation:
-
-| Environment Variable | Where to Obtain It | Purpose in ClassPulse |
-| :--- | :--- | :--- |
-| `GEMINI_API_KEY` | **Google AI Studio** (`https://aistudio.google.com/app/apikey`) | Enables live `gemini-2.5-flash` / `gemini-2.5-pro` Pass-1 transcript correction, Pass-2 lecture summarization, and Phase 8 Stage-2 deep homework reviews. |
-| `ZOOM_ACCOUNT_ID` | **Zoom App Marketplace** -> Build App -> **Server-to-Server OAuth** -> App Credentials | Identifies your Zoom organization/account for OAuth token exchange (`https://zoom.us/oauth/token`). |
-| `ZOOM_CLIENT_ID` | Same **Server-to-Server OAuth** App -> App Credentials | OAuth Basic Auth username for fetching access tokens. |
-| `ZOOM_CLIENT_SECRET` | Same **Server-to-Server OAuth** App -> App Credentials | OAuth Basic Auth password for fetching access tokens. |
-| `ZOOM_WEBHOOK_SECRET_TOKEN` | Same **Server-to-Server OAuth** App -> **Feature** -> **Secret Token** | Computes HMAC-SHA256 for Zoom's `endpoint.url_validation` challenge and verifies `x-zm-signature` on `recording.completed` webhooks. |
-| `TUNNEL_TOKEN` *(Optional, recommended for webhooks)* | **Cloudflare Zero Trust Dashboard** -> Networks -> Tunnels | Keeps `PUBLIC_BASE_URL` fixed across Docker restarts so Zoom's Webhook Endpoint URL stays valid permanently (otherwise use on-demand **Fetch from Zoom Cloud**). |
-
-#### Required Zoom App Scopes & Account Prerequisites
-1. **Paid Zoom License Requirement for Cloud Recording:** Zoom **Cloud Recording** (`recording.completed` webhooks and `GET /v2/meetings/{meetingId}/recordings`) requires a **Zoom Pro, Business, or Education host account** (such as an institutional university Zoom account). **Zoom Basic (Free)** accounts only support local recording to disk; manual file upload (`.mp4`/`.m4a`/`.vtt`) remains active in ClassPulse as the zero-cost fallback.
-2. **Required Zoom Server-to-Server OAuth Scopes:**
-   * `cloud_recording:read:list_recording_files:admin` (or legacy `recording:read:admin`) — required to list and download recording files (`4711` error occurs if omitted).
-   * `cloud_recording:read:recording:admin` — required to read cloud recording metadata.
-   * Enable **Audio Transcript** (`VTT`) inside Zoom Web Portal -> *Settings -> Recording -> Cloud recording -> Save closed caption as a VTT file* for fastest processing.
-3. **Zoom Event Subscription (Optional for Zero-Click Auto-Sync):**
-   * Enable **Event Subscriptions** on the Server-to-Server OAuth app -> subscribe to **`Recording -> All Recordings have completed`** (`recording.completed`) -> set **Event notification endpoint URL** to `https://<your-domain>/api/webhooks/zoom` and click **Validate** (uses `ZOOM_WEBHOOK_SECRET_TOKEN`).
-4. **Gemini Rate Limits (Free Tier vs. Paid Tier):**
-   * Google AI Studio Free Tier (`gemini-2.5-flash`: ~10 RPM / 250K TPM; `gemini-2.5-pro`: ~5 RPM) works comfortably for **text-based Pass 1 + Pass 2** when Zoom `.vtt` or local `faster-whisper` supplies text chunks spaced by `GEMINI_MIN_INTERVAL_SEC=4.5`. Sending large multi-megabyte raw audio directly to Gemini consumes TPM quotas much faster, so keeping `.vtt` / local `faster-whisper` first maximizes free-tier reliability.
 

@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-import atexit
-import os
-import sys
 from typing import Optional
 
 from flask import Flask, jsonify, request
@@ -16,11 +13,6 @@ from app.services.llm_client import GeminiStudioClient
 from app.services.qr_service import DeviceBindingManager, RollingQRService
 from app.services.report_exporter import SpreadsheetExporter
 from app.services.task_runner import AsyncTaskManager
-from app.services.zoom_bridge import (
-    NoOpZoomBridge,
-    ZoomBridgeAdapter,
-    ZoomOAuthRestBridge,
-)
 
 socketio = SocketIO()
 
@@ -28,7 +20,6 @@ socketio = SocketIO()
 def create_app(
     config: Optional[Config] = None,
     face_detector: Optional[FaceDetector] = None,
-    zoom_bridge: Optional[ZoomBridgeAdapter] = None,
     llm_client: Optional[GeminiStudioClient] = None,
 ) -> Flask:
     """Application factory initializing Flask, ProxyFix, SQLite WAL, SocketIO, and Services."""
@@ -57,19 +48,6 @@ def create_app(
     flask_app.extensions["face_detector"] = face_detector or TiledSCRFDDetector()
     flask_app.extensions["report_exporter"] = SpreadsheetExporter()
 
-    # Initialize Zoom Bridge Adapter (Feature 2 & Feature 4)
-    if zoom_bridge is not None:
-        flask_app.extensions["zoom_bridge"] = zoom_bridge
-    elif cfg.ZOOM_ACCOUNT_ID and cfg.ZOOM_CLIENT_ID and cfg.ZOOM_CLIENT_SECRET:
-        flask_app.extensions["zoom_bridge"] = ZoomOAuthRestBridge(
-            account_id=cfg.ZOOM_ACCOUNT_ID,
-            client_id=cfg.ZOOM_CLIENT_ID,
-            client_secret=cfg.ZOOM_CLIENT_SECRET,
-            team_channel_id=cfg.ZOOM_TEAM_CHANNEL_ID,
-        )
-    else:
-        flask_app.extensions["zoom_bridge"] = NoOpZoomBridge()
-
     # Initialize Gemini AI Studio Client (Features 4 & 5)
     flask_app.extensions["llm_client"] = llm_client or GeminiStudioClient(
         api_key=cfg.GEMINI_API_KEY,
@@ -84,27 +62,6 @@ def create_app(
 
     # Initialize Flask-SocketIO in standard threading mode (compatible with simple-websocket + gthread)
     socketio.init_app(flask_app, async_mode="threading", cors_allowed_origins="*")
-
-    # Initialize optional background Zoom Cloud Auto-Poller (uses 3 OAuth keys, no webhook needed)
-    from app.services.lecture_pipeline import ZoomCloudAutoPoller
-
-    zoom_poller = ZoomCloudAutoPoller(
-        engine=engine,
-        zoom_bridge=flask_app.extensions["zoom_bridge"],
-        llm_client=flask_app.extensions["llm_client"],
-        upload_dir=cfg.UPLOAD_DIR,
-        socketio_ext=socketio,
-        interval_sec=cfg.ZOOM_POLL_INTERVAL_SEC,
-    )
-    flask_app.extensions["zoom_poller"] = zoom_poller
-    if (
-        flask_app.extensions["zoom_bridge"].is_configured()
-        and cfg.ZOOM_POLL_INTERVAL_SEC > 0
-        and "pytest" not in sys.modules
-        and os.getenv("CLASSPULSE_ENABLE_ZOOM_POLLER", "1") == "1"
-    ):
-        zoom_poller.start()
-        atexit.register(zoom_poller.stop)
 
     # Register blueprints and Socket.IO event handlers
     from app.routes.attendance import attendance_bp

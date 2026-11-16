@@ -393,7 +393,7 @@
 
       <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
         <a class="btn" href="/projector/{{ session.session_code }}" target="_blank">&#128250; Launch Projector QR</a>
-        <a class="btn btn-secondary" href="/lecturer/chat-popout/{{ session.session_code }}" target="_blank">&#128172; Zoom Pop-Out</a>
+        <a class="btn btn-secondary" href="/lecturer/chat-popout/{{ session.session_code }}" target="_blank">&#128172; Q&amp;A Pop-Out</a>
         <a class="btn btn-secondary" href="/student?session={{ session.session_code }}" target="_blank">&#128241; Preview Student App</a>
       </div>
     </header>
@@ -407,7 +407,7 @@
         2. Live Lecture Polls
       </button>
       <button class="tab-btn" onclick="switchTab('tab-chat', this)">
-        3. Class Chat &amp; Zoom Bridge
+        3. Live Classroom Q&amp;A
       </button>
       <button class="tab-btn" onclick="switchTab('tab-course-roster', this)">
         4. Course Overview &amp; Roster ({{ selected_course.students|length }})
@@ -640,14 +640,14 @@
       </div>
     </section>
 
-    <!-- TAB 3: Class Chat & Zoom Bridge (Feature 2) -->
+    <!-- TAB 3: Live Classroom Q&A (Feature 2) -->
     <section id="tab-chat" class="tab-pane">
       <div class="card">
         <h2>
-          <span>Timestamped Classroom Q&amp;A &amp; Zoom Bridge ({{ session.session_code }})</span>
+          <span>Timestamped Classroom Q&amp;A ({{ session.session_code }})</span>
           <div style="display:flex; gap:8px;">
             <a class="btn-secondary btn-sm" href="/lecturer/chat-popout/{{ session.session_code }}" target="_blank">
-              &#128172; Open Zoom Companion Pop-Out
+              &#128172; Open Live Q&amp;A Companion Pop-Out
             </a>
             <a class="btn-secondary btn-sm" href="/api/sessions/{{ session.id }}/chat/export.txt">
               &#128190; Export Transcript (.txt)
@@ -661,7 +661,7 @@
             <option value="Question">Question</option>
             <option value="Suggestion">Suggestion</option>
           </select>
-          <input type="text" id="lecturer-chat-body" placeholder="Post an announcement or answer to the class (and Zoom bridge)..." />
+          <input type="text" id="lecturer-chat-body" placeholder="Post an announcement or answer to the live classroom feed..." />
           <button onclick="sendLecturerChat()">Send</button>
         </div>
 
@@ -736,47 +736,16 @@
           </h2>
           <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
             <span class="badge {{ 'VERIFIED' if gemini_configured else 'UNDER_SCANNED' }}">
-              Gemini API: {{ 'Live' if gemini_configured else 'Offline Fallback' }}
-            </span>
-            <span class="badge {{ 'VERIFIED' if zoom_configured else 'UNDER_SCANNED' }}">
-              Zoom Cloud: {{ 'Connected' if zoom_configured else 'Keys Not Set' }}
+              Google Gemini API: {{ 'Live (Transcribe & Summarize)' if gemini_configured else 'Offline Fallback (faster-whisper)' }}
             </span>
           </div>
           <p style="font-size:12px; color:var(--muted); margin-top:0;">
-            Sync directly from <strong>Zoom Cloud Recording</strong> (<code>.vtt</code> / <code>.m4a</code> / <code>.mp4</code>) or upload/paste notes. Pass 1 fixes CS terminology (<code>faster-whisper</code> / Gemini) preserving <code>[MM:SS]</code>; Pass 2 synthesizes structured notes linked with student chat questions.
+            Upload a class recording (<code>.mp4</code>, <code>.m4a</code>, <code>.mp3</code>, <code>.wav</code>, <code>.vtt</code>) or paste notes. ClassPulse sends recordings to <strong>Google Gemini API</strong> to transcribe with <code>[MM:SS]</code> timestamps, then uses Gemini AI to produce structured lecturer study notes linked with student chat Q&amp;A.
           </p>
 
-          <!-- Automated Zoom Cloud Sync Box -->
-          <div style="background:#0f172a; border:1px solid var(--border); border-radius:10px; padding:10px; margin-bottom:10px;">
-            <div style="font-size:12px; font-weight:700; color:var(--accent); margin-bottom:6px;">
-              &#9729; Zoom Cloud Recording Sync
-            </div>
-            <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-bottom:6px;">
-              <input
-                type="text"
-                id="zoom-meeting-id-input"
-                value="{{ session.zoom_meeting_id or '' }}"
-                placeholder="Zoom Meeting ID or https://zoom.us/j/... (blank = latest)"
-                style="flex:1; min-width:190px; margin:0;"
-              />
-              <button class="btn-secondary btn-sm" type="button" onclick="saveZoomConfig()">Save ID</button>
-              <button class="btn-green btn-sm" type="button" onclick="fetchFromZoomCloud()">&#9729; Fetch from Zoom Cloud</button>
-            </div>
-            <label style="display:flex; align-items:center; gap:6px; font-size:11px; color:var(--muted); cursor:pointer;">
-              <input
-                type="checkbox"
-                id="zoom-auto-sync-toggle"
-                onchange="saveZoomConfig()"
-                style="width:auto; margin:0;"
-                {{ 'checked' if session.zoom_auto_sync else '' }}
-              />
-              Auto-fetch &amp; summarize as soon as this Zoom Cloud recording completes
-            </label>
-          </div>
-
           <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:8px;">
-            <input type="file" id="lecture-media-input" accept=".mp4,.wav,.mp3,.m4a,.vtt,.srt,.txt" style="max-width:260px;" />
-            <button class="btn-sm" onclick="summarizeLecture(false)">Upload &amp; Summarize</button>
+            <input type="file" id="lecture-media-input" accept=".mp4,.wav,.mp3,.m4a,.ogg,.webm,.vtt,.srt,.txt" style="max-width:260px;" />
+            <button class="btn-green btn-sm" onclick="summarizeLecture(false)">Upload, Transcribe &amp; Summarize</button>
             <span id="lecture-ai-status" style="font-size:12px; font-weight:600; color:var(--accent);"></span>
           </div>
           <textarea id="lecture-transcript-input" rows="3" placeholder="Or paste raw lecture transcript text here (optional)..."></textarea>
@@ -860,13 +829,9 @@
         <label style="font-size:12px; color:var(--muted);">Lecture Title</label>
         <input type="text" id="new-lecture-title" placeholder="Lecture {{ course_sessions|length + 1 }} — Design Patterns" />
       </div>
-      <div style="margin-bottom:10px;">
+      <div style="margin-bottom:14px;">
         <label style="font-size:12px; color:var(--muted);">Custom Session Code (optional)</label>
         <input type="text" id="new-lecture-code" placeholder="Auto-generated if blank" />
-      </div>
-      <div style="margin-bottom:14px;">
-        <label style="font-size:12px; color:var(--muted);">Zoom Meeting ID / Link (optional)</label>
-        <input type="text" id="new-lecture-zoom-id" placeholder="e.g. 812 3456 7890 or https://zoom.us/j/..." />
       </div>
       <div style="display:flex; justify-content:flex-end; gap:8px;">
         <button class="btn-secondary" onclick="closeModal('modal-new-lecture')">Cancel</button>
@@ -917,12 +882,10 @@
     async function submitNewLecture() {
       const title = document.getElementById("new-lecture-title").value.trim() || "New Lecture";
       const session_code = document.getElementById("new-lecture-code").value.trim();
-      const zoomEl = document.getElementById("new-lecture-zoom-id");
-      const zoom_meeting_id = zoomEl ? zoomEl.value.trim() : "";
       const res = await fetch(`/api/courses/${COURSE_ID}/sessions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title, session_code, zoom_meeting_id }),
+        body: JSON.stringify({ title, session_code }),
       });
       const data = await res.json();
       if (!res.ok) return alert(data.error || "Failed to create lecture");
@@ -1394,10 +1357,9 @@
 
     function formatStageLabel(status) {
       const map = {
-        DOWNLOADING_ZOOM: "Downloading from Zoom Cloud...",
-        TRANSCRIBING: "Extracting [MM:SS] transcript...",
-        AI_CORRECTING: "Gemini Pass 1: Auto-correcting terminology...",
-        SUMMARIZING: "Gemini Pass 2: Synthesizing notes + Q&A...",
+        TRANSCRIBING: "Google Gemini: Transcribing class recording...",
+        AI_CORRECTING: "Google Gemini: Cleaning CS terminology...",
+        SUMMARIZING: "Google Gemini: Generating lecturer summary + Q&A...",
         COMPLETED: "Completed & Ready to Download",
         FAILED: "Processing Failed",
       };
@@ -1408,7 +1370,7 @@
       const box = document.getElementById("lecture-artifacts-list");
       if (!box) return;
       if (!artifacts.length) {
-        box.innerHTML = `<div style="color:var(--muted); font-size:12px; padding:10px; border:1px dashed var(--border); border-radius:8px;">No lecture summaries yet for this session. Sync a Zoom Cloud Recording, upload a file, or click <strong>Run Ariel Lecture Sample</strong>.</div>`;
+        box.innerHTML = `<div style="color:var(--muted); font-size:12px; padding:10px; border:1px dashed var(--border); border-radius:8px;">No lecture summaries yet for this session. Upload a recording file, paste notes, or click <strong>Run Ariel Lecture Sample</strong>.</div>`;
         return;
       }
       box.innerHTML = artifacts.map(a => {
@@ -1443,57 +1405,6 @@
       }).join("");
     }
 
-    async function saveZoomConfig() {
-      const idEl = document.getElementById("zoom-meeting-id-input");
-      const autoEl = document.getElementById("zoom-auto-sync-toggle");
-      const statusEl = document.getElementById("lecture-ai-status");
-      try {
-        const res = await fetch(`/api/sessions/${SESSION_ID}/zoom-config`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            zoom_meeting_id: idEl ? idEl.value.trim() : "",
-            zoom_auto_sync: autoEl ? autoEl.checked : false,
-          }),
-        });
-        const data = await res.json();
-        if (res.ok && idEl) {
-          idEl.value = data.zoom_meeting_id || "";
-          if (statusEl) statusEl.textContent = data.zoom_auto_sync ? "Zoom Auto-Sync ON" : "Zoom settings saved";
-        }
-      } catch (err) {
-        if (statusEl) statusEl.textContent = "Failed saving Zoom config: " + err.message;
-      }
-    }
-
-    async function fetchFromZoomCloud() {
-      const idEl = document.getElementById("zoom-meeting-id-input");
-      const autoEl = document.getElementById("zoom-auto-sync-toggle");
-      const statusEl = document.getElementById("lecture-ai-status");
-      const meetingId = idEl ? idEl.value.trim() : "";
-      statusEl.textContent = "Connecting to Zoom Cloud...";
-      try {
-        const res = await fetch(`/api/sessions/${SESSION_ID}/lectures/zoom-fetch`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            zoom_meeting_id: meetingId,
-            zoom_auto_sync: autoEl ? autoEl.checked : false,
-          }),
-        });
-        const data = await res.json();
-        if (!res.ok) {
-          statusEl.textContent = data.error || "Zoom Cloud fetch failed";
-          return;
-        }
-        statusEl.textContent = data.job_id ? "Downloading Zoom recording in background..." : "Completed!";
-        loadLectureArtifacts();
-        if (data.job_id) pollLectureJob(data.job_id);
-      } catch (err) {
-        statusEl.textContent = "Zoom fetch error: " + err.message;
-      }
-    }
-
     function pollLectureJob(jobId) {
       const statusEl = document.getElementById("lecture-ai-status");
       const timer = setInterval(async () => {
@@ -1507,7 +1418,7 @@
             statusEl.textContent = "Summary ready to download!";
           } else if (job.status === "FAILED") {
             clearInterval(timer);
-            statusEl.textContent = "Failed: " + (job.error || "Check Zoom/Gemini keys");
+            statusEl.textContent = "Failed: " + (job.error || "Check Gemini API key");
           }
         } catch (_e) {
           clearInterval(timer);
@@ -1517,7 +1428,7 @@
 
     async function summarizeLecture(useSample) {
       const statusEl = document.getElementById("lecture-ai-status");
-      statusEl.textContent = "Processing Pass 1 + Pass 2...";
+      statusEl.textContent = "Uploading & processing with Google Gemini AI...";
       try {
         let res;
         const fileInput = document.getElementById("lecture-media-input");
@@ -1525,7 +1436,8 @@
         if (!useSample && fileInput && fileInput.files.length > 0) {
           const fd = new FormData();
           fd.append("media", fileInput.files[0]);
-          res = await fetch(`/api/sessions/${SESSION_ID}/lectures/summarize`, { method: "POST", body: fd });
+          fd.append("async", "1");
+          res = await fetch(`/api/sessions/${SESSION_ID}/lectures/summarize?async=1`, { method: "POST", body: fd });
         } else {
           res = await fetch(`/api/sessions/${SESSION_ID}/lectures/summarize`, {
             method: "POST",
@@ -1536,6 +1448,12 @@
         const data = await res.json();
         if (!res.ok) {
           statusEl.textContent = data.error || "Failed";
+          return;
+        }
+        if (data.job_id) {
+          statusEl.textContent = "Google Gemini: Transcribing recording in background...";
+          loadLectureArtifacts();
+          pollLectureJob(data.job_id);
           return;
         }
         statusEl.textContent = "Completed!";

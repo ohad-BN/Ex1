@@ -18,7 +18,6 @@ from app.models import ClassSession, Course, HeadcountSnapshot, Lecturer, Studen
 from app.services.attendance_service import AttendanceService
 from app.services.course_service import CourseError, CourseService
 from app.services.qr_service import DeviceBindingManager, resolve_effective_base_url
-from app.services.zoom_bridge import normalize_zoom_meeting_id
 
 courses_bp = Blueprint("courses", __name__)
 
@@ -181,7 +180,6 @@ def teacher_portal():
     course_overview = svc.get_course_overview(selected_course.id)
 
     llm_client = current_app.extensions.get("llm_client")
-    zoom_bridge = current_app.extensions.get("zoom_bridge")
 
     return render_template(
         "teacher_portal.html",
@@ -196,7 +194,6 @@ def teacher_portal():
         latest_snap=latest_snap,
         base_url=base_url,
         gemini_configured=bool(llm_client and llm_client.is_configured()),
-        zoom_configured=bool(zoom_bridge and zoom_bridge.is_configured()),
     )
 
 
@@ -275,14 +272,10 @@ def api_create_course_session(course_id: int):
     att_svc = _get_attendance_service()
     title = str(payload.get("title", "New Lecture")).strip()
     session_code = payload.get("session_code")
-    zoom_meeting_id = normalize_zoom_meeting_id(payload.get("zoom_meeting_id"))
-    zoom_auto_sync = bool(payload.get("zoom_auto_sync", bool(zoom_meeting_id)))
     sess = att_svc.create_session(
         title=title,
         session_code=str(session_code) if session_code else None,
         course_id=course_id,
-        zoom_meeting_id=zoom_meeting_id or None,
-        zoom_auto_sync=zoom_auto_sync,
     )
     return (
         jsonify(
@@ -291,8 +284,6 @@ def api_create_course_session(course_id: int):
                 "course_id": sess.course_id,
                 "session_code": sess.session_code,
                 "title": sess.title,
-                "zoom_meeting_id": sess.zoom_meeting_id or "",
-                "zoom_auto_sync": bool(sess.zoom_auto_sync),
                 "started_at": sess.started_at.isoformat(),
                 "attendance_open": sess.attendance_open,
             }

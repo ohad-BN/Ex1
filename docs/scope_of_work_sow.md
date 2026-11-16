@@ -38,14 +38,14 @@ To guarantee a rock-solid 10-minute live classroom demonstration while cleanly s
    * Pre-class poll bank editor (create, reorder, save drafts ahead of the lecture).
    * On-the-spot KISS quick poll launcher (1-click Yes/No, A/B/C/D, or custom question).
    * Reconnect-safe real-time voting and live animated histogram updates over WebSockets.
-5. **Feature 2 — Timestamped Classroom Chat & Zoom Bridge:**
-   * Real-time student Q&A/comment feed (`Flask-SocketIO`) with timestamps, categories (Question / Comment / Suggestion), and peer upvotes.
-   * `ZoomBridgeAdapter` supporting optional Zoom Team Chat channel forwarding via Zoom REST API, a compact "Zoom-Companion Popout" overlay, and structured timestamped Q&A export (explicitly accounting for Zoom REST API's inability to inject into live in-meeting chat).
+5. **Feature 2 — Timestamped Classroom Chat & Live Popout:**
+   * Real-time student Q&A/comment feed (`Flask-SocketIO`) with timestamps (`+MM:SS`), categories (Question / Comment / Suggestion), and peer upvotes.
+   * Includes a compact "Live Q&A Popout" companion overlay and structured `.txt` timeline export without requiring external Zoom API keys.
 
 ### Tier 2 — Post-Class AI & Incremental Analytics (Bonus Extensions)
-6. **Feature 4 — ML Lecture Summarizer:**
-   * Accepts local Zoom/Meet video/audio uploads (`.mp4`/`.m4a`/`.wav`) or `.vtt` transcripts, plus optional Zoom Cloud Recording retrieval for licensed Pro/Edu accounts.
-   * Local timestamped ASR transcription via `faster-whisper`, followed by two-pass Google AI Studio (`gemini-2.5-flash` free tier) domain-term correction and structured summary generation.
+6. **Feature 4 — AI Lecture Transcriber & Summarizer:**
+   * Accepts uploaded class video/audio recordings (`.mp4`/`.m4a`/`.mp3`/`.wav`) or `.vtt`/`.txt` transcripts.
+   * Sends recordings to **Google Gemini API** (`google-genai` Files API) for `[MM:SS]` timestamped transcription (with local `faster-whisper` offline fallback), followed by Gemini domain correction and structured summary generation (`.md` / `.txt` downloads) for the lecturer and students.
 7. **Feature 5 — LLM Homework Deep Review & Cohort Comparison:**
    * Accepts uploaded submissions (`.pdf`/`.py`/`.java`/`.zip`) or GitHub repository URLs.
    * Implements **Incremental Aggregation**: Stage-1 LLM extracts structured Pydantic JSON metrics per single submission -> Python backend updates anonymized `ClassStatsAggregate` in $O(1)$ time -> Stage-2 LLM synthesizes personalized comparative feedback against cohort averages and common mistakes without ever exposing peer source code or identities.
@@ -56,7 +56,7 @@ To guarantee a rock-solid 10-minute live classroom demonstration while cleanly s
 
 To comply with Ex2 Guidelines (*"No need integrate with Moodle, Zoom or מידע אישי"* and *"You should only design what can be implemented"*), the following are explicitly **excluded**:
 * **Moodle / University SSO / Personal ID (`תעודת זהות`):** No scraping or storing national ID numbers or university portal credentials. Students identify via Name and Email only.
-* **Heavyweight Headless Zoom Meeting Bots:** Building, certifying, and running a Linux Zoom Meeting SDK participant bot just to inject live chat bubbles into Zoom's meeting overlay is excluded from the core KISS scope due to Zoom API restrictions and container complexity (documented in `docs/technical_tools_report.md`).
+* **No External LMS or Zoom API Integration:** Per Ex2 Guidelines (*"No need integrate with Moodle, Zoom or מידע אישי"*), ClassPulse does **not** connect to Moodle, Zoom OAuth/Cloud APIs, or institutional SSO; recordings are uploaded directly by the user and Q&A stays native inside ClassPulse.
 * **Biometric Identity Recognition (Face-to-Name Matching):** The CV pipeline performs **anonymous face/head counting** (`count = N`), NOT facial recognition identifying which face belongs to which student, avoiding GDPR/biometric privacy risks and cold-start photo enrollment friction.
 * **Cloud Hosting / Kubernetes:** Deployment targets a single lecturer PC running Docker Compose + Tunnel.
 
@@ -85,7 +85,7 @@ To comply with Ex2 Guidelines (*"No need integrate with Moodle, Zoom or מידע
 | :--- | :--- | :--- | :--- |
 | **M1** | **Design & Documentation (Current)** | Finalize `README.md`, Tools Report, SoW, SRS, Use Cases, Component/Class/Sequence Diagrams, and Class-Mapped STP. | Nov 12, 2026 |
 | **M2** | **Tool Verification & Core MVP** | Execute hands-on tool tests (SCRFD on Ariel lecture photo, `cloudflared` tunnel, `flask-socketio` + `gthread`). Implement Docker stack, DB models, Rotating QR + Device Auth, CV Headcount + Excel Export (Feature 1). | Nov 17, 2026 |
-| **M3** | **Engagement & AI Modules** | Implement Pre-prepared & Quick Polls (Feature 3), Realtime Chat + Zoom Bridge (Feature 2), `faster-whisper` + Gemini Summarizer (Feature 4), and Incremental Homework Review (Feature 5). | Nov 22, 2026 |
+| **M3** | **Engagement & AI Modules** | Implement Pre-prepared & Quick Polls (Feature 3), Realtime Chat + Popout (Feature 2), Google Gemini Audio Transcriber & Summarizer (Feature 4), and Incremental Homework Review (Feature 5). | Nov 22, 2026 |
 | **M4** | **Testing, Rehearsal & Demo** | Run full STP automated suite (`pytest`), verify live mobile tunnel stress test, finalize demo script & results report, submit before deadline. | Nov 25, 2026 |
 
 ---
@@ -96,6 +96,6 @@ To comply with Ex2 Guidelines (*"No need integrate with Moodle, Zoom or מידע
 | :--- | :--- | :--- | :--- |
 | **Distant/occluded faces missed in wide classroom photos** | High | High | Use InsightFace SCRFD (`det_10g`) with overlapping tile slicing + NMS, plus interactive manual +/- click adjustment on the lecturer preview canvas. |
 | **5-second QR timeout frustrates students with slow cameras** | Medium | High | Accept both current (`t`) and immediate previous (`t-1`) 5-second HMAC buckets (5–10s effective grace window) while keeping visual rotation every 5s. |
-| **Zoom Free API lacks live meeting chat write & cloud recordings** | Certain | Medium | Explicitly decouple core chat & audio ingestion from Zoom Pro/SDK dependencies; use native Socket.IO chat + local `.mp4`/`.m4a` upload as default, with optional Zoom OAuth adapters. |
+| **No institutional Zoom admin access / offline Gemini outage** | Certain | Medium | Decouple completely from Zoom APIs; ingest uploaded recordings directly, send to Google Gemini API when online, and keep `faster-whisper` + rule-based fallback locally. |
 | **Google AI Studio Free Tier `429 RESOURCE_EXHAUSTED` rate limits** | Medium | Medium | Chunk lecture transcripts cleanly, apply exponential backoff & token budgeting, and use single-call structured JSON extraction for Feature 5. |
 | **Tunnel URL changes on container restart mid-demo** | Medium | Medium | Support persistent Named Cloudflare Tunnel via `TUNNEL_TOKEN` for fixed URL, or auto-generate the dynamic QR host URL from request headers (`X-Forwarded-Host`). |

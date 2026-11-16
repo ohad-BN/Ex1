@@ -27,7 +27,7 @@ ClassPulse serves two primary user groups—**Lecturers** (operating a desktop w
 ## 2. Overall Description
 
 ### 2.1 Product Perspective
-ClassPulse is a self-contained Docker Compose stack running directly on the lecturer's PC, eliminating third-party SaaS lock-in, LMS scraping, or cloud server hosting fees while maintaining modular adapters for optional Zoom OAuth integration and Google AI Studio LLM inference.
+ClassPulse is a self-contained Docker Compose stack running directly on the lecturer's PC, eliminating third-party SaaS lock-in, university portal/Zoom tenant API dependencies, or cloud server hosting fees while integrating cleanly with Google AI Studio (`GEMINI_API_KEY`) for audio transcription, summarization, and homework evaluation.
 
 ### 2.2 User Classes
 1. **Lecturer (Administrator / Host):** Creates class sessions, imports optional sanitized rosters (`Name, Email`), projects the 5-second rotating QR code, captures/uploads classroom photos, reviews CV headcounts, exports attendance spreadsheets, manages live/pre-prepared polls, moderates live chat, uploads lecture recordings for ML summarization, and configures homework rubrics.
@@ -42,9 +42,9 @@ ClassPulse is a self-contained Docker Compose stack running directly on the lect
 
 ### 2.4 Constraints & Assumptions
 * **Constraint 1 (Privacy / Guideline 1):** The system shall never collect, store, or process national ID numbers (`תעודת זהות`) or Moodle/university portal passwords.
-* **Constraint 2 (Zoom Free Plan):** Core chat and recording workflows must work 100% without a paid Zoom account or Zoom Meeting SDK participant bot.
-* **Constraint 3 (CPU Execution):** Face counting and audio transcription must execute without requiring an NVIDIA CUDA GPU.
-* **Assumption:** The host PC maintains outbound internet access during lectures for the Cloudflare tunnel and optional Google AI Studio / Zoom API calls.
+* **Constraint 2 (Zero External Zoom/Moodle Dependencies):** Core chat and recording workflows shall work 100% natively without requiring Zoom OAuth/Cloud credentials, Meeting SDK bots, or Moodle integration.
+* **Constraint 3 (CPU Execution):** Face counting and offline audio fallback must execute without requiring an NVIDIA CUDA GPU.
+* **Assumption:** The host PC maintains outbound internet access during lectures for the Cloudflare tunnel and Google AI Studio API calls (`GEMINI_API_KEY`).
 
 ---
 
@@ -54,7 +54,7 @@ ClassPulse is a self-contained Docker Compose stack running directly on the lect
 
 #### 3.1.1 User Interfaces
 * **Student Mobile Web UI (`/s/<session_code>`):** Mobile-first responsive interface (touch targets $\ge 44\text{ px}$) with tabs for Check-In Status, Live Chat, Live Polls, Lecture Summaries, and Homework Deep Review.
-* **Lecturer Command Center (`/lecturer`, protected by session/admin passphrase):** Desktop-optimized dashboard featuring Live Projector QR View (`Fullscreen` toggle + 5s countdown ring), Classroom Photo Upload & Interactive Bounding-Box Editor, Attendance Audit Table & `.xlsx`/`.csv` Export, Poll Bank Manager & Live Histogram, Chat Moderation / Zoom Companion Popout, Lecture Summarizer Queue, and Homework Cohort Dashboard.
+* **Lecturer Portal (`/teacher` & `/lecturer`):** Desktop-optimized dashboard featuring Live Projector QR View (`Fullscreen` toggle + 5s countdown ring), Classroom Photo Upload & Interactive Bounding-Box Editor, Attendance Audit Table & `.xlsx`/`.csv` Export, Poll Bank Manager & Live Histogram, Chat Moderation / Live Q&A Popout, AI Recording Upload & Summary Queue, and Homework Cohort Dashboard.
 
 #### 3.1.2 REST API & WebSocket Interfaces
 * **REST Endpoints:**
@@ -63,7 +63,8 @@ ClassPulse is a self-contained Docker Compose stack running directly on the lect
   * `PATCH /api/sessions/<id>/headcount` — Saves lecturer manual bounding-box adjustments and audit notes.
   * `GET /api/sessions/<id>/report?format=xlsx|csv` — Downloads the cross-referenced attendance & discrepancy report.
   * `GET/POST /api/polls`, `POST /api/polls/<id>/launch`, `POST /api/polls/<id>/close` — Pre-class poll bank CRUD and live poll lifecycle transitions.
-  * `POST /api/lectures/<id>/summarize` — Accepts `.mp4`/`.m4a`/`.wav`/`.vtt` upload (or optional Zoom Meeting ID), enqueues transcription + Gemini correction/summary.
+  * `POST /api/sessions/<id>/lectures/summarize` — Accepts `.mp4`/`.m4a`/`.mp3`/`.wav`/`.vtt`/`.txt` upload (sync or `?async=1`), transcribes via Google Gemini API (`faster-whisper` offline fallback), and runs Gemini summary generation.
+  * `GET /api/lectures/<id>/download/summary.md` & `/download/transcript.txt` — Downloads the lecturer summary Markdown and timestamped `[MM:SS]` transcript.
   * `POST /api/assignments/<id>/submit` & `POST /api/submissions/<id>/deep-review` — Handles file/GitHub submission, Stage-1 JSON extraction, cohort math update, and Stage-2 comparative review generation.
 * **Socket.IO Real-Time Events (`wss://`):**
   * `join_session`, `qr:rotate` (5s QR payload refresh to projector screen), `attendance:count_update`
@@ -72,8 +73,7 @@ ClassPulse is a self-contained Docker Compose stack running directly on the lect
 
 #### 3.1.3 External Service Interfaces
 * **Cloudflare Tunnel (`cloudflared`):** Terminates HTTPS/WSS edge traffic and forwards `X-Forwarded-Proto` / `X-Forwarded-Host` headers to Gunicorn.
-* **Google AI Studio (`google-genai` SDK):** Calls Gemini Flash/Pro via HTTPS using `GEMINI_API_KEY` with JSON schema enforcement (`response_schema`).
-* **Zoom OAuth / REST API (Optional Adapter):** Supports optional Team Chat channel message posting and Cloud Recording download when configured with valid Zoom credentials on a licensed host account.
+* **Google AI Studio (`google-genai` SDK):** Calls Gemini (`gemini-3.8-flash` with `404` auto-fallback) via HTTPS using `GEMINI_API_KEY` for audio Files API transcription (`files.upload`), lecture summarization, and Pydantic `response_schema` homework analysis.
 
 ---
 
@@ -105,14 +105,14 @@ ClassPulse is a self-contained Docker Compose stack running directly on the lect
 * **REQ-14 (On-the-Spot KISS Polls):** Lecturers shall be able to launch a pre-saved poll or create a 1-click quick poll (`Yes/No`, `A/B/C/D`, or custom prompt) during live class.
 * **REQ-15 (Real-Time Voting & Reconnect Hydration):** Active polls shall broadcast immediately via Socket.IO to all connected student clients. Newly joined or reconnected clients shall receive a `poll:sync` payload with current state and remaining timer. Duplicate votes per `(poll_id, student_id)` shall be blocked idempotently.
 
-#### Feature 2: Timestamped Classroom Chat & Zoom Bridge (P1)
-* **REQ-16 (Live Timestamped Q&A / Comment Feed):** Students shall be able to post messages tagged as `Question`, `Comment`, or `Suggestion` with server-assigned UTC/local lecture-relative timestamps (`+MM:SS` from lecture start) and upvote existing questions.
-* **REQ-17 (Zoom Bridge Adapter):** The system shall route outbound chat messages through a `ZoomBridgeAdapter` supporting: (a) native Web Chat + Popout companion view (always active), (b) optional Zoom Team Chat channel dispatch when OAuth + `channel_id` are configured, and (c) graceful non-blocking fallback logging if Zoom API is unconfigured or unavailable (never crashing live classroom chat).
+#### Feature 2: Timestamped Classroom Chat & Live Popout (P1)
+* **REQ-16 (Live Timestamped Q&A / Comment Feed):** Students shall be able to post messages tagged as `Question`, `Comment`, or `Suggestion` with server-assigned lecture-relative timestamps (`+MM:SS` from lecture start) and upvote existing questions.
+* **REQ-17 (Live Companion Popout & Timeline Export):** The system shall provide a compact floating **Live Q&A Companion Popout** (`/lecturer/chat-popout/<session_code>`) and export structured `+MM:SS` Q&A timelines (`.txt`) for Feature 4 lecture summaries.
 
-#### Feature 4: ML Lecture Summarization (P2)
-* **REQ-18 (Dual Recording Ingestion):** Lecturers shall be able to upload local video/audio/caption files (`.mp4`, `.m4a`, `.wav`, `.vtt`) directly, or optionally trigger a Zoom Cloud Recording fetch if a licensed host token and Meeting ID are supplied.
-* **REQ-19 (Local Timestamped Transcription):** The backend shall extract audio via `ffmpeg` and transcribe via `faster-whisper` into structured timestamped segments (`start_sec`, `end_sec`, `text`), supporting English and Hebrew.
-* **REQ-20 (Two-Pass Gemini Correction & Summary):** Using the `google-genai` free-tier API with rate-limit throttling, the system shall run (1) a transcript correction pass using course terminology + session chat context while preserving timestamps, and (2) a structured summary pass producing TL;DR, topic breakdown, key takeaways, and student Q&A highlights.
+#### Feature 4: AI Lecture Transcription & Summary (P2)
+* **REQ-18 (Class Recording Upload):** Lecturers shall be able to upload class recordings (`.mp4`, `.m4a`, `.mp3`, `.wav`, `.ogg`, `.webm`) or caption/text files (`.vtt`, `.srt`, `.txt`) directly from the Teacher Portal (`?async=1` background job supported for large recordings).
+* **REQ-19 (Google Gemini API Audio Transcription + Fallback):** When `GEMINI_API_KEY` is configured, the backend shall prep compact audio via `ffmpeg` when needed and send the recording to **Google Gemini API** (`client.files.upload`) to produce `[MM:SS]` timestamped segments; when offline, it shall fall back automatically to local `faster-whisper`.
+* **REQ-20 (Gemini Lecturer Summary & Export):** Using `GeminiStudioClient`, the system shall refine CS/OOP terminology while preserving timestamps, synthesize a structured Markdown lecturer summary incorporating session chat Q&A highlights, and serve downloadable `.md` summary & `.txt` transcript files.
 
 #### Feature 5: LLM Homework Deep Review & Cohort Comparison (P2)
 * **REQ-21 (Submission Ingestion — Files & GitHub Repos):** Students (or batch lecturer import) shall submit homework via `.pdf`, `.py`, `.java`, `.md`, `.zip` archive, or public GitHub repository URL, automatically filtering binary/vendor paths (`.git/`, `node_modules/`, `venv/`).

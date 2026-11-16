@@ -55,7 +55,7 @@ def seed_demo() -> None:
         if not poll_svc.list_session_polls(sess.id):
             poll_svc.create_poll(
                 session_id=sess.id,
-                question="Which pattern decouples Zoom/FaceCounter adapters from services?",
+                question="Which pattern decouples FaceCounter/LLM adapters from services?",
                 options=["Bridge / Adapter Pattern", "God Object", "Global Variables"],
                 correct_index=0,
             )

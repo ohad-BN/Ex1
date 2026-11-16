@@ -30,7 +30,6 @@ def handle_join_session(data: dict[str, Any] | None) -> None:
     db = current_app.extensions["db_session"]
     qr_service = current_app.extensions["qr_service"]
     device_mgr: DeviceBindingManager = current_app.extensions["device_mgr"]
-    zoom_bridge = current_app.extensions["zoom_bridge"]
     cfg = current_app.config["CLASSPULSE_CONFIG"]
 
     session = db.query(ClassSession).filter_by(session_code=session_code).one_or_none()
@@ -66,7 +65,7 @@ def handle_join_session(data: dict[str, Any] | None) -> None:
     )
 
     # Hydrate chat feed on connect/reconnect (Feature 2)
-    chat_svc = ChatService(db=db, zoom_bridge=zoom_bridge)
+    chat_svc = ChatService(db=db)
     emit("chat:init", {"messages": chat_svc.list_messages(session.id)})
 
 

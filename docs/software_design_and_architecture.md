@@ -30,8 +30,7 @@ flowchart TD
             Vision["TiledSCRFDDetector (InsightFace ONNX)"]
             Report["SpreadsheetExporter (.xlsx / .csv)"]
             Live["PollService & ChatService"]
-            Zoom["ZoomBridgeAdapter (NoOp / OAuth REST)"]
-            Whisper["LectureSummarizerService (FFmpeg + faster-whisper)"]
+            Whisper["LectureSummarizerService (FFmpeg + Gemini / faster-whisper)"]
             HW["HomeworkReviewService & CohortAggregator"]
             LLM["GeminiStudioClient (google-genai SDK)"]
             Tasks["AsyncTaskManager (ThreadPoolExecutor)"]
@@ -51,7 +50,6 @@ flowchart TD
         Sockets --> QR
         Sockets --> Live
         Attend --> Vision
-        Live --> Zoom
         Tasks --> Vision
         Tasks --> Whisper
         Tasks --> HW
@@ -66,8 +64,7 @@ flowchart TD
         Report --> Files
     end
 
-    Zoom -->|Optional OAuth REST| ZoomCloud["Zoom API (Team Chat / Pro Cloud Recordings)"]
-    LLM -->|HTTPS JSON / Schema| GeminiAPI["Google AI Studio (Gemini Flash / Pro Free Tier)"]
+    LLM -->|HTTPS Audio & Text| GeminiAPI["Google AI Studio (Gemini Flash Free Tier)"]
     HW -->|Optional Public Clone| GitHub["GitHub Repositories"]
 ```
 
@@ -80,8 +77,8 @@ flowchart TD
 | **QR & Anti-Proxy Security** | `RollingQRService`, `DeviceBindingManager` | Generates 5-second HMAC-SHA256 rolling tokens, validates 2-bucket grace windows (`t`, `t-1`), and signs/verifies `HttpOnly` device cookies. |
 | **Attendance & Reconciliation** | `AttendanceService`, `AttendanceReconciler`, `SpreadsheetExporter` | Onboards first-time students (`Name + Email`), imports optional roster CSVs, computes QR vs Visual Headcount delta $\Delta$, and exports styled `.xlsx`/`.csv`. |
 | **CV Face Counter** | `FaceDetector` -> `TiledSCRFDDetector` | Runs InsightFace SCRFD (`det_10g` ONNX) across full image + overlapping tiles + IoU NMS; draws numbered bounding boxes for interactive lecturer review. |
-| **Live Polls & Chat** | `PollService`, `ChatService`, `ZoomBridgeAdapter` | Manages pre-class poll banks, quick polls, idempotent votes, timestamped chat feeds, upvotes, and optional non-blocking Zoom Team Chat relay. |
-| **ML Lecture Summarizer** | `LectureSummarizerService` | Extracts audio via `ffmpeg`, transcribes locally via `faster-whisper`, and executes 2-pass Gemini correction + summary linking student Q&A timestamps. |
+| **Live Polls & Chat** | `PollService`, `ChatService` | Manages pre-class poll banks, quick polls, idempotent votes, timestamped chat feeds (`+MM:SS`), upvotes, and the Live Q&A Companion Popout. |
+| **AI Lecture Summarizer** | `LectureSummarizerService` | Preps uploaded recordings via `ffmpeg`, transcribes via **Google Gemini API** (`files.upload`, offline `faster-whisper` fallback), and generates lecturer summaries + `.md`/`.txt` exports. |
 | **Homework Incremental AI** | `SubmissionExtractor`, `CohortAggregator`, `HomeworkReviewService` | Extracts files/GitHub repos, gets Stage-1 Pydantic JSON metrics, updates anonymized `ClassStatsAggregate` in $O(1)$ math (with resubmission subtraction), and runs Stage-2 comparative review. |
 | **Async Task Runner** | `AsyncTaskManager` | Bounded `ThreadPoolExecutor` tracking long-running CV/Whisper/LLM jobs (`PENDING`, `RUNNING`, `DONE`, `FAILED`) without blocking live Socket.IO traffic. |
 
@@ -224,7 +221,7 @@ classDiagram
     SpreadsheetExporter ..> AuditVerdict : formats
 ```
 
-### 2.2 Features 2 & 3 (Real-Time Polls, Chat & Zoom Bridge Adapter)
+### 2.2 Features 2 & 3 (Real-Time Polls & Timestamped Classroom Chat)
 
 ```mermaid
 classDiagram
@@ -258,7 +255,6 @@ classDiagram
         +int offset_seconds
         +int upvotes
         +bool is_pinned
-        +bool synced_to_zoom
         +datetime created_at
     }
 
@@ -271,30 +267,8 @@ classDiagram
         +dict build_sync_payload(int session_id, int student_id)
     }
 
-    class ZoomBridgeAdapter {
-        <<interface>>
-        +bool dispatch_chat_message(ChatMessage msg)*
-        +Optional_str fetch_cloud_recording(str meeting_id, str dest_dir)*
-    }
-
-    class NoOpZoomBridge {
-        +bool dispatch_chat_message(ChatMessage msg)
-        +Optional_str fetch_cloud_recording(str meeting_id, str dest_dir)
-    }
-
-    class ZoomOAuthRestBridge {
-        -str account_id
-        -str client_id
-        -str client_secret
-        -str team_channel_id
-        +bool dispatch_chat_message(ChatMessage msg)
-        +Optional_str fetch_cloud_recording(str meeting_id, str dest_dir)
-        -str _refresh_access_token()
-    }
-
     class ChatService {
         -Session db
-        -ZoomBridgeAdapter zoom_bridge
         +ChatMessage post_message(int session_id, int student_id, str category, str body)
         +ChatMessage upvote_message(int message_id, int student_id)
         +List~ChatMessage~ list_messages(int session_id)
@@ -305,29 +279,21 @@ classDiagram
     PollService --> Poll
     PollService --> PollVote
     ChatService --> ChatMessage
-    ChatService --> ZoomBridgeAdapter
-    ZoomBridgeAdapter <|.. NoOpZoomBridge
-    ZoomBridgeAdapter <|.. ZoomOAuthRestBridge
 ```
 
-### 2.3 Features 4 & 5 (ML Lecture Summarizer, Gemini Client & Incremental Homework Review)
+### 2.3 Features 4 & 5 (Google Gemini Lecture Transcriber/Summarizer & Incremental Homework Review)
 
 ```mermaid
 classDiagram
-    class LLMClient {
-        <<interface>>
-        +str generate_text(str prompt, str system_instruction)*
-        +dict generate_structured(str prompt, type schema_cls, str system_instruction)*
-    }
-
     class GeminiStudioClient {
         -str api_key
         -str fast_model
         -str pro_model
         -float min_interval_sec
         +str generate_text(str prompt, str system_instruction)
-        +dict generate_structured(str prompt, type schema_cls, str system_instruction)
-        -Any _call_with_backoff(callable fn)
+        +T generate_structured(str prompt, type schema_cls, str system_instruction)
+        +str transcribe_audio_file(Path audio_path, str prompt, str system_instruction)
+        -Any _generate_with_model_fallback(str requested_model, callable fn)
     }
 
     class LectureArtifact {
@@ -339,19 +305,20 @@ classDiagram
         +str corrected_transcript_json
         +str summary_markdown
         +str status
+        +Optional_str error_message
     }
 
     class LectureSummarizerService {
         -Session db
-        -LLMClient llm
-        -ZoomBridgeAdapter zoom_bridge
-        -str whisper_model_size
-        +str extract_audio_wav(str media_path)
-        +List~dict~ transcribe_local(str wav_path)
-        +List~dict~ correct_transcript(List~dict~ segments, str chat_context)
-        +str summarize_lecture(List~dict~ corrected_segments, str chat_context)
-        +LectureArtifact run_pipeline(int artifact_id)
+        -GeminiStudioClient llm_client
+        +List~dict~ transcribe_media_file(Path media_path)
+        +LectureArtifact summarize_session_recording(int session_id, Path media_path)
+        +tuple build_summary_download(int artifact_id)
+        +tuple build_transcript_download(int artifact_id)
     }
+
+    LectureSummarizerService --> GeminiStudioClient
+    LectureSummarizerService --> LectureArtifact
 
     class Assignment {
         +int id
@@ -549,7 +516,7 @@ sequenceDiagram
     App-->>S: Emit poll:closed (final counts + correct answer)
 ```
 
-### 3.4 Feature 2 & Feature 4 — Classroom Chat, Zoom Bridge & ML Lecture Summarizer
+### 3.4 Feature 2 & Feature 4 — Classroom Chat & Google Gemini Lecture Summarizer
 
 ```mermaid
 sequenceDiagram
@@ -557,30 +524,26 @@ sequenceDiagram
     actor S as Student
     actor L as Lecturer
     participant Chat as ChatService
-    participant Zoom as ZoomBridgeAdapter
     participant Sum as LectureSummarizerService
-    participant Whisper as faster-whisper (CPU)
-    participant LLM as GeminiStudioClient
+    participant LLM as GeminiStudioClient (Google API)
     participant DB as SQLite WAL
 
     S->>Chat: chat:send (category=Question, body)
     Chat->>DB: Save ChatMessage with lecture offset (+24:15)
     Chat-->>S: Broadcast chat:new to session room
-    Chat->>Zoom: dispatch_chat_message(msg) [async]
-    Note right of Zoom: Posts to Team Chat if OAuth configured; otherwise safe NoOp
 
     Note over L,DB: After Lecture Ends
-    L->>Sum: Upload local recording.mp4 (or Zoom Meeting ID)
-    Sum->>Sum: extract_audio_wav via FFmpeg (16kHz mono)
-    Sum->>Whisper: transcribe_local(wav_path)
-    Whisper-->>Sum: Timestamped segments (Raw Transcript)
+    L->>Sum: Upload class recording (.mp4 / .m4a / .mp3 / .wav)
+    Sum->>Sum: Extract compact .mp3 via FFmpeg (if video/large file)
+    Sum->>LLM: transcribe_audio_file(audio) via Google Files API (offline fallback: faster-whisper)
+    LLM-->>Sum: Timestamped [MM:SS] Transcript
     Sum->>DB: Load Session Chat Timeline (Q&A timestamps)
-    Sum->>LLM: Pass 1 - Correct technical/bilingual terms preserving timestamps
+    Sum->>LLM: Pass 1 - Refine CS terminology preserving [MM:SS]
     LLM-->>Sum: Corrected Transcript JSON
-    Sum->>LLM: Pass 2 - Generate Markdown Lecture Summary + Q&A highlights
+    Sum->>LLM: Pass 2 - Generate Structured Lecturer Summary + Q&A highlights
     LLM-->>Sum: Structured Summary Markdown
     Sum->>DB: Save LectureArtifact (status=COMPLETED)
-    Sum-->>L: Summary ready for review & student publication
+    Sum-->>L: Download Summary (.md) & Transcript (.txt) + Publish to Study Hub
 ```
 
 ### 3.5 Feature 5 — Homework Incremental JSON Aggregation & Deep Comparative Review

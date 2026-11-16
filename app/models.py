@@ -138,10 +138,6 @@ class ClassSession(Base):
     attendance_open: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     late_after_minutes: Mapped[int] = mapped_column(Integer, default=15, nullable=False)
     headcount_tolerance: Mapped[int] = mapped_column(Integer, default=2, nullable=False)
-    zoom_meeting_id: Mapped[Optional[str]] = mapped_column(
-        String(32), index=True, nullable=True
-    )
-    zoom_auto_sync: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     course: Mapped[Optional["Course"]] = relationship(back_populates="sessions")
     attendance_records: Mapped[list["AttendanceRecord"]] = relationship(
@@ -339,7 +335,6 @@ class ChatMessage(Base):
     offset_seconds: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     upvotes: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     is_pinned: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    synced_to_zoom: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False
     )
@@ -364,7 +359,6 @@ class LectureArtifact(Base):
     )
     summary_markdown: Mapped[str] = mapped_column(Text, default="", nullable=False)
     status: Mapped[str] = mapped_column(String(24), default="PENDING", nullable=False)
-    zoom_meeting_uuid: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False
@@ -468,11 +462,8 @@ def _migrate_sqlite_columns(engine: Engine) -> None:
 
     migrations: tuple[tuple[str, str, str], ...] = (
         ("class_sessions", "course_id", "INTEGER REFERENCES courses(id) ON DELETE SET NULL"),
-        ("class_sessions", "zoom_meeting_id", "VARCHAR(32)"),
-        ("class_sessions", "zoom_auto_sync", "BOOLEAN NOT NULL DEFAULT 0"),
         ("assignments", "course_id", "INTEGER REFERENCES courses(id) ON DELETE SET NULL"),
         ("courses", "lecturer_id", "INTEGER REFERENCES lecturers(id) ON DELETE SET NULL"),
-        ("lecture_artifacts", "zoom_meeting_uuid", "VARCHAR(128)"),
         ("lecture_artifacts", "error_message", "TEXT"),
     )
 

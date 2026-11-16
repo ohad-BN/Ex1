@@ -5,16 +5,14 @@ import logging
 import re
 import subprocess
 import tempfile
-import threading
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session
 
 from app.models import ChatMessage, ClassSession, Course, LectureArtifact
 from app.services.chat_service import ChatService, format_offset_mmss
 from app.services.llm_client import GeminiStudioClient
-from app.services.zoom_bridge import ZoomBridgeAdapter, normalize_zoom_meeting_id
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +20,8 @@ VTT_CUE_RE = re.compile(
     r"(?:(\d{1,2}):)?(\d{1,2}):(\d{2})[.,]\d{1,3}\s*-->\s*(?:\d{1,2}:)?\d{1,2}:\d{2}[.,]\d{1,3}"
 )
 PASS1_CHUNK_SIZE = 80
+DIRECT_GEMINI_AUDIO_EXTS = {".mp3", ".m4a", ".wav", ".ogg", ".flac", ".aac"}
+GEMINI_DIRECT_MAX_BYTES = 20 * 1024 * 1024
 
 BUILTIN_SAMPLE_SEGMENTS: list[dict[str, str]] = [
     {
@@ -34,7 +34,7 @@ BUILTIN_SAMPLE_SEGMENTS: list[dict[str, str]] = [
     },
     {
         "offset_mmss": "04:10",
-        "text": "Notice how our bright pattern decouples ZoomBridgeAdapter from chat logic instead of a rigid single ton pattern.",
+        "text": "Notice how our bright pattern decouples ReportAdapter from chat logic instead of a rigid single ton pattern.",
     },
     {
         "offset_mmss": "07:25",
@@ -124,7 +124,6 @@ class LectureSummarizerService:
             "corrected_transcript": corrected_segments,
             "summary_markdown": artifact.summary_markdown,
             "status": artifact.status,
-            "zoom_meeting_uuid": artifact.zoom_meeting_uuid,
             "error_message": artifact.error_message,
             "created_at": artifact.created_at.strftime("%Y-%m-%d %H:%M UTC"),
         }
@@ -198,13 +197,83 @@ class LectureSummarizerService:
                 fallback_idx += 1
         return segments
 
+    def _transcribe_with_gemini(self, media_path: Path) -> list[dict[str, str]]:
+        """Send recording audio (or ffmpeg-extracted MP3) to Google Gemini API for [MM:SS] transcription."""
+        ext = media_path.suffix.lower()
+        temp_mp3: Optional[Path] = None
+        upload_path = media_path
+        try:
+            needs_audio_extract = (
+                ext not in DIRECT_GEMINI_AUDIO_EXTS
+                or media_path.stat().st_size > GEMINI_DIRECT_MAX_BYTES
+            )
+            if needs_audio_extract:
+                with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp_mp3:
+                    temp_mp3 = Path(tmp_mp3.name)
+                cmd = [
+                    "ffmpeg",
+                    "-y",
+                    "-i",
+                    str(media_path),
+                    "-vn",
+                    "-ac",
+                    "1",
+                    "-b:a",
+                    "64k",
+                    str(temp_mp3),
+                ]
+                proc = subprocess.run(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    timeout=180,
+                )
+                if proc.returncode == 0 and temp_mp3.exists() and temp_mp3.stat().st_size > 0:
+                    upload_path = temp_mp3
+
+            prompt = (
+                "Transcribe this university lecture recording completely and accurately.\n"
+                "Format EVERY spoken paragraph or topic shift on its own line starting with an exact timestamp: "
+                "`[MM:SS] <spoken text>`.\n"
+                "Fix technical Computer Science, OOP, math, and Hebrew/English terms cleanly."
+            )
+            transcript_blob = self.llm_client.transcribe_audio_file(
+                audio_path=upload_path,
+                prompt=prompt,
+                system_instruction=(
+                    "You are an accurate university lecture transcription assistant. "
+                    "Always output clean `[MM:SS] ...` timestamped lines."
+                ),
+            )
+            segments = self.parse_transcript_text(transcript_blob)
+            if not segments:
+                raise LecturePipelineError("Gemini returned no transcript segments.", status_code=502)
+            return segments
+        finally:
+            if temp_mp3 is not None:
+                try:
+                    temp_mp3.unlink(missing_ok=True)
+                except OSError:
+                    pass
+
     def transcribe_media_file(self, media_path: Path) -> list[dict[str, str]]:
-        """Extract 16kHz mono WAV via ffmpeg and run local faster-whisper ASR."""
+        """Transcribe uploaded lecture media via Google Gemini API (with local faster-whisper fallback)."""
         ext = media_path.suffix.lower()
         if ext in (".txt", ".vtt", ".srt", ".md"):
             return self.parse_transcript_text(media_path.read_text(encoding="utf-8", errors="ignore"))
 
         self.upload_dir.mkdir(parents=True, exist_ok=True)
+
+        if self.llm_client.is_configured():
+            try:
+                return self._transcribe_with_gemini(media_path)
+            except Exception as exc:
+                logger.warning(
+                    "Gemini audio transcription failed for %s; falling back to local faster-whisper: %s",
+                    media_path.name,
+                    exc,
+                )
+
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_wav:
             wav_path = Path(tmp_wav.name)
 
@@ -248,7 +317,7 @@ class LectureSummarizerService:
         except Exception as exc:
             logger.warning("Media ASR fallback triggered for %s: %s", media_path, exc)
             raise LecturePipelineError(
-                f"Could not decode audio/video file '{media_path.name}': {exc}",
+                f"Could not transcribe audio/video file '{media_path.name}': {exc}",
                 status_code=400,
             ) from exc
         finally:
@@ -445,22 +514,21 @@ class LectureSummarizerService:
         transcript_text: Optional[str] = None,
         use_sample: bool = False,
         source_type: str = "upload",
+        artifact_id: Optional[int] = None,
+        on_status: Optional[Callable[[dict[str, Any]], None]] = None,
     ) -> LectureArtifact:
-        """Execute Pass 1 (transcript correction) and Pass 2 (summary) for a session."""
+        """Transcribe (Google Gemini API / fallback) + Pass 1 correction + Pass 2 summary."""
         session = self.db.get(ClassSession, session_id)
         if session is None:
             raise LecturePipelineError("Lecture session not found.", status_code=404)
 
         if use_sample:
-            raw_segments = list(BUILTIN_SAMPLE_SEGMENTS)
             ref_path = "sample://ariel_oop_lecture"
             src_kind = "sample"
         elif transcript_text and transcript_text.strip():
-            raw_segments = self.parse_transcript_text(transcript_text)
             ref_path = "inline://transcript"
             src_kind = "transcript"
         elif media_path is not None and media_path.exists():
-            raw_segments = self.transcribe_media_file(media_path)
             ref_path = str(media_path)
             src_kind = source_type
         else:
@@ -469,93 +537,27 @@ class LectureSummarizerService:
                 status_code=400,
             )
 
-        artifact = LectureArtifact(
-            session_id=session.id,
-            source_type=src_kind,
-            media_path=ref_path,
-            status="PENDING",
-        )
-        self.db.add(artifact)
-        self.db.flush()
-        return self._synthesize_into_artifact(
-            session=session,
-            artifact=artifact,
-            raw_segments=raw_segments,
-        )
-
-    def summarize_zoom_recording_bundle(
-        self,
-        session_id: int,
-        zoom_bridge: ZoomBridgeAdapter,
-        meeting_id: str,
-        recording_bundle: Optional[dict[str, Any]] = None,
-        download_token: Optional[str] = None,
-        artifact_id: Optional[int] = None,
-        on_status: Optional[Callable[[dict[str, Any]], None]] = None,
-    ) -> LectureArtifact:
-        """Download Zoom Cloud recording (.vtt/.m4a/.mp4) and run 2-pass Gemini pipeline."""
-        session = self.db.get(ClassSession, session_id)
-        if session is None:
-            raise LecturePipelineError("Lecture session not found.", status_code=404)
-
-        clean_mid = normalize_zoom_meeting_id(meeting_id or session.zoom_meeting_id)
-        if not clean_mid:
-            raise LecturePipelineError("A Zoom Meeting ID is required.", status_code=400)
-
-        bundle = recording_bundle
-        if bundle is None:
-            bundle = zoom_bridge.list_meeting_recordings(clean_mid)
-        if not bundle or not bundle.get("recording_files"):
-            raise LecturePipelineError(
-                f"No completed Zoom Cloud recording files found yet for meeting {clean_mid}.",
-                status_code=404,
-            )
-
-        meeting_uuid = str(bundle.get("uuid") or "").strip() or None
-        if meeting_uuid and artifact_id is None:
-            existing = (
-                self.db.query(LectureArtifact)
-                .filter_by(session_id=session.id, zoom_meeting_uuid=meeting_uuid, status="COMPLETED")
-                .first()
-            )
-            if existing is not None:
-                return existing
-
         artifact = self.db.get(LectureArtifact, artifact_id) if artifact_id else None
         if artifact is None:
             artifact = LectureArtifact(
                 session_id=session.id,
-                source_type="zoom_cloud",
-                media_path=f"zoom://{clean_mid}",
-                zoom_meeting_uuid=meeting_uuid,
-                status="DOWNLOADING_ZOOM",
+                source_type=src_kind,
+                media_path=ref_path,
+                status="PENDING",
             )
             self.db.add(artifact)
             self.db.flush()
-        else:
-            artifact.zoom_meeting_uuid = meeting_uuid
 
         try:
-            self._set_artifact_stage(artifact, "DOWNLOADING_ZOOM", on_status=on_status)
-            dest_dir = Path(self.upload_dir) / f"session_{session.id}"
-            downloaded = zoom_bridge.download_best_recording_file(
-                recording_files=list(bundle.get("recording_files", [])),
-                dest_dir=dest_dir,
-                meeting_id=clean_mid,
-                download_token=download_token,
-            )
-            if downloaded is None:
-                fallback_str = zoom_bridge.fetch_cloud_recording(clean_mid, dest_dir)
-                downloaded = Path(fallback_str) if fallback_str else None
-            if downloaded is None or not downloaded.exists():
-                raise LecturePipelineError(
-                    "Zoom recording bundle has no downloadable VTT, M4A, or MP4 file.",
-                    status_code=404,
-                )
+            if use_sample:
+                raw_segments = list(BUILTIN_SAMPLE_SEGMENTS)
+            elif transcript_text and transcript_text.strip():
+                raw_segments = self.parse_transcript_text(transcript_text)
+            else:
+                assert media_path is not None
+                self._set_artifact_stage(artifact, "TRANSCRIBING", on_status=on_status)
+                raw_segments = self.transcribe_media_file(media_path)
 
-            artifact.media_path = str(downloaded)
-            self._set_artifact_stage(artifact, "TRANSCRIBING", on_status=on_status)
-            raw_segments = self.transcribe_media_file(downloaded)
             return self._synthesize_into_artifact(
                 session=session,
                 artifact=artifact,
@@ -620,115 +622,3 @@ class LectureSummarizerService:
         header = f"{title} ({sess_code}) — Corrected Transcript\n" + "=" * 60 + "\n\n"
         filename = f"{prefix}{sess_code}_transcript_{artifact.id}.txt"
         return filename, header + "\n".join(lines) + "\n"
-
-
-class ZoomCloudAutoPoller:
-    """Lightweight background poller that watches sessions with `zoom_auto_sync=True`.
-
-    Enables zero-click Zoom Cloud -> Gemini -> Download workflows using only the
-    3 Zoom Server-to-Server OAuth keys (no public webhook URL required).
-    """
-
-    def __init__(
-        self,
-        engine: Any,
-        zoom_bridge: ZoomBridgeAdapter,
-        llm_client: GeminiStudioClient,
-        upload_dir: Path,
-        socketio_ext: Any = None,
-        interval_sec: int = 60,
-    ) -> None:
-        self._session_factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
-        self.zoom_bridge = zoom_bridge
-        self.llm_client = llm_client
-        self.upload_dir = upload_dir
-        self.socketio = socketio_ext
-        self.interval_sec = max(15, int(interval_sec))
-        self._stop_event = threading.Event()
-        self._thread: Optional[threading.Thread] = None
-
-    def tick_once(self) -> int:
-        """Inspect auto-sync sessions once and process any newly completed cloud recordings."""
-        if not self.zoom_bridge.is_configured():
-            return 0
-
-        processed = 0
-        with self._session_factory() as db:
-            sessions = (
-                db.query(ClassSession)
-                .filter(
-                    ClassSession.zoom_auto_sync.is_(True),
-                    ClassSession.zoom_meeting_id.is_not(None),
-                )
-                .all()
-            )
-            svc = LectureSummarizerService(
-                db=db, llm_client=self.llm_client, upload_dir=self.upload_dir
-            )
-            for sess in sessions:
-                mid = normalize_zoom_meeting_id(sess.zoom_meeting_id)
-                if not mid:
-                    continue
-                try:
-                    bundle = self.zoom_bridge.list_meeting_recordings(mid)
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning("Zoom auto-sync poll failed for %s: %s", mid, exc)
-                    continue
-                if not bundle or not bundle.get("recording_files"):
-                    continue
-                meeting_uuid = str(bundle.get("uuid") or "").strip() or None
-                if meeting_uuid:
-                    already = (
-                        db.query(LectureArtifact)
-                        .filter(
-                            LectureArtifact.session_id == sess.id,
-                            LectureArtifact.zoom_meeting_uuid == meeting_uuid,
-                            LectureArtifact.status.in_(
-                                ["DOWNLOADING_ZOOM", "TRANSCRIBING", "AI_CORRECTING", "SUMMARIZING", "COMPLETED"]
-                            ),
-                        )
-                        .first()
-                    )
-                    if already is not None:
-                        continue
-
-                room = f"session_{sess.session_code}"
-
-                def _emit_stage(payload: dict[str, Any], target_room: str = room) -> None:
-                    if self.socketio is not None:
-                        self.socketio.emit("lecture:status", payload, to=target_room)
-
-                try:
-                    artifact = svc.summarize_zoom_recording_bundle(
-                        session_id=sess.id,
-                        zoom_bridge=self.zoom_bridge,
-                        meeting_id=mid,
-                        recording_bundle=bundle,
-                        on_status=_emit_stage,
-                    )
-                    serialized = svc.serialize_artifact(artifact)
-                    if self.socketio is not None:
-                        self.socketio.emit("lecture:summary_ready", serialized, to=room)
-                    processed += 1
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning("Auto-sync Zoom processing failed for session %s: %s", sess.session_code, exc)
-        return processed
-
-    def start(self) -> None:
-        if self._thread is not None and self._thread.is_alive():
-            return
-
-        def _loop() -> None:
-            while not self._stop_event.wait(self.interval_sec):
-                try:
-                    self.tick_once()
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning("ZoomCloudAutoPoller tick error: %s", exc)
-
-        self._thread = threading.Thread(
-            target=_loop, name="zoom-cloud-poller", daemon=True
-        )
-        self._thread.start()
-
-    def stop(self) -> None:
-        self._stop_event.set()

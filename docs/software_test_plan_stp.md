@@ -11,7 +11,7 @@
 Per Ex2 To-Do #9 (*"Define a testing strategy; make sure to address the classes (as in 7)"*), this Software Test Plan defines an automated verification strategy (`pytest`) and live end-to-end verification protocol mapped directly to every software class and service defined in [`docs/software_design_and_architecture.md`](software_design_and_architecture.md).
 
 ### Testing Pyramid
-1. **Unit Tests (Fast, Deterministic, Offline):** Test pure Python math, cryptography, aggregation logic, geometry/NMS, and SQLite state transitions with external APIs (`GeminiStudioClient`, `ZoomOAuthRestBridge`, GitHub HTTP) mocked behind their interfaces (`LLMClient`, `ZoomBridgeAdapter`, `FaceDetector`).
+1. **Unit Tests (Fast, Deterministic, Offline):** Test pure Python math, cryptography, aggregation logic, geometry/NMS, and SQLite state transitions with external APIs (`GeminiStudioClient`, GitHub HTTP) mocked behind their interfaces (`LLMClient`, `FaceDetector`).
 2. **Integration Tests (Real Components inside Docker/Local Python):** Exercise Flask test client + Flask-SocketIO `test_client()`, real SQLite WAL concurrent access, `SpreadsheetExporter` `.xlsx` parsing, and real **InsightFace SCRFD** inference on the Ariel classroom photo (`Ex2` Page 3) and synthetic multi-face images.
 3. **End-to-End Tunnel & Mobile Smoke Tests:** Verify Docker Compose + `cloudflared` tunnel from real mobile phones over cellular networks, testing rotating QR scans, reconnect hydration, and live photo upload.
 
@@ -28,8 +28,8 @@ Per Ex2 To-Do #9 (*"Define a testing strategy; make sure to address the classes 
 | `AttendanceReconciler`, `AuditVerdict` | Suite 3 | `tests/test_reconciler.py` | Delta computation ($\Delta = N_{\text{QR}} - N_{\text{visual}}$), tolerance boundaries (`VERIFIED`, `UNDER_SCANNED`, `DISCREPANCY_ALERT`), manual override recomputation. |
 | `SpreadsheetExporter` | Suite 3 | `tests/test_report_exporter.py` | Valid `.xlsx` binary generation readable by `openpyxl`, exact sheet names/headers, formula/data integrity, `.csv` UTF-8 BOM Excel Hebrew/English compatibility. |
 | `PollService`, `Poll`, `PollVote` | Suite 4 | `tests/test_polls_socketio.py` | Pre-class `DRAFT` creation, `ACTIVE`/`CLOSED` transitions, single-vote DB uniqueness under burst concurrency, Socket.IO `poll:sync` reconnect hydration. |
-| `ChatService`, `ChatMessage`, `ZoomBridgeAdapter`, `NoOpZoomBridge`, `ZoomOAuthRestBridge` | Suite 5 | `tests/test_chat_zoom.py` | Lecture-relative `+MM:SS` timestamping, upvote idempotency/ordering, non-blocking Zoom Team Chat mock dispatch, graceful degradation when Zoom API returns HTTP 401/500. |
-| `LectureSummarizerService`, `LectureArtifact` | Suite 6 | `tests/test_lecture_pipeline.py` | FFmpeg audio extraction guard, Whisper segment timestamp schema, two-pass Gemini correction/summary orchestration with chat Q&A injection, backoff retry on `429`. |
+| `ChatService`, `ChatMessage` | Suite 5 | `tests/test_chat_zoom.py` | Lecture-relative `+MM:SS` timestamping, upvote idempotency/ordering, REST input validation, Live Q&A Popout rendering, Socket.IO broadcast. |
+| `LectureSummarizerService`, `LectureArtifact` | Suite 6 | `tests/test_lecture_pipeline.py` | Uploaded recording transcription via Google Gemini Files API (`gemini-3.8-flash`), `ffmpeg` MP3 prep, `faster-whisper` offline fallback, two-pass summary with chat Q&A cross-linking, `.md`/`.txt` downloads, `429`/`404` resilience. |
 | `SubmissionExtractor`, `CohortAggregator`, `HomeworkReviewService`, `ClassStatsAggregate`, `HomeworkMetrics` | Suite 7 | `tests/test_homework_incremental.py` | Binary/`.git`/`venv` path exclusion, Pydantic JSON schema validation, $O(1)$ incremental mean/error-tag updates, **resubmission delta subtraction**, strict zero-PII anonymization in Stage-2 prompts. |
 | `GeminiStudioClient`, `AsyncTaskManager` | Suite 6 & 7 | `tests/test_llm_and_tasks.py` | Exponential backoff on mocked `429 RESOURCE_EXHAUSTED`, pacing interval enforcement, background job state transitions (`PENDING` -> `RUNNING` -> `DONE`/`FAILED`). |
 | Docker Stack + `cloudflared` Tunnel | Suite 8 | `tests/test_e2e_tunnel.py` / Manual Checklist | Container healthcheck, SQLite WAL volume persistence across restart, HTTPS `ProxyFix` headers, WSS Socket.IO handshake via tunnel. |
@@ -69,17 +69,17 @@ Per Ex2 To-Do #9 (*"Define a testing strategy; make sure to address the classes 
   2. `test_single_vote_per_student`: Emit two rapid `poll:vote` events from the same student; verify DB retains exactly 1 vote and option tally increments once.
   3. `test_reconnect_sync_hydration`: Disconnect a Socket.IO test client during an `ACTIVE` poll, reconnect and emit `join_session`, and assert `poll:sync` payload includes active poll ID, options, live tallies, and `already_voted` boolean.
 
-### Suite 5: Timestamped Classroom Chat & Zoom Bridge Isolation
-* **Target Classes:** `ChatService`, `ChatMessage`, `ZoomBridgeAdapter`, `NoOpZoomBridge`, `ZoomOAuthRestBridge`
+### Suite 5: Timestamped Classroom Chat & Live Q&A Popout
+* **Target Classes:** `ChatService`, `ChatMessage`
 * **Test Cases:**
   1. `test_chat_lecture_relative_timestamp`: Session started 15m30s ago -> posted message records `offset_seconds == 930` (`+15:30`) and emits `chat:new`.
-  2. `test_zoom_api_failure_does_not_break_chat`: Inject a mocked `ZoomOAuthRestBridge` raising `TimeoutError` / HTTP `500`; assert `ChatService.post_message` still saves message to DB (`synced_to_zoom=False`) and broadcasts to all Socket.IO clients without error.
+  2. `test_rest_chat_post_and_validation`: Empty messages return HTTP `400`; valid student messages persist and appear in the Live Q&A Companion Popout view.
   3. `test_chat_timeline_export`: Export session Q&A ordered by upvotes & timestamp for consumption by Feature 4.
 
-### Suite 6: ML Lecture Transcription & Gemini Correction/Summary Pipeline
+### Suite 6: AI Lecture Transcription & Google Gemini Summary Pipeline
 * **Target Classes:** `LectureSummarizerService`, `GeminiStudioClient`, `AsyncTaskManager`, `LectureArtifact`
 * **Test Cases:**
-  1. `test_two_pass_pipeline_with_mock_llm`: Supply sample Whisper segment list + session chat Q&A list to mocked `LLMClient`; assert Pass 1 preserves segment timestamps and Pass 2 produces non-empty Markdown summary stored in `LectureArtifact`.
+  1. `test_upload_recording_gemini_transcription_and_summary`: Upload `.mp3` recording -> assert Google Gemini Files API uploads audio, transcribes `[MM:SS]` segments, generates Pass-2 lecturer summary, deletes uploaded remote file, and returns `.md` & `.txt` downloads (both sync `201` and `async=1` `202`).
   2. `test_gemini_429_backoff_recovery`: Mock `google-genai` raising `429 RESOURCE_EXHAUSTED` twice before returning valid response; assert `GeminiStudioClient._call_with_backoff` succeeds on attempt 3.
   3. `test_async_task_error_isolation`: Force an exception inside a background job and assert `AsyncTaskManager` records `FAILED` status cleanly without crashing the Flask server process.
 

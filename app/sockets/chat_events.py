@@ -26,7 +26,6 @@ def handle_socket_chat_send(data: dict[str, Any] | None) -> None:
         return
 
     db = current_app.extensions["db_session"]
-    zoom_bridge = current_app.extensions["zoom_bridge"]
     device_mgr: DeviceBindingManager = current_app.extensions["device_mgr"]
 
     session = db.query(ClassSession).filter_by(session_code=session_code).one_or_none()
@@ -48,7 +47,7 @@ def handle_socket_chat_send(data: dict[str, Any] | None) -> None:
         else str(payload.get("author_name", "Student")).strip()
     )
 
-    svc = ChatService(db=db, zoom_bridge=zoom_bridge)
+    svc = ChatService(db=db)
     try:
         msg = svc.post_message(
             session_id=session.id,
@@ -73,8 +72,7 @@ def handle_socket_chat_upvote(data: dict[str, Any] | None) -> None:
         return
 
     db = current_app.extensions["db_session"]
-    zoom_bridge = current_app.extensions["zoom_bridge"]
-    svc = ChatService(db=db, zoom_bridge=zoom_bridge)
+    svc = ChatService(db=db)
     try:
         msg = svc.upvote_message(int(message_id))
     except ChatError:

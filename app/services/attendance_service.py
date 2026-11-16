@@ -21,7 +21,6 @@ from app.models import (
 )
 from app.services.qr_service import DeviceBindingManager, RollingQRService
 from app.services.reconciler import AttendanceReconciler, AuditVerdict
-from app.services.zoom_bridge import normalize_zoom_meeting_id
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
@@ -80,12 +79,9 @@ class AttendanceService:
         headcount_tolerance: int = 2,
         late_after_minutes: int = 15,
         course_id: Optional[int] = None,
-        zoom_meeting_id: Optional[str] = None,
-        zoom_auto_sync: bool = False,
     ) -> ClassSession:
         """Create a new classroom session with a unique 6-character code."""
         clean_title = (title or "Classroom Lecture").strip()
-        clean_zoom_id = normalize_zoom_meeting_id(zoom_meeting_id) or None
         code = (
             session_code.strip().upper()
             if session_code
@@ -97,10 +93,7 @@ class AttendanceService:
         if existing is not None:
             if course_id is not None and existing.course_id is None:
                 existing.course_id = course_id
-            if clean_zoom_id and not existing.zoom_meeting_id:
-                existing.zoom_meeting_id = clean_zoom_id
-                existing.zoom_auto_sync = zoom_auto_sync
-            self.db.commit()
+                self.db.commit()
             return existing
 
         session = ClassSession(
@@ -110,8 +103,6 @@ class AttendanceService:
             attendance_open=True,
             headcount_tolerance=headcount_tolerance,
             late_after_minutes=late_after_minutes,
-            zoom_meeting_id=clean_zoom_id,
-            zoom_auto_sync=bool(zoom_auto_sync and clean_zoom_id),
         )
         self.db.add(session)
         self.db.commit()

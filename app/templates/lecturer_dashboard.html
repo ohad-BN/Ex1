@@ -188,7 +188,7 @@
         Open Fullscreen Projector QR
       </a>
       <a class="btn btn-amber" href="{{ url_for('chat.chat_popout_view', session_code=session.session_code) }}" target="_blank">
-        Zoom-Companion Chat Popout
+        Live Q&amp;A Popout
       </a>
       <a class="btn btn-green" href="{{ url_for('attendance.download_attendance_report', session_id=session.id, format='xlsx') }}">
         Export Excel (.xlsx)
@@ -326,7 +326,7 @@
           <div id="poll-bank-list" style="max-height:180px; overflow-y:auto;"></div>
         </div>
 
-        <!-- Feature 2: Timestamped Classroom Chat & Zoom Bridge -->
+        <!-- Feature 2: Timestamped Classroom Chat -->
         <div class="card">
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
             <h2 style="margin:0;">Feature 2: Classroom Chat &amp; Q&amp;A</h2>

@@ -79,25 +79,22 @@ The target classroom photo (Ex2 PDF, Page 3) is a wide-angle lecture-hall shot f
 
 ---
 
-## 5. Features 2 & 4: Zoom Free API Reality Check
+## 5. Features 2 & 4: Why Native Web Chat & Direct Upload (No Zoom API Dependency)
 
-Before designing Zoom integrations, Zoom's developer API specifications were audited against the user's baseline requirements:
-
-| Requested Capability | Zoom Basic (Free) / REST API Reality | Impact on Architecture |
-| :--- | :--- | :--- |
-| **Feature 2: Send student web chat messages directly into a live Zoom meeting's in-meeting chat** | **NOT SUPPORTED by Zoom REST API.** Zoom's `/chat/users/{userId}/messages` API strictly targets **Zoom Team Chat** (persistent channels/DMs outside meetings). Programmatic in-meeting chat requires building and approving a headless **Zoom Meeting SDK Bot** that joins the call as a live participant (heavy C++/Electron container, complex Marketplace OAuth review). | **Pivot to `ZoomBridgeAdapter`:** Keep the Flask-SocketIO Web Chat Tab as the reliable live room; support optional Zoom Team Chat channel forwarding + a compact "Zoom-Companion Popout" UI + optional Bot Webhook stub if a SDK bot is ever attached later. |
-| **Feature 4: Pull Zoom meeting cloud recording via API** | **NOT SUPPORTED on Zoom Basic (Free) plan.** Free Zoom accounts only create *local* `.mp4`/`.m4a` recordings on the host PC; Cloud Recording requires a paid Zoom Pro/Business/Edu host license (`GET /meetings/{meetingId}/recordings`). | **Dual-Path Ingestion:** Primary KISS path = direct drag-and-drop upload of local Zoom/Meet `.mp4`/`.m4a`/`.wav`/`.vtt` files; Secondary path = optional Zoom OAuth Cloud Recording fetcher for lecturers using an Ariel University Pro/Edu Zoom account. |
+External Zoom APIs were intentionally **excluded** from ClassPulse:
+* University/institutional Zoom meetings cannot be queried or downloaded using external/student Zoom credentials due to Zoom tenant isolation (`404 Meeting does not exist`).
+* Per Ex2 guidelines (*"No need integrate with Moodle, Zoom or מידע אישי"*), keeping **Feature 2** as a pure Socket.IO Classroom Chat + Live Popout feed and **Feature 4** as direct class recording upload eliminates all third-party OAuth / tenant-permission blockers.
 
 ---
 
-## 6. Features 4 & 5: Speech-to-Text & Google AI Studio Free Tier
+## 6. Features 4 & 5: Google Gemini Audio Transcription & AI Studio API
 
-### 6.1 Transcription Engine (Feature 4)
-* **Why not upload raw 1-hour `.mp4` video directly to Gemini on every run?** Large video/audio files consume massive upload bandwidth and rapid TPM/file-API quotas, whereas local audio extraction (`ffmpeg`) + **`faster-whisper` (`small` or `medium` INT8 via CTranslate2)** runs completely free on CPU inside Docker, produces exact `[HH:MM:SS]` segment timestamps, and handles mixed English/Hebrew academic lectures cleanly.
-* **Pipeline:** `.mp4`/`.m4a` -> `ffmpeg` (16kHz mono `.wav`) -> `faster-whisper` -> timestamped `.json`/`.srt` -> **Google AI Studio Free Tier (`google-genai`)** Pass 1 (technical term & bilingual error correction) -> Pass 2 (structured Markdown lecture summary).
+### 6.1 Transcription & Summary Pipeline (Feature 4)
+* **Primary Pipeline (Google Gemini API):** ClassPulse accepts uploaded recordings (`.mp4`, `.m4a`, `.mp3`, `.wav`, `.ogg`, `.webm`) -> extracts compact 64kbps mono `.mp3` via `ffmpeg` when needed -> uploads via **Google Gemini Files API (`client.files.upload`)** -> prompts `gemini-3.8-flash` for `[MM:SS]` timestamped transcription + Pass-1 CS/OOP correction -> prompts Gemini with the transcript + live Class Chat timeline (`+MM:SS`) to generate the lecturer's downloadable `.md` summary & `.txt` transcript.
+* **Offline Fallback:** If `GEMINI_API_KEY` is unset or offline, ClassPulse falls back to local `ffmpeg` (`16kHz` mono `.wav`) + `faster-whisper` (`base` INT8) so the feature never breaks without internet access.
 
-### 6.2 Google AI Studio (`google-genai` SDK) Free Tier Constraints
-* **Rate Limits:** Enforced per Google Cloud Project (typically ~10–15 RPM, ~250,000 TPM, and daily RPD caps on free-tier Flash models; `429 RESOURCE_EXHAUSTED` on bursts).
+### 6.2 Google AI Studio (`google-genai` SDK) Constraints
+* **Rate Limits & Model Lifecycle:** Enforced per Google Cloud Project (with `GEMINI_MIN_INTERVAL_SEC=4.5` pacing and exponential backoff on `429 RESOURCE_EXHAUSTED` / `503`). `GeminiStudioClient` includes an automatic `404 NOT_FOUND` model fallback chain (`gemini-3.8-flash` → `gemini-3.7-flash` → `gemini-3.5-flash`) when older model IDs are retired.
 * **Privacy Trade-off:** Free-tier Gemini API inputs may be used by Google to improve products; therefore, **zero PII** (student national IDs, emails, or peer identities) shall be included in LLM prompts—only anonymized submission content and aggregated statistical JSON!
 * **Structured Outputs (Feature 5):** The `google-genai` SDK natively accepts Pydantic models via `response_mime_type="application/json"` and `response_schema=HomeworkMetrics`, guaranteeing deterministic JSON extraction for the Incremental Aggregation database engine without brittle regex parsing.
 
@@ -112,5 +109,4 @@ To strictly satisfy Ex2 To-Do #3 (*"make sure to test (in real life) with any su
 | **TV-01** | **InsightFace SCRFD + Tiling** | Run prototype detector against the actual Ariel lecture-hall photo (Ex2 PDF Page 3) and 3 custom multi-row classroom test photos; record detected count vs manual ground truth and CPU inference latency (seconds). | Recall $\ge 85\%$ on visible non-occluded faces, precision $\ge 95\%$, latency $< 8\text{ s}$ on host CPU. |
 | **TV-02** | **Cloudflare Tunnel + Docker** | Start Flask-SocketIO container + `cloudflared` container on Windows PC; scan rotating QR from 2 real smartphones over cellular (4G/5G) network (not local Wi-Fi). | TLS page load $< 1.5\text{ s}$, zero interstitial warnings, `wss://` Socket.IO stays connected $> 5\text{ min}$. |
 | **TV-03** | **5-Sec Rolling QR Grace Window** | Scan rotating QR on projector screen at `t = 4.2s` (end of bucket) using iOS Safari & Android Chrome cameras. | Check-in succeeds via `N-1` grace bucket; re-scanning same QR on a second browser/incognito with same email or same device with different email is rejected. |
-| **TV-04** | **Zoom API Endpoint Probe** | Execute HTTP probes against Zoom OAuth / Team Chat / Recordings endpoints using a real Zoom Developer App sandbox account to empirically confirm live-chat vs Team Chat behavior and Basic vs Pro recording responses. | Documented HTTP status codes & JSON payloads verifying ZoomBridgeAdapter behavior. |
-| **TV-05** | **`faster-whisper` + `google-genai`** | Run end-to-end transcription on a 5-minute bilingual Hebrew/English technical lecture clip + Gemini Flash correction/summary + Pydantic `response_schema` extraction on a sample Ex0 repo. | Valid JSON conforming to `HomeworkMetrics` schema on 5/5 runs; no unhandled `429` crashes under throttled queue. |
+| **TV-04** | **`google-genai` + `ffmpeg` + `faster-whisper`** | Run end-to-end audio/transcript upload & summary generation (`gemini-3.8-flash` + offline `faster-whisper` fallback) and Pydantic `response_schema` extraction on a sample Ex0 repo. | Valid `[MM:SS]` transcript + summary output and `HomeworkMetrics` JSON on 5/5 runs; no unhandled `429` or `404` crashes under throttled queue. |

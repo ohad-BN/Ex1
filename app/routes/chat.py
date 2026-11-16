@@ -14,8 +14,7 @@ chat_bp = Blueprint("chat", __name__)
 
 def _get_chat_service() -> ChatService:
     db = current_app.extensions["db_session"]
-    zoom_bridge = current_app.extensions["zoom_bridge"]
-    return ChatService(db=db, zoom_bridge=zoom_bridge)
+    return ChatService(db=db)
 
 
 def _resolve_student_from_cookie() -> Optional[Student]:
@@ -31,13 +30,7 @@ def _resolve_student_from_cookie() -> Optional[Student]:
 @chat_bp.get("/api/sessions/<int:session_id>/chat")
 def list_chat_messages(session_id: int):
     svc = _get_chat_service()
-    zoom_bridge = current_app.extensions["zoom_bridge"]
-    return jsonify(
-        {
-            "messages": svc.list_messages(session_id),
-            "zoom_configured": zoom_bridge.is_configured(),
-        }
-    )
+    return jsonify({"messages": svc.list_messages(session_id)})
 
 
 @chat_bp.post("/api/sessions/<int:session_id>/chat")

@@ -44,15 +44,6 @@ class Config:
     GEMINI_PRO_MODEL: str = os.getenv("GEMINI_PRO_MODEL", "gemini-3.8-flash")
     GEMINI_MIN_INTERVAL_SEC: float = float(os.getenv("GEMINI_MIN_INTERVAL_SEC", "4.5"))
 
-    # Optional Zoom OAuth Bridge (Features 2 & 4)
-    ZOOM_ACCOUNT_ID: str = os.getenv("ZOOM_ACCOUNT_ID", "")
-    ZOOM_CLIENT_ID: str = os.getenv("ZOOM_CLIENT_ID", "")
-    ZOOM_CLIENT_SECRET: str = os.getenv("ZOOM_CLIENT_SECRET", "")
-    ZOOM_WEBHOOK_SECRET_TOKEN: str = os.getenv("ZOOM_WEBHOOK_SECRET_TOKEN", "")
-    ZOOM_DEFAULT_USER_ID: str = os.getenv("ZOOM_DEFAULT_USER_ID", "me")
-    ZOOM_TEAM_CHANNEL_ID: str = os.getenv("ZOOM_TEAM_CHANNEL_ID", "")
-    ZOOM_POLL_INTERVAL_SEC: int = int(os.getenv("ZOOM_POLL_INTERVAL_SEC", "60"))
-
     # Background task executor threads
     MAX_TASK_WORKERS: int = int(os.getenv("MAX_TASK_WORKERS", "2"))
 

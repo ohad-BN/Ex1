@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from pathlib import Path
 import re
 import threading
 import time
@@ -231,6 +232,74 @@ class GeminiStudioClient:
             if not self.fallback_on_error:
                 raise
             return self._local_structured_fallback(prompt, schema_cls)
+
+    AUDIO_MIME_TYPES: dict[str, str] = {
+        ".mp3": "audio/mpeg",
+        ".wav": "audio/wav",
+        ".m4a": "audio/mp4",
+        ".mp4": "audio/mp4",
+        ".ogg": "audio/ogg",
+        ".flac": "audio/flac",
+        ".webm": "audio/webm",
+        ".aac": "audio/aac",
+    }
+
+    def transcribe_audio_file(
+        self,
+        audio_path: Path,
+        prompt: str,
+        system_instruction: str = "",
+        model: Optional[str] = None,
+    ) -> str:
+        """Transcribe a class recording using Google Gemini API (Files API or inline bytes)."""
+        if not self.is_configured():
+            raise RuntimeError("Gemini API key is not configured.")
+
+        target_model = model or self.fast_model
+        client = self._get_genai_client()
+        mime_type = self.AUDIO_MIME_TYPES.get(audio_path.suffix.lower(), "audio/mpeg")
+        uploaded_file: Any = None
+
+        try:
+            if hasattr(client, "files"):
+                uploaded_file = client.files.upload(file=str(audio_path))
+                for _ in range(40):
+                    state_obj = getattr(uploaded_file, "state", None)
+                    state_name = str(getattr(state_obj, "name", state_obj or "")).upper()
+                    if state_name and "PROCESSING" not in state_name:
+                        break
+                    self._sleep(1.5)
+                    uploaded_file = client.files.get(name=uploaded_file.name)
+                media_part: Any = uploaded_file
+            else:
+                from google.genai import types
+
+                media_part = types.Part.from_bytes(
+                    data=audio_path.read_bytes(),
+                    mime_type=mime_type,
+                )
+
+            def _invoke(cl: Any, model_name: str) -> Any:
+                config: dict[str, Any] = {}
+                if system_instruction:
+                    config["system_instruction"] = system_instruction
+                return cl.models.generate_content(
+                    model=model_name,
+                    contents=[media_part, prompt],
+                    config=config or None,
+                )
+
+            response = self._generate_with_model_fallback(target_model, _invoke)
+            text = getattr(response, "text", None)
+            if not text or not str(text).strip():
+                raise RuntimeError("Gemini returned an empty transcription.")
+            return str(text).strip()
+        finally:
+            if uploaded_file is not None and hasattr(client, "files"):
+                try:
+                    client.files.delete(name=uploaded_file.name)
+                except Exception:  # noqa: BLE001
+                    pass
 
     @staticmethod
     def _local_text_fallback(prompt: str, system_instruction: str) -> str:
