@@ -77,8 +77,8 @@ def test_multi_course_creation_and_teacher_portal_rendering(school_app) -> None:
     assert portal_resp.status_code == 200
     assert b"SE305" in portal_resp.data
     assert b"Lecture 2" in portal_resp.data
-    assert b"AI Lecture Summarizer" in portal_resp.data
-    assert b"Homework Cohort Analytics" in portal_resp.data
+    assert b"AI Summary" in portal_resp.data
+    assert b"Homework" in portal_resp.data
 
 
 def test_qr_checkin_auto_enrolls_student_in_course_and_populates_student_app(
@@ -257,11 +257,11 @@ def test_course_attendance_monitor_tab_excel_import_and_remove_student(school_ap
     students = up_csv.get_json()["course"]["students"]
     assert len(students) == 3
 
-    # 3. Verify Portal HTML has 4. AI -> 5. Homework -> 6. Course Attendance Monitor & Remove Student button
+    # 3. Verify Portal HTML has AI Summary -> Homework -> Roster & Remove Student button
     portal_html = client.get(f"/teacher?course_id={cid}").data.decode("utf-8")
-    p4 = portal_html.index("4. AI Lecture Summarizer")
-    p5 = portal_html.index("5. Homework Cohort Analytics")
-    p6 = portal_html.index("6. Course Attendance Monitor")
+    p4 = portal_html.index("AI Summary")
+    p5 = portal_html.index("Homework")
+    p6 = portal_html.index("Roster (")
     assert p4 < p5 < p6
     assert "Course Overview &amp; Roster" not in portal_html
     assert 'id="roster-file-input"' in portal_html

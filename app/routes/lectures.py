@@ -8,8 +8,8 @@ from sqlalchemy.orm import sessionmaker
 from werkzeug.utils import secure_filename
 
 from app import socketio
-from app.models import ClassSession, LectureArtifact
-from app.routes.guards import require_course_access, require_session_access
+from app.models import ClassSession, Course, CourseEnrollment, LectureArtifact
+from app.routes.guards import get_current_student, require_course_access, require_session_access
 from app.services.lecture_pipeline import LecturePipelineError, LectureSummarizerService
 
 lectures_bp = Blueprint("lectures", __name__)
@@ -47,6 +47,21 @@ def list_session_lectures(session_id: int):
 
 @lectures_bp.get("/api/courses/<int:course_id>/lectures")
 def list_course_lectures(course_id: int):
+    db = current_app.extensions["db_session"]
+    student = get_current_student()
+    if student is not None:
+        course = db.get(Course, course_id)
+        if course is None:
+            return jsonify({"error": "Course not found."}), 404
+        enrolled = (
+            db.query(CourseEnrollment)
+            .filter_by(course_id=course_id, student_id=student.id)
+            .first()
+            is not None
+        )
+        if enrolled:
+            svc = _get_lecture_service()
+            return jsonify({"artifacts": svc.list_course_artifacts(course_id)})
     _course, _lec, err = require_course_access(course_id)
     if err is not None:
         return err

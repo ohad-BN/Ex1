@@ -30,7 +30,7 @@ if errorlevel 1 (
 
 :: 2. Start web container and force a fresh Cloudflare Quick Tunnel URL
 echo [2/4] Starting web app and fresh Cloudflare tunnel...
-docker compose up -d
+docker compose up -d --build
 if errorlevel 1 (
     echo [ERROR] docker compose up failed.
     pause

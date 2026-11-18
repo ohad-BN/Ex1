@@ -1,501 +1,466 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>ClassPulse — Lecturer Sign-In &amp; Class Setup</title>
-  <script src="/static/js/csrf.js"></script>
-  <style>
-    :root {
-      --bg: #0b1120;
-      --panel: #1e293b;
-      --border: #334155;
-      --text: #f8fafc;
-      --muted: #94a3b8;
-      --accent: #38bdf8;
-      --green: #22c55e;
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      min-height: 100vh;
-      background: radial-gradient(circle at top right, #1e293b 0%, #0b1120 75%);
-      color: var(--text);
-      font-family: system-ui, -apple-system, sans-serif;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 20px;
-    }
-    .container {
-      width: 100%;
-      max-width: 500px;
-    }
-    .card {
-      background: var(--panel);
-      border: 1px solid var(--border);
-      border-radius: 18px;
-      padding: 28px;
-      box-shadow: 0 18px 40px rgba(0, 0, 0, 0.4);
-      margin-bottom: 16px;
-    }
-    .badge {
-      display: inline-block;
-      padding: 4px 12px;
-      border-radius: 999px;
-      background: rgba(56, 189, 248, 0.16);
-      color: var(--accent);
-      font-size: 11px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.06em;
-      margin-bottom: 10px;
-    }
-    h1 {
-      margin: 0 0 8px 0;
-      font-size: 24px;
-    }
-    p.sub {
-      color: var(--muted);
-      font-size: 14px;
-      margin: 0 0 20px 0;
-      line-height: 1.5;
-    }
-    label {
-      display: block;
-      font-size: 12px;
-      font-weight: 700;
-      color: var(--muted);
-      margin-bottom: 6px;
-    }
-    input[type="text"], input[type="email"], input[type="password"] {
-      width: 100%;
-      padding: 11px 12px;
-      border-radius: 10px;
-      border: 1px solid var(--border);
-      background: #0f172a;
-      color: var(--text);
-      font-size: 14px;
-      margin-bottom: 14px;
-    }
-    .auth-tabs {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 8px;
-      margin-bottom: 16px;
-    }
-    .auth-tab {
-      padding: 9px 10px;
-      border-radius: 10px;
-      border: 1px solid var(--border);
-      background: #0f172a;
-      color: var(--muted);
-      font-weight: 700;
-      font-size: 13px;
-      cursor: pointer;
-    }
-    .auth-tab.active {
-      background: rgba(56, 189, 248, 0.16);
-      border-color: var(--accent);
-      color: var(--accent);
-    }
-    .ok-msg {
-      display: none;
-      background: rgba(34, 197, 94, 0.16);
-      border: 1px solid #22c55e;
-      color: #86efac;
-      padding: 10px 12px;
-      border-radius: 10px;
-      font-size: 13px;
-      margin-bottom: 14px;
-    }
-    button {
-      width: 100%;
-      padding: 13px;
-      border-radius: 10px;
-      border: none;
-      background: var(--accent);
-      color: #0f172a;
-      font-weight: 800;
-      font-size: 15px;
-      cursor: pointer;
-    }
-    .btn-green {
-      background: var(--green);
-      color: #052e16;
-    }
-    .step-indicator {
-      display: flex;
-      gap: 8px;
-      margin-bottom: 18px;
-    }
-    .step-pill {
-      flex: 1;
-      text-align: center;
-      padding: 6px;
-      border-radius: 8px;
-      font-size: 11px;
-      font-weight: 700;
-      background: #0f172a;
-      color: var(--muted);
-      border: 1px solid var(--border);
-    }
-    .step-pill.active {
-      border-color: var(--accent);
-      color: var(--accent);
-      background: rgba(56, 189, 248, 0.12);
-    }
-    .err-msg {
-      display: none;
-      background: rgba(239, 68, 68, 0.18);
-      border: 1px solid #ef4444;
-      color: #fca5a5;
-      padding: 10px 12px;
-      border-radius: 10px;
-      font-size: 13px;
-      margin-bottom: 14px;
-    }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <div class="step-indicator">
-      <div id="pill-step-1" class="step-pill active">1. Lecturer Sign-In</div>
-      <div id="pill-step-2" class="step-pill">2. Create Class &amp; Lecture</div>
-      <div id="pill-step-3" class="step-pill">3. Live QR Dashboard</div>
+{% extends "layouts/base.html" %}
+{% set cp_use_csrf = true %}
+{% from "macros/icons.html" import cp_icon %}
+
+{% block title %}ClassPulse — Lecturer Sign-In &amp; Class Setup{% endblock %}
+
+{% block styles %}
+<style>
+  .cp-auth-page {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px 14px;
+  }
+  .cp-auth-brand {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+  .cp-auth-field {
+    margin-bottom: 13px;
+  }
+  .cp-auth-title {
+    margin: 10px 0 6px 0;
+    font-size: 22px;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    color: var(--cp-ink);
+  }
+  .cp-auth-sub {
+    margin: 0 0 16px 0;
+    font-size: 13.5px;
+    color: var(--cp-ink-secondary);
+    line-height: 1.5;
+  }
+  .cp-auth-meta-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 14px;
+    font-size: 12.5px;
+    color: var(--cp-ink-secondary);
+  }
+  .cp-auth-divider {
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px solid var(--cp-border);
+  }
+</style>
+{% endblock %}
+
+{% block body %}
+<main class="cp-auth-page">
+  <div class="cp-shell cp-shell--auth">
+    <div class="cp-auth-brand">
+      <div class="cp-brand-lockup">
+        <span class="cp-orb cp-orb--md" aria-hidden="true"></span>
+        <div>
+          <div class="cp-brand-title">ClassPulse</div>
+          <div class="cp-brand-sub">Lecturer &amp; Professor Workspace</div>
+        </div>
+      </div>
+      <a class="cp-btn cp-btn--white cp-btn--sm" href="/portal">Hub</a>
+    </div>
+
+    <div class="cp-step-indicator" aria-label="Onboarding steps">
+      <div id="pill-step-1" class="cp-step-pill step-pill active">1. Lecturer Sign-In</div>
+      <div id="pill-step-2" class="cp-step-pill step-pill">2. Create Class &amp; Lecture</div>
+      <div id="pill-step-3" class="cp-step-pill step-pill">3. Live QR Dashboard</div>
     </div>
 
     <!-- STEP 1: LECTURER SIGN IN / REGISTER -->
-    <div id="card-step-1" class="card">
-      <span class="badge">Professor &amp; Lecturer Portal</span>
-      <h1 id="auth-heading">Lecturer Sign In</h1>
-      <p class="sub" id="auth-sub">
+    <div id="card-step-1" class="cp-card" style="margin-bottom: 14px;">
+      <span class="cp-badge cp-badge--coral">Professor &amp; Lecturer Portal</span>
+      <h1 id="auth-heading" class="cp-auth-title">Lecturer Sign In</h1>
+      <p class="cp-auth-sub" id="auth-sub">
         Sign in with your username or email and password, or register a new professor account to get your own isolated dashboard.
       </p>
 
-      <div class="auth-tabs">
-        <button type="button" id="tab-btn-signin" class="auth-tab active" onclick="switchAuthTab('signin')">Sign In</button>
-        <button type="button" id="tab-btn-register" class="auth-tab" onclick="switchAuthTab('register')">Create Account</button>
+      <div class="cp-segmented cp-segmented--2" style="margin-bottom: 16px;">
+        <button type="button" id="tab-btn-signin" class="cp-segmented-btn auth-tab active" onclick="switchAuthTab('signin')">
+          {{ cp_icon('lock', 15) }}
+          <span>Sign In</span>
+        </button>
+        <button type="button" id="tab-btn-register" class="cp-segmented-btn auth-tab" onclick="switchAuthTab('register')">
+          {{ cp_icon('user-plus', 15) }}
+          <span>Create Account</span>
+        </button>
       </div>
 
-      <div id="login-error" class="err-msg"></div>
-      <div id="login-ok" class="ok-msg"></div>
+      <div id="login-error" class="cp-alert cp-alert--err" style="display:none;" role="alert"></div>
+      <div id="login-ok" class="cp-alert cp-alert--ok" style="display:none;" role="status"></div>
 
       <!-- SIGN IN PANEL -->
       <div id="panel-signin">
-        <label for="login-identifier">Username or University Email</label>
-        <input type="text" id="login-identifier" autocomplete="username" placeholder="e.g. boaz or boaz@ariel.ac.il" />
+        <div class="cp-auth-field">
+          <label class="cp-label" for="login-identifier">Username or University Email</label>
+          <input class="cp-input" type="text" id="login-identifier" autocomplete="username" placeholder="e.g. boaz or boaz@ariel.ac.il" />
+        </div>
 
-        <label for="login-password">Password</label>
-        <input type="password" id="login-password" autocomplete="current-password" placeholder="Enter your password" onkeydown="if(event.key==='Enter') handleLecturerSignIn()" />
+        <div class="cp-auth-field">
+          <label class="cp-label" for="login-password">Password</label>
+          <input class="cp-input" type="password" id="login-password" autocomplete="current-password" placeholder="Enter your password" onkeydown="if(event.key==='Enter') handleLecturerSignIn()" />
+        </div>
 
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; font-size:12px; color:var(--muted);">
-          <label style="display:flex; align-items:center; gap:6px; margin:0; cursor:pointer;">
+        <div class="cp-auth-meta-row">
+          <label style="display:inline-flex; align-items:center; gap:6px; margin:0; cursor:pointer; font-weight:600;">
             <input type="checkbox" id="login-remember" checked style="width:auto; margin:0;" />
             <span>Keep me signed in (7 days)</span>
           </label>
-          <a href="javascript:void(0)" onclick="toggleForgotBox()" style="color:var(--accent); text-decoration:none; font-weight:600;">Forgot password?</a>
+          <a href="javascript:void(0)" onclick="toggleForgotBox()" style="color:var(--cp-indigo-ink); text-decoration:none; font-weight:700;">Forgot password?</a>
         </div>
 
-        <button type="button" onclick="handleLecturerSignIn()">Sign In &amp; Continue &rarr;</button>
+        <button type="button" class="cp-btn cp-btn--primary cp-btn--block" onclick="handleLecturerSignIn()">
+          <span>Sign In &amp; Continue</span>
+          {{ cp_icon('arrow-right', 16) }}
+        </button>
 
-        <div id="forgot-box" style="display:none; margin-top:14px; padding-top:14px; border-top:1px solid var(--border);">
-          <label for="forgot-identifier">Reset Password — Username or Email</label>
-          <input type="text" id="forgot-identifier" placeholder="Enter your username or email" />
-          <button type="button" style="background:#334155; color:var(--text); margin-bottom:8px;" onclick="handleForgotPassword()">Send Reset Link / Token</button>
-          <div id="reset-confirm-box" style="display:none; margin-top:10px;">
-            <label for="reset-token">Reset Token</label>
-            <input type="text" id="reset-token" placeholder="Paste reset token" />
-            <label for="reset-new-pw">New Password</label>
-            <input type="password" id="reset-new-pw" placeholder="Min 8 chars, letters + number/symbol" />
-            <button type="button" class="btn-green" onclick="handleResetPassword()">Set New Password</button>
+        <div id="forgot-box" class="cp-auth-divider" style="display:none;">
+          <div class="cp-auth-field">
+            <label class="cp-label" for="forgot-identifier">Reset Password &mdash; Username or Email</label>
+            <input class="cp-input" type="text" id="forgot-identifier" placeholder="Enter your username or email" />
+          </div>
+          <button type="button" class="cp-btn cp-btn--secondary cp-btn--block" style="margin-bottom:8px;" onclick="handleForgotPassword()">
+            {{ cp_icon('key', 15) }}
+            <span>Send Reset Link / Token</span>
+          </button>
+          <div id="reset-confirm-box" style="display:none; margin-top:12px;">
+            <div class="cp-auth-field">
+              <label class="cp-label" for="reset-token">Reset Token</label>
+              <input class="cp-input" type="text" id="reset-token" placeholder="Paste reset token" />
+            </div>
+            <div class="cp-auth-field">
+              <label class="cp-label" for="reset-new-pw">New Password</label>
+              <input class="cp-input" type="password" id="reset-new-pw" placeholder="Min 8 chars, letters + number/symbol" />
+            </div>
+            <button type="button" class="cp-btn cp-btn--green cp-btn--block" onclick="handleResetPassword()">Set New Password</button>
           </div>
         </div>
       </div>
 
       <!-- REGISTER PANEL -->
       <div id="panel-register" style="display:none;">
-        <label for="reg-name">Full Name</label>
-        <input type="text" id="reg-name" placeholder="e.g. Dr. Daniel Levi" />
+        <div class="cp-auth-field">
+          <label class="cp-label" for="reg-name">Full Name</label>
+          <input class="cp-input" type="text" id="reg-name" placeholder="e.g. Dr. Daniel Levi" />
+        </div>
 
-        <label for="reg-username">Username</label>
-        <input type="text" id="reg-username" autocomplete="username" placeholder="e.g. daniel.levi (lowercase letters, digits, ._-)" />
+        <div class="cp-auth-field">
+          <label class="cp-label" for="reg-username">Username</label>
+          <input class="cp-input" type="text" id="reg-username" autocomplete="username" placeholder="e.g. daniel.levi (lowercase letters, digits, ._-)" />
+        </div>
 
-        <label for="reg-email">University Email</label>
-        <input type="email" id="reg-email" autocomplete="email" placeholder="e.g. daniel@ariel.ac.il" />
+        <div class="cp-auth-field">
+          <label class="cp-label" for="reg-email">University Email</label>
+          <input class="cp-input" type="email" id="reg-email" autocomplete="email" placeholder="e.g. daniel@ariel.ac.il" />
+        </div>
 
-        <label for="reg-dept">Department / Faculty</label>
-        <input type="text" id="reg-dept" value="Computer Science" placeholder="e.g. Computer Science" />
+        <div class="cp-auth-field">
+          <label class="cp-label" for="reg-dept">Department / Faculty</label>
+          <input class="cp-input" type="text" id="reg-dept" value="Computer Science" placeholder="e.g. Computer Science" />
+        </div>
 
-        <label for="reg-password">Password</label>
-        <input type="password" id="reg-password" autocomplete="new-password" placeholder="At least 8 chars (letter + number/symbol)" />
+        <div class="cp-auth-field">
+          <label class="cp-label" for="reg-password">Password</label>
+          <input class="cp-input" type="password" id="reg-password" autocomplete="new-password" placeholder="At least 8 chars (letter + number/symbol)" />
+        </div>
 
-        <label for="reg-confirm">Confirm Password</label>
-        <input type="password" id="reg-confirm" autocomplete="new-password" placeholder="Repeat password" onkeydown="if(event.key==='Enter') handleLecturerRegister()" />
+        <div class="cp-auth-field">
+          <label class="cp-label" for="reg-confirm">Confirm Password</label>
+          <input class="cp-input" type="password" id="reg-confirm" autocomplete="new-password" placeholder="Repeat password" onkeydown="if(event.key==='Enter') handleLecturerRegister()" />
+        </div>
 
-        <button type="button" class="btn-green" onclick="handleLecturerRegister()">Register Professor Account &rarr;</button>
+        <button type="button" class="cp-btn cp-btn--green cp-btn--block" onclick="handleLecturerRegister()">
+          <span>Register Professor Account</span>
+          {{ cp_icon('arrow-right', 16) }}
+        </button>
       </div>
 
       {% if lecturer %}
-      <div style="margin-top:14px; padding-top:12px; border-top:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap;">
+      <div class="cp-auth-divider cp-row-between">
         {% if lecturer_courses %}
-        <a href="/teacher" style="color:var(--accent); font-size:13px; text-decoration:none;">
+        <a href="/teacher" style="color:var(--cp-indigo-ink); font-size:13px; font-weight:600; text-decoration:none;">
           Signed in as <strong>{{ lecturer.full_name }}</strong> (@{{ lecturer.username or 'lecturer' }}) &mdash; Open Dashboard &rarr;
         </a>
         {% else %}
-        <span style="color:var(--muted); font-size:13px;">Signed in as {{ lecturer.full_name }}</span>
+        <span class="cp-muted" style="font-size:13px;">Signed in as <strong>{{ lecturer.full_name }}</strong></span>
         {% endif %}
-        <button type="button" onclick="handleLecturerLogout()" style="width:auto; padding:6px 12px; font-size:12px; background:#334155; color:var(--text);">
-          Sign Out
+        <button type="button" class="cp-btn cp-btn--secondary cp-btn--sm" onclick="handleLecturerLogout()">
+          {{ cp_icon('log-out', 14) }}
+          <span>Sign Out</span>
         </button>
       </div>
       {% endif %}
     </div>
 
     <!-- STEP 2: CREATE CLASS (COURSE) & FIRST LECTURE -->
-    <div id="card-step-2" class="card" style="display:none;">
-      <span class="badge" id="step2-badge">Step 2 &bull; Class &amp; Lecture Setup</span>
-      <h1 id="step2-title">Your Classes &amp; New Course</h1>
-      <p class="sub" id="step2-sub">
+    <div id="card-step-2" class="cp-card" style="display:none; margin-bottom: 14px;">
+      <span class="cp-badge cp-badge--indigo" id="step2-badge">Step 2 &bull; Class &amp; Lecture Setup</span>
+      <h1 id="step2-title" class="cp-auth-title">Your Classes &amp; New Course</h1>
+      <p class="cp-auth-sub" id="step2-sub">
         Create your own course and its first lecture session, or open one of your existing classes below.
       </p>
 
       <div id="my-courses-box" style="margin-bottom:16px; display:none;">
-        <div style="font-size:12px; font-weight:700; color:var(--accent); text-transform:uppercase; margin-bottom:8px;">
+        <div class="cp-eyebrow" style="color:var(--cp-coral-ink); margin-bottom:8px;">
           Your Existing Courses
         </div>
-        <div id="my-courses-list" style="display:flex; flex-direction:column; gap:8px;"></div>
+        <div id="my-courses-list" class="cp-stack-xs"></div>
       </div>
 
-      <div id="course-error" class="err-msg"></div>
+      <div id="course-error" class="cp-alert cp-alert--err" style="display:none;" role="alert"></div>
 
-      <label for="setup-course-code">Course Code</label>
-      <input type="text" id="setup-course-code" placeholder="e.g. CS204 or DAN101" value="" />
+      <div class="cp-auth-field">
+        <label class="cp-label" for="setup-course-code">Course Code</label>
+        <input class="cp-input" type="text" id="setup-course-code" placeholder="e.g. CS204 or DAN101" value="" />
+      </div>
 
-      <label for="setup-course-name">Course Name (Class Title)</label>
-      <input type="text" id="setup-course-name" placeholder="e.g. Object-Oriented Programming & SE" value="" />
+      <div class="cp-auth-field">
+        <label class="cp-label" for="setup-course-name">Course Name (Class Title)</label>
+        <input class="cp-input" type="text" id="setup-course-name" placeholder="e.g. Object-Oriented Programming & SE" value="" />
+      </div>
 
-      <label for="setup-lecture-title">First Lecture Title</label>
-      <input type="text" id="setup-lecture-title" placeholder="e.g. Lecture 1 — Architecture & Design" value="" />
+      <div class="cp-auth-field">
+        <label class="cp-label" for="setup-lecture-title">First Lecture Title</label>
+        <input class="cp-input" type="text" id="setup-lecture-title" placeholder="e.g. Lecture 1 — Architecture & Design" value="" />
+      </div>
 
-      <button type="button" class="btn-green" onclick="handleCreateClassAndLecture()" style="margin-bottom:10px;">
-        Create Class &amp; Launch Live Lecture QR &rarr;
+      <button type="button" class="cp-btn cp-btn--green cp-btn--block" onclick="handleCreateClassAndLecture()" style="margin-bottom:10px;">
+        <span>Create Class &amp; Launch Live Lecture QR</span>
+        {{ cp_icon('arrow-right', 16) }}
       </button>
 
-      <button type="button" id="btn-open-existing" style="display:none; background:#334155; color:var(--text);" onclick="window.location.href='/teacher'">
+      <button type="button" id="btn-open-existing" class="cp-btn cp-btn--secondary cp-btn--block" style="display:none;" onclick="window.location.href='/teacher'">
         Open My Courses Dashboard &rarr;
       </button>
     </div>
 
-    <div style="text-align:center; font-size:13px; color:var(--muted);">
-      Are you a student? <a href="/student" style="color:var(--accent); text-decoration:none; font-weight:700;">Open Student App &rarr;</a>
+    <div style="text-align:center; font-size:13px; color:var(--cp-ink-secondary);">
+      Are you a student? <a href="/student" style="color:var(--cp-indigo-ink); text-decoration:none; font-weight:700;">Open Student App &rarr;</a>
     </div>
   </div>
+</main>
+{% endblock %}
 
-  <script>
-    const INITIAL_LECTURER_COURSES = {{ lecturer_courses | tojson }};
-    const FORCE_SETUP = {{ 'true' if force_setup else 'false' }};
+{% block scripts %}
+<script>
+  const INITIAL_LECTURER_COURSES = {{ lecturer_courses | tojson }};
+  const FORCE_SETUP = {{ 'true' if force_setup else 'false' }};
 
-    function renderLecturerCoursesStep2(courses, lecturerName) {
-      const box = document.getElementById("my-courses-box");
-      const list = document.getElementById("my-courses-list");
-      const openBtn = document.getElementById("btn-open-existing");
-      const sub = document.getElementById("step2-sub");
-      list.innerHTML = "";
+  function escapeHtml(val) {
+    return String(val == null ? "" : val)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
 
-      if (courses && courses.length > 0) {
-        box.style.display = "block";
-        openBtn.style.display = "block";
-        sub.textContent = `Welcome back${lecturerName ? ", " + lecturerName : ""}. Open one of your courses or create a new class below.`;
-        courses.forEach((c) => {
-          const row = document.createElement("a");
-          row.href = `/teacher?course_id=${c.id}`;
-          row.style.cssText = "display:flex; justify-content:space-between; align-items:center; padding:10px 12px; border-radius:10px; background:#0f172a; border:1px solid #334155; color:#f8fafc; text-decoration:none; font-size:13px;";
-          row.innerHTML = `<span><strong>${c.course_code}</strong> &mdash; ${c.name}</span><span style="color:#38bdf8; font-weight:700;">Open &rarr;</span>`;
-          list.appendChild(row);
-        });
-      } else {
-        box.style.display = "none";
-        openBtn.style.display = "none";
-        sub.textContent = `Welcome${lecturerName ? ", " + lecturerName : ""}! You don't have any courses yet. Create your first course and lecture below to launch your personal dashboard.`;
-      }
-    }
+  function renderLecturerCoursesStep2(courses, lecturerName) {
+    const box = document.getElementById("my-courses-box");
+    const list = document.getElementById("my-courses-list");
+    const openBtn = document.getElementById("btn-open-existing");
+    const sub = document.getElementById("step2-sub");
+    list.innerHTML = "";
 
-    function showStep2(courses, lecturerName) {
-      renderLecturerCoursesStep2(courses, lecturerName);
-      document.getElementById("card-step-1").style.display = "none";
-      document.getElementById("card-step-2").style.display = "block";
-      document.getElementById("pill-step-1").classList.remove("active");
-      document.getElementById("pill-step-2").classList.add("active");
-    }
-
-    function switchAuthTab(tab) {
-      document.getElementById("login-error").style.display = "none";
-      document.getElementById("login-ok").style.display = "none";
-      const isSignIn = tab === "signin";
-      document.getElementById("panel-signin").style.display = isSignIn ? "block" : "none";
-      document.getElementById("panel-register").style.display = isSignIn ? "none" : "block";
-      document.getElementById("tab-btn-signin").classList.toggle("active", isSignIn);
-      document.getElementById("tab-btn-register").classList.toggle("active", !isSignIn);
-      document.getElementById("auth-heading").textContent = isSignIn ? "Lecturer Sign In" : "Create Professor Account";
-    }
-
-    function toggleForgotBox() {
-      const el = document.getElementById("forgot-box");
-      el.style.display = el.style.display === "none" ? "block" : "none";
-    }
-
-    async function handleLecturerLogout() {
-      await fetch("/api/auth/lecturer/logout", { method: "POST" });
-      window.location.href = "/teacher/login";
-    }
-
-    async function handleLecturerSignIn() {
-      const errEl = document.getElementById("login-error");
-      const okEl = document.getElementById("login-ok");
-      errEl.style.display = "none";
-      okEl.style.display = "none";
-
-      const identifier = document.getElementById("login-identifier").value.trim();
-      const password = document.getElementById("login-password").value;
-      const remember_me = document.getElementById("login-remember").checked;
-
-      if (!identifier || !password) {
-        errEl.textContent = "Please enter your username/email and password.";
-        errEl.style.display = "block";
-        return;
-      }
-
-      const res = await fetch("/api/auth/lecturer/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ identifier, password, remember_me }),
+    if (courses && courses.length > 0) {
+      box.style.display = "block";
+      openBtn.style.display = "inline-flex";
+      sub.textContent = `Welcome back${lecturerName ? ", " + lecturerName : ""}. Open one of your courses or create a new class below.`;
+      courses.forEach((c) => {
+        const row = document.createElement("a");
+        row.href = `/teacher?course_id=${encodeURIComponent(c.id)}`;
+        row.className = "cp-course-launch-row";
+        row.innerHTML = `<span><span class="cp-code-pill">${escapeHtml(c.course_code)}</span> &mdash; ${escapeHtml(c.name)}</span><span class="cp-badge cp-badge--coral">Open &rarr;</span>`;
+        list.appendChild(row);
       });
-      const data = await res.json();
-      if (!res.ok) {
-        errEl.textContent = data.error || "Sign-in failed.";
-        errEl.style.display = "block";
-        return;
-      }
+    } else {
+      box.style.display = "none";
+      openBtn.style.display = "none";
+      sub.textContent = `Welcome${lecturerName ? ", " + lecturerName : ""}! You don't have any courses yet. Create your first course and lecture below to launch your personal dashboard.`;
+    }
+  }
 
-      showStep2(data.courses || [], data.lecturer ? data.lecturer.full_name : identifier);
+  function showStep2(courses, lecturerName) {
+    renderLecturerCoursesStep2(courses, lecturerName);
+    document.getElementById("card-step-1").style.display = "none";
+    document.getElementById("card-step-2").style.display = "block";
+    document.getElementById("pill-step-1").classList.remove("active");
+    document.getElementById("pill-step-2").classList.add("active");
+  }
+
+  function switchAuthTab(tab) {
+    document.getElementById("login-error").style.display = "none";
+    document.getElementById("login-ok").style.display = "none";
+    const isSignIn = tab === "signin";
+    document.getElementById("panel-signin").style.display = isSignIn ? "block" : "none";
+    document.getElementById("panel-register").style.display = isSignIn ? "none" : "block";
+    document.getElementById("tab-btn-signin").classList.toggle("active", isSignIn);
+    document.getElementById("tab-btn-register").classList.toggle("active", !isSignIn);
+    document.getElementById("auth-heading").textContent = isSignIn ? "Lecturer Sign In" : "Create Professor Account";
+  }
+
+  function toggleForgotBox() {
+    const el = document.getElementById("forgot-box");
+    el.style.display = el.style.display === "none" ? "block" : "none";
+  }
+
+  async function handleLecturerLogout() {
+    await fetch("/api/auth/lecturer/logout", { method: "POST" });
+    window.location.href = "/teacher/login";
+  }
+
+  async function handleLecturerSignIn() {
+    const errEl = document.getElementById("login-error");
+    const okEl = document.getElementById("login-ok");
+    errEl.style.display = "none";
+    okEl.style.display = "none";
+
+    const identifier = document.getElementById("login-identifier").value.trim();
+    const password = document.getElementById("login-password").value;
+    const remember_me = document.getElementById("login-remember").checked;
+
+    if (!identifier || !password) {
+      errEl.textContent = "Please enter your username/email and password.";
+      errEl.style.display = "block";
+      return;
     }
 
-    async function handleLecturerRegister() {
-      const errEl = document.getElementById("login-error");
-      const okEl = document.getElementById("login-ok");
-      errEl.style.display = "none";
-      okEl.style.display = "none";
-
-      const full_name = document.getElementById("reg-name").value.trim();
-      const username = document.getElementById("reg-username").value.trim();
-      const email = document.getElementById("reg-email").value.trim();
-      const department = document.getElementById("reg-dept").value.trim() || "Computer Science";
-      const password = document.getElementById("reg-password").value;
-      const confirm_password = document.getElementById("reg-confirm").value;
-
-      if (!full_name || !username || !email || !password) {
-        errEl.textContent = "Please complete all registration fields.";
-        errEl.style.display = "block";
-        return;
-      }
-
-      const res = await fetch("/api/auth/lecturer/register", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ full_name, username, email, department, password, confirm_password }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        errEl.textContent = data.error || "Registration failed.";
-        errEl.style.display = "block";
-        return;
-      }
-
-      showStep2(data.courses || [], data.lecturer ? data.lecturer.full_name : full_name);
+    const res = await fetch("/api/auth/lecturer/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ identifier, password, remember_me }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      errEl.textContent = data.error || "Sign-in failed.";
+      errEl.style.display = "block";
+      return;
     }
 
-    async function handleForgotPassword() {
-      const errEl = document.getElementById("login-error");
-      const okEl = document.getElementById("login-ok");
-      errEl.style.display = "none";
-      const identifier = document.getElementById("forgot-identifier").value.trim();
-      const res = await fetch("/api/auth/lecturer/forgot-password", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ identifier }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        errEl.textContent = data.error || "Could not process request.";
-        errEl.style.display = "block";
-        return;
-      }
-      okEl.textContent = data.message || "Reset instructions generated.";
-      okEl.style.display = "block";
-      document.getElementById("reset-confirm-box").style.display = "block";
+    showStep2(data.courses || [], data.lecturer ? data.lecturer.full_name : identifier);
+  }
+
+  async function handleLecturerRegister() {
+    const errEl = document.getElementById("login-error");
+    const okEl = document.getElementById("login-ok");
+    errEl.style.display = "none";
+    okEl.style.display = "none";
+
+    const full_name = document.getElementById("reg-name").value.trim();
+    const username = document.getElementById("reg-username").value.trim();
+    const email = document.getElementById("reg-email").value.trim();
+    const department = document.getElementById("reg-dept").value.trim() || "Computer Science";
+    const password = document.getElementById("reg-password").value;
+    const confirm_password = document.getElementById("reg-confirm").value;
+
+    if (!full_name || !username || !email || !password) {
+      errEl.textContent = "Please complete all registration fields.";
+      errEl.style.display = "block";
+      return;
     }
 
-    async function handleResetPassword() {
-      const errEl = document.getElementById("login-error");
-      const okEl = document.getElementById("login-ok");
-      errEl.style.display = "none";
-      const token = document.getElementById("reset-token").value.trim();
-      const new_password = document.getElementById("reset-new-pw").value;
-      const res = await fetch("/api/auth/lecturer/reset-password", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token, new_password }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        errEl.textContent = data.error || "Reset failed.";
-        errEl.style.display = "block";
-        return;
-      }
-      okEl.textContent = "Password updated cleanly. You can sign in now.";
-      okEl.style.display = "block";
-      document.getElementById("forgot-box").style.display = "none";
+    const res = await fetch("/api/auth/lecturer/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ full_name, username, email, department, password, confirm_password }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      errEl.textContent = data.error || "Registration failed.";
+      errEl.style.display = "block";
+      return;
     }
 
-    async function handleCreateClassAndLecture() {
-      const errEl = document.getElementById("course-error");
-      errEl.style.display = "none";
+    showStep2(data.courses || [], data.lecturer ? data.lecturer.full_name : full_name);
+  }
 
-      const course_code = document.getElementById("setup-course-code").value.trim().toUpperCase();
-      const name = document.getElementById("setup-course-name").value.trim();
-      const initial_lecture_title = document.getElementById("setup-lecture-title").value.trim() || `Lecture 1 — ${name}`;
+  async function handleForgotPassword() {
+    const errEl = document.getElementById("login-error");
+    const okEl = document.getElementById("login-ok");
+    errEl.style.display = "none";
+    const identifier = document.getElementById("forgot-identifier").value.trim();
+    const res = await fetch("/api/auth/lecturer/forgot-password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ identifier }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      errEl.textContent = data.error || "Could not process request.";
+      errEl.style.display = "block";
+      return;
+    }
+    okEl.textContent = data.message || "Reset instructions generated.";
+    okEl.style.display = "block";
+    document.getElementById("reset-confirm-box").style.display = "block";
+  }
 
-      if (!course_code || !name) {
-        errEl.textContent = "Please enter a Course Code and Course Name.";
-        errEl.style.display = "block";
-        return;
-      }
+  async function handleResetPassword() {
+    const errEl = document.getElementById("login-error");
+    const okEl = document.getElementById("login-ok");
+    errEl.style.display = "none";
+    const token = document.getElementById("reset-token").value.trim();
+    const new_password = document.getElementById("reset-new-pw").value;
+    const res = await fetch("/api/auth/lecturer/reset-password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token, new_password }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      errEl.textContent = data.error || "Reset failed.";
+      errEl.style.display = "block";
+      return;
+    }
+    okEl.textContent = "Password updated cleanly. You can sign in now.";
+    okEl.style.display = "block";
+    document.getElementById("forgot-box").style.display = "none";
+  }
 
-      const res = await fetch("/api/courses", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ course_code, name, initial_lecture_title }),
-      });
-      const courseData = await res.json();
-      if (!res.ok) {
-        errEl.textContent = courseData.error || "Failed to create class.";
-        errEl.style.display = "block";
-        return;
-      }
+  async function handleCreateClassAndLecture() {
+    const errEl = document.getElementById("course-error");
+    errEl.style.display = "none";
 
-      document.getElementById("pill-step-2").classList.remove("active");
-      document.getElementById("pill-step-3").classList.add("active");
+    const course_code = document.getElementById("setup-course-code").value.trim().toUpperCase();
+    const name = document.getElementById("setup-course-name").value.trim();
+    const initial_lecture_title = document.getElementById("setup-lecture-title").value.trim() || `Lecture 1 — ${name}`;
 
-      const targetSession = courseData.active_session_code || "";
-      window.location.href = targetSession
-        ? `/teacher?course_id=${courseData.id}&session=${targetSession}`
-        : `/teacher?course_id=${courseData.id}`;
+    if (!course_code || !name) {
+      errEl.textContent = "Please enter a Course Code and Course Name.";
+      errEl.style.display = "block";
+      return;
     }
 
-    if (FORCE_SETUP) {
-      showStep2(INITIAL_LECTURER_COURSES, {{ (lecturer.full_name if lecturer else '') | tojson }});
+    const res = await fetch("/api/courses", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ course_code, name, initial_lecture_title }),
+    });
+    const courseData = await res.json();
+    if (!res.ok) {
+      errEl.textContent = courseData.error || "Failed to create class.";
+      errEl.style.display = "block";
+      return;
     }
-  </script>
-</body>
-</html>
+
+    document.getElementById("pill-step-2").classList.remove("active");
+    document.getElementById("pill-step-3").classList.add("active");
+
+    const targetSession = courseData.active_session_code || "";
+    window.location.href = targetSession
+      ? `/teacher?course_id=${courseData.id}&session=${targetSession}`
+      : `/teacher?course_id=${courseData.id}`;
+  }
+
+  if (FORCE_SETUP) {
+    showStep2(INITIAL_LECTURER_COURSES, {{ (lecturer.full_name if lecturer else '') | tojson }});
+  }
+</script>
+{% endblock %}

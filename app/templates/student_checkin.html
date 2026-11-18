@@ -1,535 +1,104 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
-  <title>ClassPulse — Student Live Hub</title>
-  <script src="/static/js/csrf.js"></script>
-  <script src="/static/js/notifications.js"></script>
-  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
-  <style>
-    :root {
-      --bg: #0b1120;
-      --panel: #151f32;
-      --panel-elevated: #1e293b;
-      --border: #2d3d54;
-      --text: #f8fafc;
-      --muted: #94a3b8;
-      --accent: #38bdf8;
-      --green: #22c55e;
-      --amber: #f59e0b;
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      min-height: 100vh;
-      background: var(--bg);
-      color: var(--text);
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      padding: 10px 12px 24px 12px;
-      display: flex;
-      justify-content: center;
-    }
-    .container {
-      width: 100%;
-      max-width: 560px;
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-    }
-    .card {
-      background: var(--panel);
-      border: 1px solid var(--border);
-      border-radius: 14px;
-      padding: 14px;
-      box-shadow: 0 8px 24px rgba(0,0,0,0.28);
-    }
-    h1, h2 { margin-top: 0; }
-    label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 5px; font-weight: 600; }
-    input[type="text"], input[type="email"], select, textarea {
-      width: 100%;
-      padding: 10px 12px;
-      border-radius: 9px;
-      border: 1px solid var(--border);
-      background: #0f172a;
-      color: #f8fafc;
-      font-size: 14px;
-      margin-bottom: 10px;
-    }
-    button {
-      width: 100%;
-      padding: 11px;
-      border: none;
-      border-radius: 9px;
-      background: var(--green);
-      color: #052e16;
-      font-size: 14px;
-      font-weight: 800;
-      cursor: pointer;
-    }
-    .status-ok {
-      background: rgba(34, 197, 94, 0.14);
-      border: 1px solid rgba(34, 197, 94, 0.45);
-      color: #4ade80;
-      padding: 10px 14px;
-      border-radius: 12px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 10px;
-      flex-wrap: wrap;
-    }
-    .status-err {
-      background: rgba(239, 68, 68, 0.15);
-      border: 1px solid #ef4444;
-      color: #f87171;
-      padding: 16px;
-      border-radius: 12px;
-      text-align: center;
-    }
-    .pill {
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-size: 11px;
-      padding: 2px 8px;
-      border-radius: 6px;
-      background: rgba(56, 189, 248, 0.15);
-      color: var(--accent);
-      font-weight: 700;
-    }
-    .pill.green {
-      background: rgba(34, 197, 94, 0.2);
-      color: #4ade80;
-    }
+{% extends "layouts/base.html" %}
+{% set cp_use_csrf = true %}
+{% from "macros/icons.html" import cp_icon %}
 
-    /* Slido/Mentimeter Auto-Expanding Poll Stage */
-    .poll-stage {
-      background: var(--panel);
-      border: 1px solid var(--border);
-      border-radius: 14px;
-      padding: 12px 14px;
-      transition: all 0.2s ease;
-    }
-    .poll-stage.active-poll {
-      background: linear-gradient(160deg, #172554 0%, #0f172a 100%);
-      border: 2px solid var(--accent);
-      box-shadow: 0 0 28px rgba(56, 189, 248, 0.24);
-      padding: 16px;
-    }
-    .poll-opt {
-      position: relative;
-      overflow: hidden;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      width: 100%;
-      padding: 12px 14px;
-      margin-bottom: 8px;
-      border-radius: 11px;
-      border: 1.5px solid #334155;
-      background: rgba(15, 23, 42, 0.92);
-      color: var(--text);
-      font-weight: 700;
-      font-size: 14px;
-      text-align: left;
-      cursor: pointer;
-    }
-    .poll-opt.selected { border-color: var(--accent); background: rgba(56, 189, 248, 0.18); }
-    .poll-opt.correct { border-color: var(--green); background: rgba(34, 197, 94, 0.2); }
-    .poll-opt-fill {
-      position: absolute;
-      left: 0;
-      top: 0;
-      bottom: 0;
-      background: rgba(56, 189, 248, 0.16);
-      z-index: 0;
-      transition: width 0.3s ease;
-    }
-    .poll-opt-content {
-      position: relative;
-      z-index: 1;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      width: 100%;
-      gap: 8px;
-    }
-    .opt-badge {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      width: 24px;
-      height: 24px;
-      border-radius: 7px;
-      font-size: 12px;
-      font-weight: 800;
-      color: #0f172a;
-      flex-shrink: 0;
-    }
-    .msg-item {
-      background: #0f172a;
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 9px 11px;
-      margin-bottom: 6px;
-      font-size: 13px;
-    }
-    .upvote-btn {
-      width: auto;
-      padding: 3px 9px;
-      font-size: 11px;
-      border-radius: 999px;
-      background: var(--panel-elevated);
-      border: 1px solid var(--border);
-      color: #4ade80;
-    }
-  </style>
-</head>
-<body>
-  <div class="container">
-    {% if error_title %}
-      <div class="card">
-        <div class="status-err">
-          <h1 style="font-size:20px; margin-bottom:8px;">{{ error_title }}</h1>
-          <p style="margin:0; font-size:14px;">{{ error_message }}</p>
+{% block title %}ClassPulse — Student Check-In{% endblock %}
+
+{% block styles %}
+<style>
+  .cp-checkin-page {
+    min-height: 100vh;
+    min-height: 100dvh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px 16px max(24px, env(safe-area-inset-bottom)) 16px;
+  }
+  .cp-checkin-card {
+    width: 100%;
+    max-width: 440px;
+    background: var(--cp-surface-solid);
+    border: 1px solid var(--cp-border);
+    border-radius: 24px;
+    padding: 24px 22px;
+    box-shadow: var(--cp-shell-shadow);
+  }
+  .cp-checkin-session {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 12px 14px;
+    border-radius: 14px;
+    background: var(--cp-well);
+    border: 1px solid var(--cp-border);
+    margin-bottom: 18px;
+    font-size: 13px;
+  }
+</style>
+{% endblock %}
+
+{% block body %}
+<main class="cp-checkin-page">
+  {% if error_title %}
+    <div class="cp-checkin-card">
+      <div class="cp-alert cp-alert--err" style="text-align:center; padding:20px 16px; margin-bottom:16px;">
+        <div style="margin-bottom:10px; color:var(--cp-red-ink);">
+          {{ cp_icon('alert-triangle', 28) }}
         </div>
+        <h1 style="font-size:20px; margin:0 0 8px 0; color:var(--cp-ink);">{{ error_title }}</h1>
+        <p style="margin:0; font-size:14px; line-height:1.45; color:var(--cp-ink-secondary);">{{ error_message }}</p>
       </div>
-    {% elif checked_in %}
-      <!-- Compact Top Verified Check-In Header -->
-      <div class="status-ok">
+      <a class="cp-btn cp-btn--secondary cp-btn--block" href="/student">
+        {{ cp_icon('smartphone', 16) }}
+        <span>Open Student App</span>
+      </a>
+    </div>
+  {% else %}
+    <div class="cp-checkin-card">
+      <div class="cp-brand-lockup" style="margin-bottom:16px;">
+        <span class="cp-orb cp-orb--md" aria-hidden="true"></span>
         <div>
-          <strong style="font-size:14px;">&#10003; Attendance Verified! Checked In: {{ student.full_name }}</strong>
-          <div style="font-size:11px; color:#cbd5e1; margin-top:2px;">
-            {{ session.title }} (<code>{{ session.session_code }}</code>) &bull; {{ record.checked_in_at.strftime('%H:%M:%S UTC') }}
-          </div>
-        </div>
-        <a href="/student?session={{ session.session_code }}" style="padding:6px 11px; border-radius:8px; background:var(--accent); color:#0f172a; font-weight:800; font-size:11px; text-decoration:none; white-space:nowrap;">
-          Full Student App &rarr;
-        </a>
-      </div>
-
-      <!-- Stage 1 (Above the Fold): Live Classroom Poll (Auto-Expands on Launch) -->
-      <div id="poll-stage-card" class="poll-stage">
-        <div style="display:flex; justify-content:space-between; align-items:center;">
-          <h2 style="font-size:14px; margin:0;">&#128202; Live Classroom Poll</h2>
-          <span id="student-poll-badge" class="pill">Waiting for Lecturer</span>
-        </div>
-        <div id="student-poll-box" style="color:var(--muted); font-size:12px; margin-top:6px;">
-          When the lecturer launches a poll, it pops up right here automatically.
+          <span class="cp-eyebrow">One-Time QR Onboarding</span>
+          <h1 style="font-size:21px; margin:2px 0 0 0; color:var(--cp-ink);">First-Time Student Sign-In</h1>
         </div>
       </div>
 
-      <!-- Stage 2: Live Classroom Chat & Q&A Stream -->
-      <div class="card">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-          <h2 style="font-size:14px; margin:0;">&#128172; Classroom Q&amp;A &amp; Comments</h2>
-          <span style="font-size:11px; color:var(--muted);">+MM:SS Timestamped</span>
+      <div class="cp-checkin-session">
+        <span style="color:var(--cp-ink); font-weight:600; min-width:0; overflow-wrap:anywhere;">
+          {{ session.title }}
+        </span>
+        <span class="cp-code-pill code-pill" style="flex-shrink:0;">{{ session.session_code }}</span>
+      </div>
+
+      <form method="post" action="{{ url_for('attendance.api_student_checkin') }}" class="cp-stack-md">
+        <input type="hidden" name="session_code" value="{{ session.session_code }}" />
+        <input type="hidden" name="onboarding_grant" value="{{ onboarding_grant }}" />
+        <input type="hidden" name="t" value="{{ bucket }}" />
+        <input type="hidden" name="sig" value="{{ sig }}" />
+        <input type="hidden" name="device_id" value="{{ device_id }}" />
+
+        <div>
+          <label class="cp-label" for="full_name">Full Name</label>
+          <input type="text" id="full_name" name="full_name" class="cp-input" placeholder="e.g. Ohad Ben Nun" required autofocus />
         </div>
-        <div style="display:grid; grid-template-columns: 110px 1fr auto; gap:6px; align-items:center; margin-bottom:10px;">
-          <select id="chat-category" style="margin:0;">
-            <option value="Question">Question</option>
-            <option value="Comment">Comment</option>
-            <option value="Suggestion">Suggestion</option>
-          </select>
-          <input type="text" id="chat-body" placeholder="Ask a question..." maxlength="400" style="margin:0;" onkeydown="if(event.key==='Enter') sendStudentChat()" />
-          <button onclick="sendStudentChat()" style="width:auto; padding:10px 14px; background:var(--accent); color:#0f172a;">
-            Send
-          </button>
+
+        <div>
+          <label class="cp-label" for="student_id_number">Student ID</label>
+          <input type="text" id="student_id_number" name="student_id_number" class="cp-input" placeholder="e.g. 208123456" required />
         </div>
 
-        <div id="student-chat-feed" style="max-height:280px; overflow-y:auto;"></div>
-      </div>
+        <div>
+          <label class="cp-label" for="email">University / Personal Email</label>
+          <input type="email" id="email" name="email" class="cp-input" placeholder="e.g. ohad@ariel.ac.il" required />
+        </div>
 
-      {% if student_dashboard and student_dashboard.my_courses %}
-      <!-- Stage 3: Compact My Enrolled Classes & Attendance Logs -->
-      <div class="card">
-        <h2 style="font-size:14px; margin-bottom:8px;">&#127891; My Enrolled Classes &amp; Attendance Logs</h2>
-        {% for c in student_dashboard.my_courses %}
-          <div style="background:#0f172a; border:1px solid var(--border); border-radius:10px; padding:10px 12px; margin-bottom:8px;">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
-              <div>
-                <span class="pill">{{ c.course_code }}</span>
-                <strong style="font-size:13px; margin-left:4px;">{{ c.name }}</strong>
-              </div>
-              <span style="font-size:11px; color:#4ade80; font-weight:700;">
-                {{ c.attended_count }}/{{ c.total_sessions }} Lectures ({{ c.attendance_pct }}%)
-              </span>
-            </div>
-            {% for log in c.my_attendance_logs %}
-              <div style="display:flex; justify-content:space-between; font-size:11px; color:var(--muted); padding:3px 0; border-top:1px solid #1e293b;">
-                <span>{{ log.lecture_title }} (<code>{{ log.session_code }}</code>)</span>
-                <span style="color:{{ '#4ade80' if log.status != 'ABSENT' else '#f87171' }}; font-weight:700;">
-                  {{ log.status }} &bull; {{ log.checked_in_at }}
-                </span>
-              </div>
-            {% endfor %}
-          </div>
-        {% endfor %}
-      </div>
-      {% endif %}
-
-      <script>
-        const SESSION_CODE = "{{ session.session_code }}";
-        const SESSION_ID = {{ session.id }};
-        const STUDENT_ID = {{ student.id }};
-        const STUDENT_NAME = {{ student.full_name | tojson }};
-        const OPT_COLORS = ["#38bdf8", "#a855f7", "#f59e0b", "#22c55e", "#ec4899", "#14b8a6"];
-        const LETTERS = ["A", "B", "C", "D", "E", "F", "G", "H"];
-        let activePoll = null;
-        let chatMessages = [];
-
-        if (window.ClassPulseNotify) {
-          window.ClassPulseNotify.init({
-            role: "student",
-            baseTitle: document.title,
-            currentStudentId: STUDENT_ID,
-            isChatVisibleFn: () => true,
-            onOpenMessage: (payload) => {
-              const msgId = payload.message_id || payload.id;
-              if (payload.session_code === SESSION_CODE) {
-                window.ClassPulseNotify.highlightMessage(msgId);
-              } else {
-                window.location.href = `/student?session=${encodeURIComponent(payload.session_code)}&view=view-live&msg_id=${encodeURIComponent(msgId)}`;
-              }
-            },
-          });
-        }
-
-        const socket = io({ transports: ["websocket", "polling"] });
-        socket.on("connect", () => {
-          socket.emit("join_session", { session_code: SESSION_CODE, student_id: STUDENT_ID, as_student: true });
-          socket.emit("join_notifications", {});
-        });
-
-        socket.on("poll:sync", (data) => {
-          const incoming = data ? (data.poll || data.active_poll) : null;
-          if (incoming) {
-            activePoll = incoming;
-            renderStudentPoll();
-          }
-        });
-        socket.on("poll:activated", (poll) => {
-          activePoll = poll;
-          renderStudentPoll();
-        });
-        socket.on("poll:opened", (poll) => {
-          activePoll = poll;
-          renderStudentPoll();
-        });
-        socket.on("poll:results_update", (poll) => {
-          if (!activePoll || activePoll.id === poll.id) {
-            activePoll = { ...(activePoll || {}), ...poll };
-            renderStudentPoll();
-          }
-        });
-        socket.on("poll:voted_ack", (poll) => {
-          activePoll = poll;
-          renderStudentPoll();
-        });
-        socket.on("poll:closed", (poll) => {
-          activePoll = { ...(activePoll || {}), ...poll };
-          renderStudentPoll();
-        });
-
-        function renderStudentPoll() {
-          const stageCard = document.getElementById("poll-stage-card");
-          const box = document.getElementById("student-poll-box");
-          const badge = document.getElementById("student-poll-badge");
-          if (!activePoll) {
-            stageCard.classList.remove("active-poll");
-            badge.className = "pill";
-            badge.textContent = "Waiting for Lecturer";
-            box.innerHTML = "When the lecturer launches a poll, it pops up right here automatically.";
-            return;
-          }
-          const isClosed = activePoll.status === "CLOSED";
-          const hasVoted = Boolean(activePoll.already_voted || (activePoll.my_vote_index !== null && activePoll.my_vote_index !== undefined));
-
-          if (!isClosed) {
-            stageCard.classList.add("active-poll");
-            badge.className = "pill green";
-            badge.textContent = hasVoted ? "✓ Vote Recorded" : "🔴 LIVE — Tap to Vote";
-          } else {
-            stageCard.classList.remove("active-poll");
-            badge.className = "pill";
-            badge.textContent = "Poll Closed";
-          }
-
-          const optsHtml = (activePoll.options || []).map((opt, idx) => {
-            const isSelected = activePoll.my_vote_index === idx;
-            const isCorrect = isClosed && activePoll.correct_index === idx;
-            const pct = activePoll.percentages ? activePoll.percentages[idx] : 0;
-            const count = activePoll.counts ? activePoll.counts[idx] : 0;
-            const showStats = isClosed || hasVoted;
-            const color = OPT_COLORS[idx % OPT_COLORS.length];
-            const letter = LETTERS[idx] || (idx + 1);
-            return `
-              <button class="poll-opt ${isSelected ? 'selected' : ''} ${isCorrect ? 'correct' : ''}"
-                      ${(isClosed || hasVoted) ? 'disabled' : ''}
-                      onclick="castPollVote(${activePoll.id}, ${idx})">
-                ${showStats ? `<div class="poll-opt-fill" style="width:${pct}%;"></div>` : ''}
-                <div class="poll-opt-content">
-                  <div style="display:flex; align-items:center; gap:9px;">
-                    <span class="opt-badge" style="background:${color};">${letter}</span>
-                    <span>${opt} ${isSelected ? '&#10003;' : ''}</span>
-                  </div>
-                  ${showStats ? `<span style="color:#cbd5e1; font-size:12px; font-weight:800;">${pct}% (${count})</span>` : ''}
-                </div>
-              </button>
-            `;
-          }).join("");
-
-          box.innerHTML = `
-            <div style="color:#f8fafc; font-weight:800; font-size:16px; margin:8px 0 10px 0;">
-              ${activePoll.question}
-            </div>
-            ${optsHtml}
-            <div style="display:flex; justify-content:space-between; font-size:11px; color:#94a3b8; margin-top:4px;">
-              <span>${hasVoted ? '✓ Your vote is recorded!' : (isClosed ? 'Poll closed.' : 'Tap an option above to vote.')}</span>
-              <span>Total votes: <strong>${activePoll.total_votes || 0}</strong></span>
-            </div>
-          `;
-        }
-
-        async function castPollVote(pollId, optionIndex) {
-          const res = await fetch(`/api/polls/${pollId}/vote`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ option_index: optionIndex, student_id: STUDENT_ID }),
-          });
-          if (res.ok) {
-            activePoll = await res.json();
-            renderStudentPoll();
-          }
-        }
-
-        async function syncPollsFallback() {
-          try {
-            const res = await fetch(`/api/sessions/${SESSION_ID}/polls?student_id=${STUDENT_ID}&_ts=${Date.now()}`, { cache: "no-store" });
-            if (!res.ok) return;
-            const data = await res.json();
-            const polls = data.polls || [];
-            const active = polls.find(p => p.status === "ACTIVE");
-            if (active) {
-              activePoll = active;
-              renderStudentPoll();
-            } else if (polls.length > 0 && activePoll) {
-              const match = polls.find(p => p.id === activePoll.id);
-              if (match) {
-                activePoll = match;
-                renderStudentPoll();
-              }
-            }
-          } catch (_e) {}
-        }
-
-        socket.on("chat:init", (data) => {
-          chatMessages = data.messages || [];
-          renderStudentChat();
-        });
-        socket.on("chat:new", (msg) => {
-          if (!chatMessages.some((x) => x.id === msg.id)) {
-            chatMessages.push(msg);
-            renderStudentChat();
-          }
-        });
-        socket.on("chat:notify", (payload) => {
-          if (window.ClassPulseNotify) {
-            window.ClassPulseNotify.pushChatNotification(payload);
-          }
-        });
-        socket.on("chat:updated", (msg) => {
-          const idx = chatMessages.findIndex((x) => x.id === msg.id);
-          if (idx >= 0) chatMessages[idx] = msg;
-          renderStudentChat();
-        });
-
-        function renderStudentChat() {
-          const feed = document.getElementById("student-chat-feed");
-          if (!chatMessages.length) {
-            feed.innerHTML = '<div style="color:var(--muted); font-size:12px; text-align:center; padding:14px 0;">No messages yet. Ask the first question!</div>';
-            return;
-          }
-          feed.innerHTML = chatMessages.slice().reverse().map((m) => `
-            <div class="msg-item" data-msg-id="${m.id}">
-              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:3px;">
-                <div>
-                  <span style="color:var(--accent); font-family:monospace; font-weight:700;">[${m.offset_mmss}]</span>
-                  <strong>${m.author_name}</strong>
-                  <span style="font-size:11px; color:var(--muted);">(${m.category})</span>
-                </div>
-                <button class="upvote-btn" onclick="upvoteChat(${m.id})">&#9650; ${m.upvotes}</button>
-              </div>
-              <div style="color:#e2e8f0;">${m.body}</div>
-            </div>
-          `).join("");
-        }
-
-        async function sendStudentChat() {
-          const bodyEl = document.getElementById("chat-body");
-          const catEl = document.getElementById("chat-category");
-          const body = bodyEl.value.trim();
-          if (!body) return;
-          bodyEl.value = "";
-          try {
-            const res = await fetch(`/api/sessions/${SESSION_ID}/chat`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                student_id: STUDENT_ID,
-                author_name: STUDENT_NAME,
-                category: catEl.value,
-                body: body,
-              }),
-            });
-            const data = await res.json();
-            if (!res.ok) {
-              bodyEl.value = body;
-              return alert(data.error || "Could not send message.");
-            }
-            if (!chatMessages.find((x) => x.id === data.id)) {
-              chatMessages.push(data);
-            }
-            renderStudentChat();
-          } catch (_err) {
-            bodyEl.value = body;
-            alert("Network error while sending message.");
-          }
-        }
-
-        async function upvoteChat(msgId) {
-          await fetch(`/api/chat/${msgId}/upvote`, { method: "POST" });
-        }
-
-        syncPollsFallback();
-        setInterval(syncPollsFallback, 2500);
-      </script>
-    {% else %}
-      <div class="card">
-        <h1 style="font-size:21px;">First-Time Student Sign-In</h1>
-        <p style="color:var(--muted); font-size:14px; margin-top:0;">
-          Session: <strong>{{ session.title }}</strong> ({{ session.session_code }})<br/>
-          Enter your details once — next lectures will recognize your phone automatically.
-        </p>
-        <form method="post" action="{{ url_for('attendance.api_student_checkin') }}">
-          <input type="hidden" name="session_code" value="{{ session.session_code }}" />
-          <input type="hidden" name="onboarding_grant" value="{{ onboarding_grant }}" />
-          <input type="hidden" name="t" value="{{ bucket }}" />
-          <input type="hidden" name="sig" value="{{ sig }}" />
-          <input type="hidden" name="device_id" value="{{ device_id }}" />
-
-          <label for="full_name">Full Name</label>
-          <input type="text" id="full_name" name="full_name" placeholder="e.g. Ohad Ben Nun" required autofocus />
-
-          <label for="student_id_number">Student ID</label>
-          <input type="text" id="student_id_number" name="student_id_number" placeholder="e.g. 208123456" required />
-
-          <label for="email">University / Personal Email</label>
-          <input type="email" id="email" name="email" placeholder="e.g. ohad@ariel.ac.il" required />
-
-          <button type="submit">Register &amp; Mark Attendance</button>
-        </form>
-      </div>
-    {% endif %}
-  </div>
-</body>
-</html>
+        <button type="submit" class="cp-btn cp-btn--green cp-btn--block" style="margin-top:6px; min-height:46px;">
+          {{ cp_icon('check-circle', 16) }}
+          <span>Register &amp; Open App</span>
+        </button>
+      </form>
+    </div>
+  {% endif %}
+</main>
+{% endblock %}

@@ -1,36 +1,57 @@
-  <!-- Modal: Account Security & Audit Trail -->
-  <div id="modal-account-security" class="modal-backdrop">
-    <div class="modal-card" style="width:520px; max-width:95vw; max-height:85vh; overflow-y:auto;">
-      <h3 style="margin-top:0;">Professor Account Security</h3>
-      <p style="font-size:12px; color:var(--muted); margin-top:0;">
-        Signed in as <strong>{{ lecturer.full_name if lecturer else '' }}</strong> (@{{ lecturer.username if lecturer else '' }} &bull; {{ lecturer.email if lecturer else '' }}).
-      </p>
-      <div style="margin-bottom:10px;">
-        <label style="font-size:12px; color:var(--muted);">Current Password</label>
-        <input type="password" id="sec-cur-pw" placeholder="Current password" />
-      </div>
-      <div style="margin-bottom:10px;">
-        <label style="font-size:12px; color:var(--muted);">New Password</label>
-        <input type="password" id="sec-new-pw" placeholder="Min 8 chars (letter + number/symbol)" />
-      </div>
-      <div style="margin-bottom:14px;">
-        <label style="font-size:12px; color:var(--muted);">Confirm New Password</label>
-        <input type="password" id="sec-confirm-pw" placeholder="Repeat new password" />
-      </div>
-      <div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap; margin-bottom:14px;">
-        <button type="button" class="btn-secondary" onclick="logoutAllDevices()">Sign Out All Devices</button>
-        <div style="display:flex; gap:8px;">
-          <button type="button" class="btn-secondary" onclick="closeModal('modal-account-security')">Close</button>
-          <button type="button" onclick="submitChangePassword()">Update Password</button>
-        </div>
-      </div>
+{% from "macros/icons.html" import cp_icon %}
+<!-- Modal: Account Security & Audit Trail -->
+<div id="modal-account-security" class="cp-modal-backdrop modal-backdrop">
+  <div class="cp-modal-card cp-modal-card--md modal-card">
+    <div class="cp-card-header">
+      <h3 style="margin:0;">{{ cp_icon('shield', 18) }} <span>Professor Account Security</span></h3>
+      <button type="button" class="cp-btn cp-btn--secondary cp-btn--sm" onclick="closeModal('modal-account-security')">
+        {{ cp_icon('x', 14) }}
+        <span>Close</span>
+      </button>
+    </div>
 
-      <div style="border-top:1px solid var(--border); padding-top:12px;">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-          <strong style="font-size:12px; color:var(--accent);">Recent Security Activity</strong>
-          <button type="button" class="btn-secondary btn-sm" onclick="loadAuditLogs()">Load Logs</button>
-        </div>
-        <div id="security-audit-list" style="max-height:170px; overflow-y:auto; font-size:11px; color:var(--muted);"></div>
+    <p class="cp-secondary" style="font-size:12.5px; margin:0 0 14px 0;">
+      Signed in as <strong>{{ lecturer.full_name if lecturer else '' }}</strong> (@{{ lecturer.username if lecturer else '' }} &bull; {{ lecturer.email if lecturer else '' }}).
+    </p>
+
+    <div class="cp-stack-sm" style="margin-bottom:14px;">
+      <div>
+        <label class="cp-label" for="sec-cur-pw">Current Password</label>
+        <input type="password" id="sec-cur-pw" class="cp-input" placeholder="Current password" />
+      </div>
+      <div>
+        <label class="cp-label" for="sec-new-pw">New Password</label>
+        <input type="password" id="sec-new-pw" class="cp-input" placeholder="Min 8 chars (letter + number/symbol)" />
+      </div>
+      <div>
+        <label class="cp-label" for="sec-confirm-pw">Confirm New Password</label>
+        <input type="password" id="sec-confirm-pw" class="cp-input" placeholder="Repeat new password" />
       </div>
     </div>
+
+    <div class="cp-row-between" style="margin-bottom:16px;">
+      <button type="button" class="cp-btn cp-btn--danger-soft cp-btn--sm" onclick="logoutAllDevices()">
+        {{ cp_icon('log-out', 14) }}
+        <span>Sign Out All Devices</span>
+      </button>
+      <div class="cp-row-wrap">
+        <button type="button" class="cp-btn cp-btn--secondary cp-btn--sm" onclick="closeModal('modal-account-security')">Cancel</button>
+        <button type="button" class="cp-btn cp-btn--primary cp-btn--sm" onclick="submitChangePassword()">
+          {{ cp_icon('key', 14) }}
+          <span>Update Password</span>
+        </button>
+      </div>
+    </div>
+
+    <div style="border-top:1px solid var(--cp-border); padding-top:12px;">
+      <div class="cp-row-between" style="margin-bottom:8px;">
+        <strong style="font-size:12px; color:var(--cp-indigo-ink);">Recent Security Activity</strong>
+        <button type="button" class="cp-btn cp-btn--secondary cp-btn--sm" onclick="loadAuditLogs()">
+          {{ cp_icon('refresh', 13) }}
+          <span>Load Logs</span>
+        </button>
+      </div>
+      <div id="security-audit-list" class="cp-well" style="max-height:170px; overflow-y:auto; font-size:11px; color:var(--cp-ink-secondary);"></div>
+    </div>
   </div>
+</div>

@@ -132,12 +132,16 @@ def student_entry(session_code: str):
             student_id=student.id if student else None
         )
         return render_template(
-            "student_checkin.html",
-            session=session,
-            checked_in=True,
-            student=student,
-            record=existing_rec,
-            student_dashboard=student_dashboard,
+            "student_app.html",
+            dashboard=student_dashboard,
+            initial_session_code=session.session_code,
+            checked_in_banner={
+                "student_name": student.full_name if student else "Student",
+                "session_code": session.session_code,
+                "session_title": session.title,
+                "checked_in_at": existing_rec.checked_in_at.strftime("%H:%M:%S UTC"),
+            },
+            from_qr_route=True,
         )
 
     if not session.attendance_open:
@@ -196,12 +200,16 @@ def student_entry(session_code: str):
                 )
                 resp = make_response(
                     render_template(
-                        "student_checkin.html",
-                        session=session,
-                        checked_in=True,
-                        student=st,
-                        record=rec,
-                        student_dashboard=student_dashboard,
+                        "student_app.html",
+                        dashboard=student_dashboard,
+                        initial_session_code=session.session_code,
+                        checked_in_banner={
+                            "student_name": st.full_name,
+                            "session_code": session.session_code,
+                            "session_title": session.title,
+                            "checked_in_at": rec.checked_in_at.strftime("%H:%M:%S UTC"),
+                        },
+                        from_qr_route=True,
                     )
                 )
                 resp.set_cookie(
@@ -380,12 +388,16 @@ def api_student_checkin():
         )
         resp = make_response(
             render_template(
-                "student_checkin.html",
-                session=session,
-                checked_in=True,
-                student=student,
-                record=rec,
-                student_dashboard=student_dashboard,
+                "student_app.html",
+                dashboard=student_dashboard,
+                initial_session_code=session.session_code if session else "",
+                checked_in_banner={
+                    "student_name": student.full_name,
+                    "session_code": session.session_code if session else "",
+                    "session_title": session.title if session else "",
+                    "checked_in_at": rec.checked_in_at.strftime("%H:%M:%S UTC"),
+                },
+                from_qr_route=True,
             )
         )
 

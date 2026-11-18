@@ -1,102 +1,95 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>ClassPulse Projector — {{ session.session_code }}</title>
-  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
-  <style>
-    body {
-      margin: 0;
-      min-height: 100vh;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      background: #090d16;
-      color: #f8fafc;
-      font-family: system-ui, -apple-system, sans-serif;
-      text-align: center;
-    }
-    .qr-card {
-      background: #ffffff;
-      padding: 24px;
-      border-radius: 20px;
-      box-shadow: 0 20px 60px rgba(56, 189, 248, 0.25);
-      margin: 18px 0;
-    }
-    .qr-card img { width: 420px; max-width: 82vw; height: auto; display: block; }
-    .timer-bar {
-      width: 420px;
-      max-width: 82vw;
-      height: 10px;
-      background: #1e293b;
-      border-radius: 999px;
-      overflow: hidden;
-      margin-bottom: 16px;
-    }
-    .timer-fill {
-      height: 100%;
-      width: 100%;
-      background: #38bdf8;
-      transition: width 0.1s linear;
-    }
-    .counter-pill {
-      font-size: 28px;
-      font-weight: 800;
-      background: #1e293b;
-      border: 2px solid #38bdf8;
-      padding: 10px 28px;
-      border-radius: 999px;
-    }
-  </style>
-</head>
-<body>
-  <h1 style="margin:0; font-size:34px;">{{ session.title }}</h1>
-  <div style="color:#94a3b8; font-size:18px; margin-top:6px;">
-    Scan with your smartphone camera — QR rotates every {{ qr_payload.step_seconds }} seconds
+{% extends "layouts/base.html" %}
+{% set cp_use_socketio = true %}
+{% from "macros/icons.html" import cp_icon %}
+
+{% block title %}ClassPulse Projector — {{ session.session_code }}{% endblock %}
+
+{% block styles %}
+<style>
+  .cp-qr-island--projector {
+    width: auto;
+    max-width: min(468px, 88vw);
+    aspect-ratio: auto;
+    margin: 18px auto 16px auto;
+  }
+  .cp-qr-island--projector img {
+    width: min(420px, 78vw, 48vh);
+    height: auto;
+    aspect-ratio: 1 / 1;
+  }
+  .cp-projector-eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 14px;
+    border-radius: var(--cp-radius-pill);
+    background: var(--cp-surface);
+    border: 1px solid var(--cp-border);
+    box-shadow: var(--cp-pill-shadow);
+    margin-bottom: 12px;
+  }
+</style>
+{% endblock %}
+
+{% block body %}
+<main class="cp-projector-stage">
+  <div class="cp-projector-eyebrow">
+    <span class="cp-orb cp-orb--xs" aria-hidden="true"></span>
+    <span class="cp-code-pill">{{ session.session_code }}</span>
+    <span class="cp-badge cp-badge--coral">
+      {{ cp_icon('qr', 13) }}
+      <span>Live Rolling QR</span>
+    </span>
   </div>
 
-  <div class="qr-card">
+  <h1 class="cp-projector-title">{{ session.title }}</h1>
+  <div class="cp-projector-subtitle">
+    Scan with your smartphone camera &mdash; QR rotates every <span class="cp-tabular">{{ qr_payload.step_seconds }}</span> seconds
+  </div>
+
+  <div class="cp-qr-island cp-qr-island--projector">
     <img id="proj-qr" src="{{ qr_payload.svg_data_uri }}" alt="Live Attendance QR" />
   </div>
 
-  <div class="timer-bar">
-    <div class="timer-fill" id="proj-timer"></div>
+  <div class="cp-progress-track cp-progress-track--projector">
+    <div class="cp-progress-fill" id="proj-timer"></div>
   </div>
 
-  <div class="counter-pill">
-    <span id="proj-count">{{ qr_count }}</span> Students Checked In
+  <div class="cp-projector-counter cp-tabular">
+    {{ cp_icon('users', 24) }}
+    <span><span id="proj-count">{{ qr_count }}</span> Students Checked In</span>
   </div>
+</main>
+{% endblock %}
 
-  <script>
-    const SESSION_CODE = "{{ session.session_code }}";
-    const PROJECTOR_TOKEN = "{{ projector_token or '' }}";
-    const STEP_MS = {{ qr_payload.step_seconds * 1000 }};
-    let lastRotate = Date.now();
+{% block scripts %}
+<script>
+  const SESSION_CODE = {{ session.session_code | tojson }};
+  const PROJECTOR_TOKEN = {{ (projector_token or '') | tojson }};
+  const STEP_MS = {{ qr_payload.step_seconds * 1000 }};
+  let lastRotate = Date.now();
 
-    const socket = io();
-    socket.on("connect", () => {
-      socket.emit("join_session", { session_code: SESSION_CODE, projector_token: PROJECTOR_TOKEN });
-    });
-    socket.on("qr:rotate", (data) => {
-      if (data.session_code !== SESSION_CODE) return;
-      document.getElementById("proj-qr").src = data.svg_data_uri;
-      lastRotate = Date.now();
-    });
-    socket.on("attendance:count_update", (data) => {
-      if (data.session_code !== SESSION_CODE) return;
-      document.getElementById("proj-count").textContent = data.qr_count;
-    });
+  const socket = window.cpCreateSocket();
+  socket.on("connect", () => {
+    socket.emit("join_session", { session_code: SESSION_CODE, projector_token: PROJECTOR_TOKEN });
+  });
+  socket.on("qr:rotate", (data) => {
+    if (!data || data.session_code !== SESSION_CODE) return;
+    document.getElementById("proj-qr").src = data.svg_data_uri;
+    lastRotate = Date.now();
+  });
+  socket.on("attendance:count_update", (data) => {
+    if (!data || data.session_code !== SESSION_CODE) return;
+    document.getElementById("proj-count").textContent = data.qr_count;
+  });
 
-    setInterval(() => {
-      socket.emit("qr:request_refresh", { session_code: SESSION_CODE, projector_token: PROJECTOR_TOKEN });
-    }, STEP_MS);
+  setInterval(() => {
+    socket.emit("qr:request_refresh", { session_code: SESSION_CODE, projector_token: PROJECTOR_TOKEN });
+  }, STEP_MS);
 
-    setInterval(() => {
-      const pct = Math.max(0, 100 - ((Date.now() - lastRotate) / STEP_MS) * 100);
-      document.getElementById("proj-timer").style.width = pct + "%";
-    }, 80);
-  </script>
-</body>
-</html>
+  setInterval(() => {
+    const pct = Math.max(0, 100 - ((Date.now() - lastRotate) / STEP_MS) * 100);
+    document.getElementById("proj-timer").style.width = pct + "%";
+  }, 80);
+</script>
+{% endblock %}

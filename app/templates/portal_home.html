@@ -1,154 +1,160 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>ClassPulse — School-Wide Interactive Classroom Platform</title>
-  <style>
-    :root {
-      --bg: #0b1120;
-      --panel: #1e293b;
-      --border: #334155;
-      --text: #f8fafc;
-      --muted: #94a3b8;
-      --accent: #38bdf8;
-      --green: #22c55e;
-      --purple: #a855f7;
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      min-height: 100vh;
-      background: radial-gradient(circle at top right, #1e293b 0%, #0b1120 70%);
-      color: var(--text);
-      font-family: system-ui, -apple-system, sans-serif;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      padding: 24px;
-    }
-    .hero {
-      max-width: 860px;
-      width: 100%;
-      text-align: center;
-      margin-bottom: 32px;
-    }
-    .badge {
-      display: inline-block;
-      padding: 5px 14px;
-      border-radius: 999px;
-      background: rgba(56, 189, 248, 0.15);
-      color: var(--accent);
-      font-size: 12px;
-      font-weight: 700;
-      letter-spacing: 0.06em;
-      text-transform: uppercase;
-      margin-bottom: 12px;
-    }
-    h1 {
-      font-size: 36px;
-      margin: 0 0 10px 0;
-    }
-    p.lead {
-      color: var(--muted);
-      font-size: 16px;
-      margin: 0;
-    }
-    .cards {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(310px, 1fr));
-      gap: 22px;
-      max-width: 860px;
-      width: 100%;
-    }
-    .portal-card {
-      background: var(--panel);
-      border: 1px solid var(--border);
-      border-radius: 18px;
-      padding: 28px;
-      text-decoration: none;
-      color: var(--text);
-      transition: transform 0.15s ease, border-color 0.15s ease;
-      display: flex;
-      flex-direction: column;
-      justify-content: space-between;
-      box-shadow: 0 14px 32px rgba(0, 0, 0, 0.35);
-    }
-    .portal-card:hover {
-      transform: translateY(-4px);
-      border-color: var(--accent);
-    }
-    .portal-card h2 {
-      margin: 0 0 10px 0;
-      font-size: 22px;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-    .portal-card ul {
-      padding-left: 18px;
-      color: var(--muted);
-      font-size: 14px;
-      line-height: 1.65;
-      margin: 12px 0 22px 0;
-    }
-    .cta {
-      display: inline-block;
-      padding: 12px 18px;
-      border-radius: 10px;
-      font-weight: 700;
-      font-size: 14px;
-      text-align: center;
-      background: var(--accent);
-      color: #0f172a;
-    }
-    .cta.student {
-      background: var(--green);
-    }
-  </style>
-</head>
-<body>
-  <div class="hero">
-    <span class="badge">Ariel University &bull; School-Wide Classroom Platform</span>
-    <h1>ClassPulse Multi-Course Hub</h1>
-    <p class="lead">Select your workspace to manage school courses, live attendance, real-time polls, and classroom Q&amp;A.</p>
-  </div>
+{% extends "layouts/base.html" %}
+{% from "macros/icons.html" import cp_icon %}
 
-  <div class="cards">
-    <a class="portal-card" href="/teacher">
-      <div>
-        <h2>&#127891; Teacher &amp; Lecturer Portal</h2>
-        <p style="color:var(--muted); font-size:14px; margin:0;">
-          Modular multi-course control center for lecturers and teaching assistants.
-        </p>
-        <ul>
-          <li>Manage multiple school courses &amp; lecture sessions</li>
-          <li>5-Second Rolling QR Attendance &amp; Projector Mode</li>
-          <li>Tiled SCRFD Computer-Vision Classroom Headcounter &amp; Excel Audit</li>
-          <li>Pre-Class Poll Bank &amp; Live Kahoot-Style Polls</li>
-          <li>Timestamped Classroom Q&amp;A + Live Companion Popout</li>
-        </ul>
-      </div>
-      <span class="cta">Enter Teacher Portal &rarr;</span>
-    </a>
+{% block title %}ClassPulse — School-Wide Interactive Classroom Platform{% endblock %}
 
-    <a class="portal-card" href="/student">
-      <div>
-        <h2>&#128241; Student Classroom App</h2>
-        <p style="color:var(--muted); font-size:14px; margin:0;">
-          All-in-one mobile &amp; desktop web app for students across all enrolled courses.
-        </p>
-        <ul>
-          <li>View all enrolled courses &amp; cumulative attendance streak</li>
-          <li>1-Tap QR Attendance Check-In with persistent device binding</li>
-          <li>Answer live interactive classroom polls in real time</li>
-          <li>Ask timestamped (`+MM:SS`) lecture questions &amp; upvote peers</li>
-          <li>Access AI lecture summaries &amp; comparative homework feedback</li>
-        </ul>
+{% block styles %}
+<style>
+  .cp-portal-page {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 18px 14px;
+  }
+  .cp-portal-hero {
+    text-align: center;
+    padding: 22px 18px 20px 18px;
+    margin-bottom: 20px;
+    background: var(--cp-surface);
+    border: 1px solid var(--cp-border);
+    box-shadow: var(--cp-card-shadow);
+  }
+  .cp-portal-hero h1 {
+    margin: 12px 0 8px 0;
+    font-size: clamp(26px, 4vw, 34px);
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    color: var(--cp-ink);
+  }
+  .cp-portal-hero p {
+    margin: 0 auto;
+    max-width: 600px;
+    font-size: 15px;
+    color: var(--cp-ink-secondary);
+  }
+  .cp-portal-card {
+    text-decoration: none;
+    color: var(--cp-ink);
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    gap: 18px;
+    transition: transform 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
+  }
+  .cp-portal-card:hover {
+    transform: translateY(-3px);
+    border-color: var(--cp-coral);
+    box-shadow: 0 16px 36px rgba(31, 34, 51, 0.09);
+  }
+  .cp-portal-card-head {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 10px;
+  }
+  .cp-portal-icon-wrap {
+    width: 42px;
+    height: 42px;
+    border-radius: 13px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  .cp-portal-icon-wrap--coral {
+    background: var(--cp-coral-soft);
+    color: var(--cp-coral-cta);
+    border: 1px solid rgba(232, 113, 72, 0.25);
+  }
+  .cp-portal-icon-wrap--green {
+    background: var(--cp-green-soft);
+    color: var(--cp-green-ink);
+    border: 1px solid rgba(22, 163, 74, 0.25);
+  }
+  .cp-portal-card h2 {
+    margin: 0;
+    font-size: 19px;
+    font-weight: 800;
+    letter-spacing: -0.01em;
+    color: var(--cp-ink);
+  }
+  .cp-portal-card ul {
+    margin: 12px 0 0 0;
+    padding-left: 18px;
+    color: var(--cp-ink-secondary);
+    font-size: 13.5px;
+    line-height: 1.65;
+  }
+  .cp-portal-card li + li {
+    margin-top: 4px;
+  }
+</style>
+{% endblock %}
+
+{% block body %}
+<main class="cp-portal-page">
+  <div class="cp-shell cp-shell--centered">
+    <section class="cp-portal-hero cp-dot-header">
+      <div class="cp-stack-sm" style="align-items:center;">
+        <span class="cp-orb cp-orb--lg" aria-hidden="true"></span>
+        <span class="cp-badge cp-badge--indigo">Ariel University &bull; School-Wide Classroom Platform</span>
       </div>
-      <span class="cta student">Open Student App &rarr;</span>
-    </a>
+      <h1>ClassPulse Multi-Course Hub</h1>
+      <p>Select your workspace to manage school courses, live attendance, real-time polls, and classroom Q&amp;A.</p>
+    </section>
+
+    <section class="cp-grid-2-cards" aria-label="Workspace selection">
+      <a class="cp-card cp-portal-card" href="/teacher">
+        <div>
+          <div class="cp-portal-card-head">
+            <span class="cp-portal-icon-wrap cp-portal-icon-wrap--coral">
+              {{ cp_icon('graduation-cap', 22) }}
+            </span>
+            <h2>Teacher &amp; Lecturer Portal</h2>
+          </div>
+          <p class="cp-secondary" style="margin:0; font-size:13.5px;">
+            Modular multi-course control center for lecturers and teaching assistants.
+          </p>
+          <ul>
+            <li>Manage multiple school courses &amp; lecture sessions</li>
+            <li>5-Second Rolling QR Attendance &amp; Projector Mode</li>
+            <li>Tiled SCRFD Computer-Vision Classroom Headcounter &amp; Excel Audit</li>
+            <li>Pre-Class Poll Bank &amp; Live Interactive Polls</li>
+            <li>Timestamped Classroom Q&amp;A + Live Companion Popout</li>
+          </ul>
+        </div>
+        <span class="cp-btn cp-btn--primary cp-btn--block">
+          <span>Enter Teacher Portal</span>
+          {{ cp_icon('arrow-right', 16) }}
+        </span>
+      </a>
+
+      <a class="cp-card cp-portal-card" href="/student">
+        <div>
+          <div class="cp-portal-card-head">
+            <span class="cp-portal-icon-wrap cp-portal-icon-wrap--green">
+              {{ cp_icon('smartphone', 22) }}
+            </span>
+            <h2>Student Classroom App</h2>
+          </div>
+          <p class="cp-secondary" style="margin:0; font-size:13.5px;">
+            All-in-one mobile &amp; desktop web app for students across all enrolled courses.
+          </p>
+          <ul>
+            <li>View all enrolled courses &amp; cumulative attendance streak</li>
+            <li>1-Tap QR Attendance Check-In with persistent device binding</li>
+            <li>Answer live interactive classroom polls in real time</li>
+            <li>Ask timestamped (<code>+MM:SS</code>) lecture questions &amp; upvote peers</li>
+            <li>Access AI lecture summaries &amp; comparative homework feedback</li>
+          </ul>
+        </div>
+        <span class="cp-btn cp-btn--green cp-btn--block">
+          <span>Open Student App</span>
+          {{ cp_icon('arrow-right', 16) }}
+        </span>
+      </a>
+    </section>
   </div>
-</body>
-</html>
+</main>
+{% endblock %}

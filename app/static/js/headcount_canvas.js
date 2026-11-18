@@ -34,8 +34,11 @@ class HeadcountCanvasEditor {
       this.ctx.fillText(String(box.label_id), box.x1, Math.max(22, box.y1 - 6));
     });
 
-    const verifiedEl = document.getElementById("kpi-visual-count");
-    if (verifiedEl) verifiedEl.textContent = String(this.currentBoxes.length);
+    const countText = String(this.currentBoxes.length);
+    for (const id of ["kpi-visual-count", "kpi-visual", "snap-verified-count"]) {
+      const el = document.getElementById(id);
+      if (el) el.textContent = countText;
+    }
   }
 
   loadSnapshot(snapshotOrUrl, boxesArg) {
@@ -49,7 +52,7 @@ class HeadcountCanvasEditor {
     } else if (snapshotOrUrl && typeof snapshotOrUrl === "object") {
       imageUrl = snapshotOrUrl.image_url || "";
       boxes = Array.isArray(snapshotOrUrl.boxes) ? snapshotOrUrl.boxes : [];
-      this.autoCount = snapshotOrUrl.auto_count || boxes.length;
+      this.autoCount = snapshotOrUrl.auto_count ?? boxes.length;
     }
 
     if (!imageUrl) return;
@@ -62,27 +65,33 @@ class HeadcountCanvasEditor {
       if (emptyHint) emptyHint.style.display = "none";
       this.drawCanvas();
     };
-    img.src = imageUrl + (imageUrl.includes("?") ? "&" : "?") + "v=" + Date.now();
+    img.src = /^(data:|blob:)/i.test(imageUrl)
+      ? imageUrl
+      : imageUrl + (imageUrl.includes("?") ? "&" : "?") + "v=" + Date.now();
   }
 
   async syncBoxesToServer() {
     if (!this.sessionId) return;
-    const res = await fetch(`/api/sessions/${this.sessionId}/headcount`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ boxes: this.currentBoxes }),
-    });
-    if (!res.ok) return;
-    const data = await res.json();
-    if (this.onUpdate) {
-      this.onUpdate({
-        auto_count: data.auto_count ?? this.autoCount,
-        verified_count: data.verified_count ?? this.currentBoxes.length,
-        verdict: data.verdict,
+    try {
+      const res = await fetch(`/api/sessions/${this.sessionId}/headcount`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ boxes: this.currentBoxes }),
       });
-    }
-    if (window.updateAuditVerdictUI && data.verdict) {
-      window.updateAuditVerdictUI(data.verdict);
+      if (!res.ok) return;
+      const data = await res.json();
+      if (this.onUpdate) {
+        this.onUpdate({
+          auto_count: data.auto_count ?? this.autoCount,
+          verified_count: data.verified_count ?? this.currentBoxes.length,
+          verdict: data.verdict,
+        });
+      }
+      if (window.updateAuditVerdictUI && data.verdict) {
+        window.updateAuditVerdictUI(data.verdict);
+      }
+    } catch (err) {
+      console.error("Headcount sync error:", err);
     }
   }
 

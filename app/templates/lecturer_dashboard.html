@@ -1,692 +1,607 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>ClassPulse — Lecturer Command Center ({{ session.session_code }})</title>
-  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
-  <style>
-    :root {
-      --bg: #0f172a;
-      --panel: #1e293b;
-      --border: #334155;
-      --text: #f8fafc;
-      --muted: #94a3b8;
-      --accent: #38bdf8;
-      --green: #22c55e;
-      --amber: #f59e0b;
-      --red: #ef4444;
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      padding: 20px;
-    }
-    header {
-      display: flex;
-      flex-wrap: wrap;
-      justify-content: space-between;
-      align-items: center;
-      gap: 12px;
-      padding-bottom: 16px;
-      border-bottom: 1px solid var(--border);
-      margin-bottom: 20px;
-    }
-    .badge {
-      display: inline-block;
-      padding: 4px 10px;
-      border-radius: 999px;
-      font-size: 12px;
-      font-weight: 700;
-      text-transform: uppercase;
-    }
-    .badge-VERIFIED, .badge-ACTIVE { background: rgba(34,197,94,0.2); color: #4ade80; border: 1px solid #22c55e; }
-    .badge-DISCREPANCY_ALERT { background: rgba(239,68,68,0.2); color: #f87171; border: 1px solid #ef4444; }
-    .badge-UNDER_SCANNED, .badge-AWAITING_PHOTO, .badge-DRAFT { background: rgba(245,158,11,0.2); color: #fbbf24; border: 1px solid #f59e0b; }
-    .badge-CLOSED { background: rgba(148,163,184,0.2); color: #cbd5e1; border: 1px solid #64748b; }
-    .grid {
-      display: grid;
-      grid-template-columns: 360px 1fr;
-      gap: 20px;
-    }
-    .two-col {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 20px;
-    }
-    @media (max-width: 1024px) {
-      .grid, .two-col { grid-template-columns: 1fr; }
-    }
-    .card {
-      background: var(--panel);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 18px;
-      margin-bottom: 20px;
-    }
-    .card h2 { margin-top: 0; font-size: 18px; }
-    .kpi-row {
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 12px;
-      margin-bottom: 16px;
-    }
-    .kpi {
-      background: rgba(15,23,42,0.7);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 12px;
-      text-align: center;
-    }
-    .kpi .num { font-size: 28px; font-weight: 800; color: var(--accent); }
-    .kpi .lbl { font-size: 12px; color: var(--muted); }
-    .qr-box {
-      background: #fff;
-      padding: 12px;
-      border-radius: 12px;
-      text-align: center;
-      margin: 12px 0;
-    }
-    .qr-box img { width: 100%; max-width: 260px; height: auto; display: block; margin: 0 auto; }
-    .progress-bar {
-      height: 6px;
-      background: #334155;
-      border-radius: 4px;
-      overflow: hidden;
-      margin-bottom: 10px;
-    }
-    .progress-fill {
-      height: 100%;
-      background: var(--accent);
-      width: 100%;
-      transition: width 0.2s linear;
-    }
-    button, .btn {
-      background: var(--accent);
-      color: #0f172a;
-      border: none;
-      border-radius: 8px;
-      padding: 8px 13px;
-      font-weight: 700;
-      cursor: pointer;
-      text-decoration: none;
-      display: inline-block;
-      font-size: 13px;
-    }
-    .btn-secondary { background: #334155; color: var(--text); }
-    .btn-green { background: var(--green); color: #052e16; }
-    .btn-amber { background: var(--amber); color: #451a03; }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 13px;
-    }
-    th, td {
-      padding: 9px 10px;
-      border-bottom: 1px solid var(--border);
-      text-align: left;
-    }
-    th { color: var(--muted); font-weight: 600; }
-    #headcount-canvas {
-      width: 100%;
-      max-height: 480px;
-      object-fit: contain;
-      border-radius: 8px;
-      border: 1px solid var(--border);
-      cursor: crosshair;
-      display: none;
-    }
-    input, textarea, select {
-      background: #0f172a;
-      color: var(--text);
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 8px 10px;
-      width: 100%;
-      margin-bottom: 8px;
-    }
-    .bar-track {
-      background: #0f172a;
-      height: 22px;
-      border-radius: 6px;
-      overflow: hidden;
-      margin: 4px 0 10px 0;
-      border: 1px solid var(--border);
-    }
-    .bar-fill {
-      background: linear-gradient(90deg, #38bdf8, #22c55e);
-      height: 100%;
-      transition: width 0.3s ease;
-    }
-    .chat-card {
-      background: #0f172a;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 10px;
-      margin-bottom: 8px;
-      font-size: 13px;
-    }
-    .chat-card.pinned {
-      border-color: var(--amber);
-      background: rgba(245, 158, 11, 0.12);
-    }
-  </style>
-</head>
-<body>
-  <header>
-    <div>
-      <h1 style="margin:0; font-size:22px;">ClassPulse — Lecturer Command Center</h1>
-      <div style="color:var(--muted); font-size:13px; margin-top:4px;">
-        Session: <strong style="color:var(--accent)">{{ session.session_code }}</strong> — {{ session.title }}
+{% extends "layouts/base.html" %}
+{% set cp_use_csrf = true %}
+{% set cp_use_notifications = true %}
+{% set cp_use_socketio = true %}
+{% set cp_use_headcount = true %}
+{% from "macros/icons.html" import cp_icon %}
+
+{% block title %}ClassPulse — Lecturer Command Center ({{ session.session_code }}){% endblock %}
+
+{% block styles %}
+<style>
+  .cp-cv-frame #headcount-canvas {
+    display: none;
+    object-fit: contain;
+  }
+</style>
+{% endblock %}
+
+{% block body %}
+<div class="cp-shell cp-shell--wide">
+  <header class="cp-topbar" style="margin-bottom:16px;">
+    <div class="cp-brand-lockup">
+      <span class="cp-orb cp-orb--sm" aria-hidden="true"></span>
+      <div>
+        <h1 class="cp-brand-title" style="font-size:20px;">ClassPulse &mdash; Lecturer Command Center</h1>
+        <div class="cp-brand-sub" style="margin-top:2px;">
+          Session: <span class="cp-code-pill">{{ session.session_code }}</span> &mdash; {{ session.title }}
+        </div>
       </div>
     </div>
-    <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-      <a class="btn" href="{{ url_for('attendance.projector_view', session_code=session.session_code) }}" target="_blank">
-        Open Fullscreen Projector QR
+
+    <div class="cp-row-wrap">
+      <a class="cp-btn cp-btn--primary cp-btn--sm" href="{{ url_for('attendance.projector_view', session_code=session.session_code) }}" target="_blank">
+        {{ cp_icon('monitor', 15) }}
+        <span>Open Fullscreen Projector QR</span>
       </a>
-      <a class="btn btn-amber" href="{{ url_for('chat.chat_popout_view', session_code=session.session_code) }}" target="_blank">
-        Live Q&amp;A Popout
+      <a class="cp-btn cp-btn--indigo cp-btn--sm" href="{{ url_for('chat.chat_popout_view', session_code=session.session_code) }}" target="_blank">
+        {{ cp_icon('message-square', 15) }}
+        <span>Live Q&amp;A Popout</span>
       </a>
-      <a class="btn btn-green" href="{{ url_for('attendance.download_attendance_report', session_id=session.id, format='xlsx') }}">
-        Export Excel (.xlsx)
+      <a class="cp-btn cp-btn--green cp-btn--sm" href="{{ url_for('attendance.download_attendance_report', session_id=session.id, format='xlsx') }}">
+        {{ cp_icon('download', 15) }}
+        <span>Export Excel (.xlsx)</span>
       </a>
-      <a class="btn btn-secondary" href="{{ url_for('attendance.download_attendance_report', session_id=session.id, format='csv') }}">
-        Export CSV
+      <a class="cp-btn cp-btn--secondary cp-btn--sm" href="{{ url_for('attendance.download_attendance_report', session_id=session.id, format='csv') }}">
+        {{ cp_icon('file-text', 15) }}
+        <span>Export CSV</span>
       </a>
     </div>
   </header>
 
-  <div class="grid">
+  <div class="cp-split-360">
     <!-- Left Column: Live 5s Rotating QR & Roster Import -->
-    <div>
-      <div class="card">
-        <div style="display:flex; justify-content:space-between; align-items:center;">
-          <h2 style="margin:0;">5-Second Rolling QR</h2>
-          <span class="badge badge-VERIFIED" id="qr-bucket-badge">Bucket {{ qr_payload.bucket }}</span>
+    <div class="cp-stack-md">
+      <section class="cp-card">
+        <div class="cp-card-header">
+          <h2>{{ cp_icon('qr', 17) }} 5-Second Rolling QR</h2>
+          <span class="badge VERIFIED badge-VERIFIED cp-tabular" id="qr-bucket-badge">Bucket {{ qr_payload.bucket }}</span>
         </div>
-        <div class="qr-box">
+
+        <div class="cp-qr-island">
           <img id="qr-img" src="{{ qr_payload.svg_data_uri }}" alt="Rotating Attendance QR" />
         </div>
-        <div class="progress-bar">
-          <div class="progress-fill" id="qr-progress"></div>
+
+        <div class="cp-progress-track">
+          <div class="cp-progress-fill" id="qr-progress"></div>
         </div>
-        <div style="font-size:12px; color:var(--muted); word-break:break-all; margin-bottom:12px;">
-          Scan URL: <a id="qr-url-link" href="{{ qr_payload.url }}" target="_blank" style="color:var(--accent);">{{ qr_payload.url }}</a>
+
+        <div class="cp-well" style="font-size:12px; word-break:break-all; margin-bottom:12px;">
+          <span class="cp-muted">Scan URL:</span>
+          <a id="qr-url-link" href="{{ qr_payload.url }}" target="_blank" style="font-weight:600;">{{ qr_payload.url }}</a>
         </div>
-        <button id="toggle-open-btn" class="btn-secondary" style="width:100%;" onclick="toggleSessionOpen({{ session.id }})">
+
+        <button id="toggle-open-btn" type="button" class="cp-btn cp-btn--secondary cp-btn--block" onclick="toggleSessionOpen({{ session.id }})">
           {{ 'Lock Attendance Check-In' if session.attendance_open else 'Re-Open Attendance Check-In' }}
         </button>
-      </div>
+      </section>
 
-      <div class="card">
-        <h2>Import Class Roster (CSV)</h2>
-        <form method="post" action="{{ url_for('attendance.import_session_roster', session_id=session.id) }}" enctype="multipart/form-data">
-          <input type="file" name="roster_file" accept=".csv,.txt" />
-          <textarea name="csv_text" rows="3" placeholder="Or paste: Full Name, email@ariel.ac.il"></textarea>
-          <button type="submit" class="btn-secondary" style="width:100%;">Import Roster</button>
+      <section class="cp-card">
+        <div class="cp-card-header">
+          <h2>{{ cp_icon('upload', 17) }} Import Class Roster (CSV)</h2>
+        </div>
+        <form method="post" action="{{ url_for('attendance.import_session_roster', session_id=session.id) }}" enctype="multipart/form-data" class="cp-stack-sm">
+          <input class="cp-file-input" type="file" name="roster_file" accept=".csv,.txt" />
+          <textarea class="cp-textarea" name="csv_text" rows="3" placeholder="Or paste: Full Name, email@ariel.ac.il"></textarea>
+          <button type="submit" class="cp-btn cp-btn--secondary cp-btn--block">
+            {{ cp_icon('upload', 15) }}
+            <span>Import Roster</span>
+          </button>
         </form>
-      </div>
+      </section>
     </div>
 
-    <!-- Right Column: Feature 1 Audit & CV + Feature 3 Polls + Feature 2 Chat -->
-    <div>
-      <!-- Feature 1A/1B: Cross-Reference Audit KPIs -->
-      <div class="card">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-          <h2 style="margin:0;">Feature 1: Cross-Reference Attendance Audit</h2>
-          <span id="audit-badge" class="badge badge-{{ verdict.status }}">{{ verdict.status }}</span>
+    <!-- Right Column: Audit KPIs, CV Headcounter, Polls, Chat & Attendance Table -->
+    <div class="cp-stack-md">
+      <section class="cp-card">
+        <div class="cp-card-header">
+          <h2>{{ cp_icon('user-check', 17) }} Feature 1: Cross-Reference Attendance Audit</h2>
+          <span id="audit-badge" class="badge {{ verdict.status }} badge-{{ verdict.status }}">{{ verdict.status }}</span>
         </div>
 
-        <div class="kpi-row">
-          <div class="kpi">
-            <div class="num" id="kpi-roster-count">{{ verdict.roster_total }}</div>
-            <div class="lbl">Course Roster</div>
+        <div class="cp-kpi-grid-4">
+          <div class="cp-kpi">
+            <div class="cp-kpi-num cp-kpi-num--indigo" id="kpi-roster-count">{{ verdict.roster_total }}</div>
+            <div class="cp-kpi-lbl">Course Roster</div>
           </div>
-          <div class="kpi">
-            <div class="num" id="kpi-qr-count">{{ verdict.qr_count }}</div>
-            <div class="lbl">QR Self Check-Ins</div>
+          <div class="cp-kpi">
+            <div class="cp-kpi-num cp-kpi-num--coral" id="kpi-qr-count">{{ verdict.qr_count }}</div>
+            <div class="cp-kpi-lbl">QR Self Check-Ins</div>
           </div>
-          <div class="kpi">
-            <div class="num" id="kpi-visual-count">{{ verdict.visual_count }}</div>
-            <div class="lbl">CV Visual Headcount</div>
+          <div class="cp-kpi">
+            <div class="cp-kpi-num cp-kpi-num--green" id="kpi-visual-count">{{ verdict.visual_count }}</div>
+            <div class="cp-kpi-lbl">CV Visual Headcount</div>
           </div>
-          <div class="kpi">
-            <div class="num" id="kpi-delta">{{ verdict.delta }}</div>
-            <div class="lbl">Delta (QR - Visual)</div>
+          <div class="cp-kpi">
+            <div class="cp-kpi-num cp-kpi-num--amber" id="kpi-delta">{{ verdict.delta }}</div>
+            <div class="cp-kpi-lbl">Delta (QR - Visual)</div>
           </div>
         </div>
-        <div id="audit-note" style="font-size:13px; color:var(--muted);">
+
+        <div id="audit-note" class="cp-well cp-secondary" style="font-size:13px;">
           {{ verdict.summary_note }}
         </div>
-      </div>
+      </section>
 
-      <!-- Feature 1B: Classroom Photo Headcount -->
-      <div class="card">
-        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:12px;">
+      <section class="cp-card">
+        <div class="cp-card-header">
           <div>
-            <h2 style="margin:0;">Classroom Photo Headcount (Tiled InsightFace SCRFD)</h2>
-            <div style="font-size:12px; color:var(--muted);">
+            <h2>{{ cp_icon('camera', 17) }} Classroom Photo Headcount (Tiled InsightFace SCRFD)</h2>
+            <div class="cp-muted" style="font-size:12px; margin-top:4px;">
               Click any box on the photo to remove a false detection, or click an unmarked student head to add (+1).
             </div>
           </div>
-          <div style="display:flex; gap:8px; align-items:center;">
-            <input type="file" id="photo-input" accept="image/*" capture="environment" style="width:200px; margin:0;" />
-            <button onclick="uploadClassroomPhoto(false)">Count Uploaded Photo</button>
-            <button class="btn-green" onclick="uploadClassroomPhoto(true)">Demo: Count Ariel Hall Photo</button>
+          <div class="cp-row-wrap">
+            <input class="cp-file-input" type="file" id="photo-input" accept="image/*" capture="environment" style="max-width:220px;" />
+            <button type="button" class="cp-btn cp-btn--primary cp-btn--sm" onclick="uploadClassroomPhoto(false)">Count Uploaded Photo</button>
+            <button type="button" class="cp-btn cp-btn--green cp-btn--sm" onclick="uploadClassroomPhoto(true)">Demo: Count Ariel Hall Photo</button>
           </div>
         </div>
 
-        <div id="canvas-empty-hint" style="padding:22px; text-align:center; color:var(--muted); border:1px dashed var(--border); border-radius:8px;">
-          No classroom photo analyzed yet. Upload a photo or click <strong>"Demo: Count Ariel Hall Photo"</strong>.
+        <div class="cp-cv-frame">
+          <div id="canvas-empty-hint">
+            No classroom photo analyzed yet. Upload a photo or click <strong>"Demo: Count Ariel Hall Photo"</strong>.
+          </div>
+          <canvas id="headcount-canvas" data-session-id="{{ session.id }}"></canvas>
         </div>
-        <canvas id="headcount-canvas" data-session-id="{{ session.id }}"></canvas>
-      </div>
+      </section>
 
-      <!-- Features 2 & 3 Side-by-Side: Live Polls & Live Chat -->
-      <div class="two-col">
-        <!-- Feature 3: Real-Time Polls & Pre-Class Poll Bank -->
-        <div class="card">
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-            <h2 style="margin:0;">Feature 3: Live Polls (KISS Kahoot)</h2>
-            <span style="font-size:12px; color:var(--muted);">Socket.IO Realtime</span>
+      <div class="cp-grid-2">
+        <!-- Feature 3: Live Polls & Poll Bank -->
+        <section class="cp-card">
+          <div class="cp-card-header">
+            <h2>{{ cp_icon('bar-chart', 17) }} Feature 3: Live Polls (KISS Kahoot)</h2>
+            <span class="cp-badge cp-badge--indigo">Socket.IO Realtime</span>
           </div>
 
           <div style="margin-bottom:12px;">
-            <div style="font-size:12px; color:var(--muted); margin-bottom:6px;">1-Click On-the-Spot Quick Polls:</div>
-            <div style="display:flex; gap:6px; flex-wrap:wrap;">
-              <button class="btn-green" onclick="launchQuickPoll('Is the current concept clear?', ['Yes, clear!', 'Need another example', 'Too fast'])">
-                Quick Comprehension Check
+            <div class="cp-muted" style="font-size:12px; font-weight:600; margin-bottom:6px;">1-Click On-the-Spot Quick Polls:</div>
+            <div class="cp-row-wrap">
+              <button type="button" class="cp-btn cp-btn--green cp-btn--sm" onclick="launchQuickPoll('Is the current concept clear?', ['Yes, clear!', 'Need another example', 'Too fast'])">
+                {{ cp_icon('zap', 14) }}
+                <span>Quick Comprehension Check</span>
               </button>
-              <button class="btn-secondary" onclick="launchQuickPoll('Quick Multiple Choice (A / B / C / D)', ['Option A', 'Option B', 'Option C', 'Option D'])">
-                Quick A / B / C / D
+              <button type="button" class="cp-btn cp-btn--secondary cp-btn--sm" onclick="launchQuickPoll('Quick Multiple Choice (A / B / C / D)', ['Option A', 'Option B', 'Option C', 'Option D'])">
+                <span>Quick A / B / C / D</span>
               </button>
             </div>
           </div>
 
-          <div id="live-poll-monitor" style="padding:12px; background:#0f172a; border:1px solid var(--border); border-radius:10px; margin-bottom:12px;">
-            <div style="color:var(--muted); font-size:13px;">No active poll running. Prepare a poll below or launch a Quick Poll.</div>
+          <div id="live-poll-monitor" class="cp-well" style="margin-bottom:12px;">
+            <div class="cp-muted" style="font-size:13px;">No active poll running. Prepare a poll below or launch a Quick Poll.</div>
           </div>
 
           <details style="margin-bottom:12px;">
-            <summary style="cursor:pointer; color:var(--accent); font-weight:700; font-size:13px;">+ Prepare Poll in Poll Bank (Pre-Class)</summary>
-            <div style="margin-top:10px;">
-              <input type="text" id="new-poll-q" placeholder="Poll question (e.g. Which SOLID principle applies here?)" />
-              <input type="text" id="new-poll-opts" placeholder="Comma-separated options (e.g. SRP, OCP, LSP, DIP)" />
-              <div style="display:flex; gap:8px;">
-                <button class="btn-secondary" style="flex:1;" onclick="createCustomPoll(false)">Save Draft to Poll Bank</button>
-                <button class="btn-green" style="flex:1;" onclick="createCustomPoll(true)">Create &amp; Launch Now</button>
+            <summary style="cursor:pointer; color:var(--cp-indigo-ink); font-weight:700; font-size:13px;">+ Prepare Poll in Poll Bank (Pre-Class)</summary>
+            <div class="cp-stack-xs" style="margin-top:10px;">
+              <input class="cp-input" type="text" id="new-poll-q" placeholder="Poll question (e.g. Which SOLID principle applies here?)" />
+              <input class="cp-input" type="text" id="new-poll-opts" placeholder="Comma-separated options (e.g. SRP, OCP, LSP, DIP)" />
+              <div class="cp-grid-2-tight">
+                <button type="button" class="cp-btn cp-btn--secondary cp-btn--sm" onclick="createCustomPoll(false)">Save Draft to Poll Bank</button>
+                <button type="button" class="cp-btn cp-btn--green cp-btn--sm" onclick="createCustomPoll(true)">Create &amp; Launch Now</button>
               </div>
             </div>
           </details>
 
-          <div style="font-size:13px; font-weight:700; margin-bottom:6px; color:var(--muted);">Session Poll Bank:</div>
-          <div id="poll-bank-list" style="max-height:180px; overflow-y:auto;"></div>
-        </div>
+          <div class="cp-eyebrow" style="margin-bottom:6px;">Session Poll Bank</div>
+          <div id="poll-bank-list" style="max-height:200px; overflow-y:auto;"></div>
+        </section>
 
         <!-- Feature 2: Timestamped Classroom Chat -->
-        <div class="card">
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-            <h2 style="margin:0;">Feature 2: Classroom Chat &amp; Q&amp;A</h2>
-            <a href="{{ url_for('chat.export_chat_timeline', session_id=session.id) }}" class="btn btn-secondary" style="padding:4px 10px; font-size:12px;">
-              Download .txt
+        <section class="cp-card">
+          <div class="cp-card-header cp-dot-header" style="padding:10px 12px;">
+            <h2>{{ cp_icon('message-square', 17) }} Feature 2: Classroom Chat &amp; Q&amp;A</h2>
+            <a href="{{ url_for('chat.export_chat_timeline', session_id=session.id) }}" class="cp-btn cp-btn--white cp-btn--sm">
+              {{ cp_icon('download', 14) }}
+              <span>Download .txt</span>
             </a>
           </div>
 
-          <div style="display:flex; gap:6px; margin-bottom:10px;">
-            <input type="text" id="lecturer-chat-input" placeholder="Post announcement or answer..." style="margin:0;" />
-            <button onclick="sendLecturerChat()">Post</button>
+          <div class="cp-input-action" style="margin-bottom:12px;">
+            <input class="cp-input" type="text" id="lecturer-chat-input" placeholder="Post announcement or answer..." onkeydown="if(event.key==='Enter') sendLecturerChat()" />
+            <button type="button" class="cp-btn cp-btn--primary cp-btn--sm" onclick="sendLecturerChat()">
+              {{ cp_icon('send', 14) }}
+              <span>Post</span>
+            </button>
           </div>
 
           <div id="lecturer-chat-feed" style="max-height:320px; overflow-y:auto;"></div>
-        </div>
+        </section>
       </div>
 
       <!-- Student Attendance & Roster Table -->
-      <div class="card">
-        <h2>Student Attendance &amp; Roster Log</h2>
-        <table>
-          <thead>
-            <tr>
-              <th>#</th>
-              <th>Full Name</th>
-              <th>Email</th>
-              <th>Roster</th>
-              <th>Status</th>
-              <th>Checked-In At</th>
-              <th>Device</th>
-            </tr>
-          </thead>
-          <tbody id="attendance-tbody">
-            {% for row in rows %}
-            <tr>
-              <td>{{ loop.index }}</td>
-              <td><strong>{{ row.full_name }}</strong></td>
-              <td>{{ row.email }}</td>
-              <td>{{ row.roster_status }}</td>
-              <td style="color:{{ '#4ade80' if row.attendance_status == 'Present' else '#f87171' }}; font-weight:700;">
-                {{ row.attendance_status }}{% if row.is_late %} (Late){% endif %}
-              </td>
-              <td>{{ row.checked_in_at }}</td>
-              <td><code>{{ row.device_hash }}</code></td>
-            </tr>
-            {% else %}
-            <tr>
-              <td colspan="7" style="text-align:center; color:var(--muted);">No student check-ins or roster entries yet.</td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
+      <section class="cp-card">
+        <div class="cp-card-header">
+          <h2>{{ cp_icon('users', 17) }} Student Attendance &amp; Roster Log</h2>
+        </div>
+        <div class="cp-table-scroll">
+          <table class="cp-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Full Name</th>
+                <th>Email</th>
+                <th>Roster</th>
+                <th>Status</th>
+                <th>Checked-In At</th>
+                <th>Device</th>
+              </tr>
+            </thead>
+            <tbody id="attendance-tbody">
+              {% for row in rows %}
+              <tr>
+                <td class="cp-tabular">{{ loop.index }}</td>
+                <td><strong>{{ row.full_name }}</strong></td>
+                <td>{{ row.email }}</td>
+                <td>{{ row.roster_status }}</td>
+                <td>
+                  <span class="cp-badge {{ 'cp-badge--green' if row.attendance_status == 'Present' else 'cp-badge--red' }}">
+                    {{ row.attendance_status }}{% if row.is_late %} (Late){% endif %}
+                  </span>
+                </td>
+                <td class="cp-tabular">{{ row.checked_in_at }}</td>
+                <td><code>{{ row.device_hash }}</code></td>
+              </tr>
+              {% else %}
+              <tr>
+                <td colspan="7" class="cp-muted" style="text-align:center;">No student check-ins or roster entries yet.</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
     </div>
   </div>
+</div>
+{% endblock %}
 
-  <script src="{{ url_for('static', filename='js/headcount_canvas.js') }}"></script>
-  <script>
-    const SESSION_CODE = "{{ session.session_code }}";
-    const SESSION_ID = {{ session.id }};
-    const STEP_MS = {{ qr_payload.step_seconds * 1000 }};
-    let lastRotateTs = Date.now();
-    let currentPolls = [];
-    let activePoll = null;
-    let chatMessages = [];
+{% block scripts %}
+<script>
+  const SESSION_CODE = {{ session.session_code | tojson }};
+  const SESSION_ID = {{ session.id }};
+  const STEP_MS = {{ qr_payload.step_seconds * 1000 }};
+  let lastRotateTs = Date.now();
+  let currentPolls = [];
+  let activePoll = null;
+  let chatMessages = [];
 
-    const socket = io();
-    socket.on("connect", () => {
-      socket.emit("join_session", { session_code: SESSION_CODE });
-      loadPolls();
-    });
+  function escapeHtml(val) {
+    return String(val == null ? "" : val)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
 
-    socket.on("qr:rotate", (data) => {
-      if (data.session_code !== SESSION_CODE) return;
-      document.getElementById("qr-img").src = data.svg_data_uri;
-      document.getElementById("qr-url-link").href = data.url;
-      document.getElementById("qr-url-link").textContent = data.url;
-      document.getElementById("qr-bucket-badge").textContent = "Bucket " + data.bucket;
-      lastRotateTs = Date.now();
-    });
+  const POLL_BAR_COLORS = [
+    "var(--cp-coral)",
+    "var(--cp-indigo)",
+    "var(--cp-green)",
+    "var(--cp-amber)",
+  ];
 
-    socket.on("attendance:count_update", () => {
-      refreshSessionStatus();
-    });
+  const socket = window.cpCreateSocket();
+  socket.on("connect", () => {
+    socket.emit("join_session", { session_code: SESSION_CODE });
+    loadPolls();
+  });
 
-    // Feature 3 Socket.IO Poll Listeners
-    socket.on("poll:activated", (poll) => {
-      activePoll = poll;
-      loadPolls();
-    });
-    socket.on("poll:results_update", (poll) => {
-      activePoll = poll;
-      renderLivePollMonitor();
-      loadPolls();
-    });
-    socket.on("poll:closed", (poll) => {
-      activePoll = poll;
-      loadPolls();
-    });
+  socket.on("qr:rotate", (data) => {
+    if (!data || data.session_code !== SESSION_CODE) return;
+    document.getElementById("qr-img").src = data.svg_data_uri;
+    document.getElementById("qr-url-link").href = data.url;
+    document.getElementById("qr-url-link").textContent = data.url;
+    document.getElementById("qr-bucket-badge").textContent = "Bucket " + data.bucket;
+    lastRotateTs = Date.now();
+  });
 
-    // Feature 2 Socket.IO Chat Listeners
-    socket.on("chat:init", (data) => {
-      chatMessages = data.messages || [];
-      renderLecturerChat();
-    });
-    socket.on("chat:new", (msg) => {
-      if (!chatMessages.some((x) => x.id === msg.id)) {
-        chatMessages.push(msg);
-        renderLecturerChat();
-      }
-    });
-    socket.on("chat:updated", (msg) => {
-      const idx = chatMessages.findIndex((x) => x.id === msg.id);
-      if (idx >= 0) chatMessages[idx] = msg;
-      chatMessages.sort((a, b) => (b.is_pinned - a.is_pinned) || (a.id - b.id));
-      renderLecturerChat();
-    });
+  socket.on("attendance:count_update", () => {
+    refreshSessionStatus();
+  });
 
-    setInterval(() => {
-      socket.emit("qr:request_refresh", { session_code: SESSION_CODE });
-    }, STEP_MS);
+  // Feature 3 Socket.IO Poll Listeners
+  socket.on("poll:activated", (poll) => {
+    activePoll = poll;
+    loadPolls();
+  });
+  socket.on("poll:results_update", (poll) => {
+    activePoll = poll;
+    renderLivePollMonitor();
+    loadPolls();
+  });
+  socket.on("poll:closed", (poll) => {
+    activePoll = poll;
+    loadPolls();
+  });
 
-    setInterval(() => {
-      const elapsed = Date.now() - lastRotateTs;
-      const pct = Math.max(0, 100 - (elapsed / STEP_MS) * 100);
-      document.getElementById("qr-progress").style.width = pct + "%";
-    }, 100);
-
-    window.updateAuditVerdictUI = function(v) {
-      document.getElementById("kpi-roster-count").textContent = v.roster_total;
-      document.getElementById("kpi-qr-count").textContent = v.qr_count;
-      document.getElementById("kpi-visual-count").textContent = v.visual_count;
-      document.getElementById("kpi-delta").textContent = v.delta;
-      document.getElementById("audit-note").textContent = v.summary_note;
-      const badge = document.getElementById("audit-badge");
-      badge.textContent = v.status;
-      badge.className = "badge badge-" + v.status;
-    };
-
-    async function refreshSessionStatus() {
-      const res = await fetch(`/api/sessions/${SESSION_ID}/status`);
-      if (!res.ok) return;
-      const data = await res.json();
-      updateAuditVerdictUI(data.verdict);
-      const tbody = document.getElementById("attendance-tbody");
-      if (data.rows && data.rows.length > 0) {
-        tbody.innerHTML = data.rows.map((r, i) => `
-          <tr>
-            <td>${i + 1}</td>
-            <td><strong>${r.full_name}</strong></td>
-            <td>${r.email}</td>
-            <td>${r.roster_status}</td>
-            <td style="color:${r.attendance_status === 'Present' ? '#4ade80' : '#f87171'}; font-weight:700;">
-              ${r.attendance_status}${r.is_late ? ' (Late)' : ''}
-            </td>
-            <td>${r.checked_in_at}</td>
-            <td><code>${r.device_hash}</code></td>
-          </tr>
-        `).join("");
-      }
+  // Feature 2 Socket.IO Chat Listeners
+  socket.on("chat:init", (data) => {
+    chatMessages = (data && data.messages) || [];
+    renderLecturerChat();
+  });
+  socket.on("chat:new", (msg) => {
+    if (!msg || chatMessages.some((x) => x.id === msg.id)) return;
+    chatMessages.push(msg);
+    chatMessages.sort((a, b) => (Number(Boolean(b.is_pinned)) - Number(Boolean(a.is_pinned))) || (a.id - b.id));
+    renderLecturerChat();
+    if (window.ClassPulseNotify) {
+      window.ClassPulseNotify.pushChatNotification(msg);
     }
+  });
+  socket.on("chat:updated", (msg) => {
+    if (!msg) return;
+    const idx = chatMessages.findIndex((x) => x.id === msg.id);
+    if (idx >= 0) {
+      chatMessages[idx] = msg;
+    } else {
+      chatMessages.push(msg);
+    }
+    chatMessages.sort((a, b) => (Number(Boolean(b.is_pinned)) - Number(Boolean(a.is_pinned))) || (a.id - b.id));
+    renderLecturerChat();
+  });
 
-    async function uploadClassroomPhoto(useSample) {
-      const fd = new FormData();
-      if (useSample) {
-        fd.append("use_sample", "1");
-      } else {
-        const fileInput = document.getElementById("photo-input");
-        if (!fileInput.files.length) {
-          alert("Please choose a classroom photo file first.");
-          return;
-        }
-        fd.append("photo", fileInput.files[0]);
-      }
-      const hint = document.getElementById("canvas-empty-hint");
-      if (hint) {
-        hint.style.display = "block";
-        hint.textContent = "Running Tiled InsightFace SCRFD face detection...";
-      }
-      const res = await fetch(`/api/sessions/${SESSION_ID}/headcount`, {
-        method: "POST",
-        body: fd,
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        alert(data.error || "Headcount failed");
+  setInterval(() => {
+    socket.emit("qr:request_refresh", { session_code: SESSION_CODE });
+  }, STEP_MS);
+
+  setInterval(() => {
+    const elapsed = Date.now() - lastRotateTs;
+    const pct = Math.max(0, 100 - (elapsed / STEP_MS) * 100);
+    document.getElementById("qr-progress").style.width = pct + "%";
+  }, 100);
+
+  window.updateAuditVerdictUI = function(v) {
+    document.getElementById("kpi-roster-count").textContent = v.roster_total;
+    document.getElementById("kpi-qr-count").textContent = v.qr_count;
+    document.getElementById("kpi-visual-count").textContent = v.visual_count;
+    document.getElementById("kpi-delta").textContent = v.delta;
+    document.getElementById("audit-note").textContent = v.summary_note;
+    const badge = document.getElementById("audit-badge");
+    badge.textContent = v.status;
+    badge.className = "badge " + v.status + " badge-" + v.status;
+  };
+
+  async function refreshSessionStatus() {
+    const res = await fetch(`/api/sessions/${SESSION_ID}/status`);
+    if (!res.ok) return;
+    const data = await res.json();
+    updateAuditVerdictUI(data.verdict);
+    const tbody = document.getElementById("attendance-tbody");
+    if (data.rows && data.rows.length > 0) {
+      tbody.innerHTML = data.rows.map((r, i) => `
+        <tr>
+          <td class="cp-tabular">${i + 1}</td>
+          <td><strong>${escapeHtml(r.full_name)}</strong></td>
+          <td>${escapeHtml(r.email)}</td>
+          <td>${escapeHtml(r.roster_status)}</td>
+          <td>
+            <span class="cp-badge ${r.attendance_status === 'Present' ? 'cp-badge--green' : 'cp-badge--red'}">
+              ${escapeHtml(r.attendance_status)}${r.is_late ? ' (Late)' : ''}
+            </span>
+          </td>
+          <td class="cp-tabular">${escapeHtml(r.checked_in_at)}</td>
+          <td><code>${escapeHtml(r.device_hash)}</code></td>
+        </tr>
+      `).join("");
+    }
+  }
+
+  async function uploadClassroomPhoto(useSample) {
+    const fd = new FormData();
+    if (useSample) {
+      fd.append("use_sample", "1");
+    } else {
+      const fileInput = document.getElementById("photo-input");
+      if (!fileInput.files.length) {
+        alert("Please choose a classroom photo file first.");
         return;
       }
-      updateAuditVerdictUI(data.verdict);
-      if (window.initHeadcountCanvas) {
-        window.initHeadcountCanvas(data.raw_image_url, data.boxes);
-      }
+      fd.append("photo", fileInput.files[0]);
     }
-
-    async function toggleSessionOpen(sessionId) {
-      const res = await fetch("/api/sessions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "toggle_open", session_id: sessionId }),
-      });
-      if (res.ok) location.reload();
+    const hint = document.getElementById("canvas-empty-hint");
+    if (hint) {
+      hint.style.display = "block";
+      hint.textContent = "Running Tiled InsightFace SCRFD face detection...";
     }
-
-    // Feature 3 Poll Management Functions
-    async function loadPolls() {
-      const res = await fetch(`/api/sessions/${SESSION_ID}/polls`);
-      if (!res.ok) return;
-      const data = await res.json();
-      currentPolls = data.polls || [];
-      if (data.sync && data.sync.poll) {
-        activePoll = data.sync.poll;
-      }
-      renderLivePollMonitor();
-      renderPollBank();
+    const res = await fetch(`/api/sessions/${SESSION_ID}/headcount`, {
+      method: "POST",
+      body: fd,
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      alert(data.error || "Headcount failed");
+      return;
     }
+    updateAuditVerdictUI(data.verdict);
+    if (window.initHeadcountCanvas) {
+      window.initHeadcountCanvas(data.raw_image_url, data.boxes);
+    }
+  }
 
-    function renderLivePollMonitor() {
-      const el = document.getElementById("live-poll-monitor");
-      if (!activePoll) {
-        el.innerHTML = '<div style="color:var(--muted); font-size:13px;">No active poll running. Prepare a poll below or launch a Quick Poll.</div>';
-        return;
-      }
-      const bars = activePoll.options.map((opt, idx) => {
-        const pct = activePoll.percentages ? activePoll.percentages[idx] : 0;
-        const cnt = activePoll.counts ? activePoll.counts[idx] : 0;
-        return `
-          <div style="font-size:13px; display:flex; justify-content:space-between;">
-            <span><strong>${String.fromCharCode(65 + idx)}.</strong> ${opt}</span>
-            <span>${cnt} votes (${pct}%)</span>
+  async function toggleSessionOpen(sessionId) {
+    const res = await fetch("/api/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "toggle_open", session_id: sessionId }),
+    });
+    if (res.ok) location.reload();
+  }
+
+  // Feature 3 Poll Management Functions
+  async function loadPolls() {
+    const res = await fetch(`/api/sessions/${SESSION_ID}/polls`);
+    if (!res.ok) return;
+    const data = await res.json();
+    currentPolls = data.polls || [];
+    if (data.sync && data.sync.poll) {
+      activePoll = data.sync.poll;
+    }
+    renderLivePollMonitor();
+    renderPollBank();
+  }
+
+  function renderLivePollMonitor() {
+    const el = document.getElementById("live-poll-monitor");
+    if (!activePoll) {
+      el.innerHTML = '<div class="cp-muted" style="font-size:13px;">No active poll running. Prepare a poll below or launch a Quick Poll.</div>';
+      return;
+    }
+    const bars = (activePoll.options || []).map((opt, idx) => {
+      const pct = activePoll.percentages ? Number(activePoll.percentages[idx] || 0) : 0;
+      const cnt = activePoll.counts ? Number(activePoll.counts[idx] || 0) : 0;
+      const color = POLL_BAR_COLORS[idx % POLL_BAR_COLORS.length];
+      return `
+        <div class="cp-poll-bar-card">
+          <div class="cp-row-between" style="font-size:13px;">
+            <span><strong>${String.fromCharCode(65 + idx)}.</strong> ${escapeHtml(opt)}</span>
+            <span class="cp-poll-pct cp-muted">${cnt} votes (${pct}%)</span>
           </div>
-          <div class="bar-track">
-            <div class="bar-fill" style="width:${pct}%"></div>
+          <div class="cp-poll-track">
+            <div class="cp-poll-fill" style="width:${pct}%; background:${color};"></div>
           </div>
-        `;
-      }).join("");
-
-      el.innerHTML = `
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-          <strong>${activePoll.question}</strong>
-          <span class="badge badge-${activePoll.status}">${activePoll.status} (${activePoll.total_votes} votes)</span>
         </div>
-        ${bars}
-        ${activePoll.status === 'ACTIVE' ? `<button class="btn-secondary" style="width:100%;" onclick="closePoll(${activePoll.id})">Close Poll</button>` : ''}
       `;
-    }
+    }).join("");
 
-    function renderPollBank() {
-      const el = document.getElementById("poll-bank-list");
-      if (!currentPolls.length) {
-        el.innerHTML = '<div style="color:var(--muted); font-size:12px;">No polls saved in Poll Bank yet.</div>';
-        return;
-      }
-      el.innerHTML = currentPolls.map((p) => `
-        <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 8px; border-bottom:1px solid var(--border); font-size:13px;">
-          <div>
-            <span class="badge badge-${p.status}" style="font-size:10px; padding:2px 6px;">${p.status}</span>
-            <span style="margin-left:6px;">${p.question}</span>
-          </div>
-          <div>
-            ${p.status !== 'ACTIVE' ? `<button style="padding:4px 8px; font-size:11px;" onclick="launchExistingPoll(${p.id})">Launch</button>` : `<button class="btn-secondary" style="padding:4px 8px; font-size:11px;" onclick="closePoll(${p.id})">Close</button>`}
-          </div>
+    el.innerHTML = `
+      <div class="cp-row-between" style="margin-bottom:10px;">
+        <strong style="color:var(--cp-ink);">${escapeHtml(activePoll.question)}</strong>
+        <span class="badge ${escapeHtml(activePoll.status)} badge-${escapeHtml(activePoll.status)} cp-tabular">${escapeHtml(activePoll.status)} (${Number(activePoll.total_votes || 0)} votes)</span>
+      </div>
+      ${bars}
+      ${activePoll.status === 'ACTIVE' ? `<button type="button" class="cp-btn cp-btn--secondary cp-btn--sm cp-btn--block" onclick="closePoll(${Number(activePoll.id)})">Close Poll</button>` : ''}
+    `;
+  }
+
+  function renderPollBank() {
+    const el = document.getElementById("poll-bank-list");
+    if (!currentPolls.length) {
+      el.innerHTML = '<div class="cp-muted" style="font-size:12px;">No polls saved in Poll Bank yet.</div>';
+      return;
+    }
+    el.innerHTML = `<div class="cp-stack-xs">` + currentPolls.map((p) => `
+      <div class="cp-well cp-row-between" style="padding:9px 11px;">
+        <div class="cp-row-wrap" style="min-width:0; flex:1;">
+          <span class="badge ${escapeHtml(p.status)} badge-${escapeHtml(p.status)}">${escapeHtml(p.status)}</span>
+          <span style="font-size:13px; color:var(--cp-ink); overflow-wrap:anywhere;">${escapeHtml(p.question)}</span>
         </div>
-      `).join("");
-    }
-
-    async function launchQuickPoll(question, options) {
-      await fetch(`/api/sessions/${SESSION_ID}/polls`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question, options, launch_now: true }),
-      });
-      loadPolls();
-    }
-
-    async function createCustomPoll(launchNow) {
-      const qEl = document.getElementById("new-poll-q");
-      const oEl = document.getElementById("new-poll-opts");
-      const q = qEl.value.trim();
-      const opts = oEl.value.split(",").map((s) => s.trim()).filter(Boolean);
-      if (!q || opts.length < 2) {
-        alert("Enter a question and at least 2 comma-separated options.");
-        return;
-      }
-      qEl.value = "";
-      oEl.value = "";
-      await fetch(`/api/sessions/${SESSION_ID}/polls`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: q, options: opts, launch_now: launchNow }),
-      });
-      loadPolls();
-    }
-
-    async function launchExistingPoll(pollId) {
-      await fetch(`/api/polls/${pollId}/launch`, { method: "POST" });
-      loadPolls();
-    }
-
-    async function closePoll(pollId) {
-      await fetch(`/api/polls/${pollId}/close`, { method: "POST" });
-      loadPolls();
-    }
-
-    // Feature 2 Chat Functions
-    function renderLecturerChat() {
-      const el = document.getElementById("lecturer-chat-feed");
-      if (!chatMessages.length) {
-        el.innerHTML = '<div style="color:var(--muted); font-size:13px;">No student messages yet.</div>';
-        return;
-      }
-      el.innerHTML = chatMessages.slice().reverse().map((m) => `
-        <div class="chat-card ${m.is_pinned ? 'pinned' : ''}">
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
-            <div>
-              <span style="color:var(--accent); font-family:monospace; font-weight:700;">[${m.offset_mmss}]</span>
-              <strong>${m.author_name}</strong>
-              <span style="font-size:11px; color:var(--muted);">(${m.category})</span>
-            </div>
-            <div style="display:flex; gap:6px; align-items:center;">
-              <span style="color:#4ade80; font-weight:700; font-size:12px;">+${m.upvotes}</span>
-              <button class="btn-secondary" style="padding:2px 6px; font-size:11px;" onclick="togglePinChat(${m.id})">
-                ${m.is_pinned ? 'Unpin' : 'Pin'}
-              </button>
-            </div>
-          </div>
-          <div>${m.body}</div>
+        <div>
+          ${p.status !== 'ACTIVE'
+            ? `<button type="button" class="cp-btn cp-btn--primary cp-btn--sm" onclick="launchExistingPoll(${Number(p.id)})">Launch</button>`
+            : `<button type="button" class="cp-btn cp-btn--secondary cp-btn--sm" onclick="closePoll(${Number(p.id)})">Close</button>`}
         </div>
-      `).join("");
-    }
+      </div>
+    `).join("") + `</div>`;
+  }
 
-    async function sendLecturerChat() {
-      const inp = document.getElementById("lecturer-chat-input");
-      const body = inp.value.trim();
-      if (!body) return;
-      inp.value = "";
-      await fetch(`/api/sessions/${SESSION_ID}/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          author_name: "Lecturer",
-          category: "Comment",
-          body: body,
-        }),
-      });
-    }
-
-    async function togglePinChat(msgId) {
-      await fetch(`/api/chat/${msgId}/pin`, { method: "POST" });
-    }
-
-    {% if latest_snap %}
-    window.addEventListener("DOMContentLoaded", () => {
-      if (window.initHeadcountCanvas) {
-        window.initHeadcountCanvas(
-          "{{ url_for('attendance.get_headcount_image', session_id=session.id, kind='raw', snap_id=latest_snap.id) }}",
-          {{ latest_snap.boxes_json | safe }}
-        );
-      }
+  async function launchQuickPoll(question, options) {
+    await fetch(`/api/sessions/${SESSION_ID}/polls`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question, options, launch_now: true }),
     });
+    loadPolls();
+  }
+
+  async function createCustomPoll(launchNow) {
+    const qEl = document.getElementById("new-poll-q");
+    const oEl = document.getElementById("new-poll-opts");
+    const q = qEl.value.trim();
+    const opts = oEl.value.split(",").map((s) => s.trim()).filter(Boolean);
+    if (!q || opts.length < 2) {
+      alert("Enter a question and at least 2 comma-separated options.");
+      return;
+    }
+    qEl.value = "";
+    oEl.value = "";
+    await fetch(`/api/sessions/${SESSION_ID}/polls`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question: q, options: opts, launch_now: launchNow }),
+    });
+    loadPolls();
+  }
+
+  async function launchExistingPoll(pollId) {
+    await fetch(`/api/polls/${pollId}/launch`, { method: "POST" });
+    loadPolls();
+  }
+
+  async function closePoll(pollId) {
+    await fetch(`/api/polls/${pollId}/close`, { method: "POST" });
+    loadPolls();
+  }
+
+  // Feature 2 Chat Functions
+  function renderLecturerChat() {
+    const el = document.getElementById("lecturer-chat-feed");
+    if (!chatMessages.length) {
+      el.innerHTML = '<div class="cp-well cp-muted" style="font-size:13px; text-align:center;">No student messages yet.</div>';
+      return;
+    }
+    el.innerHTML = chatMessages.slice().reverse().map((m) => `
+      <div class="cp-chat-msg ${m.is_pinned ? 'pinned' : ''}" data-msg-id="${escapeHtml(m.id)}">
+        <div class="cp-row-between" style="margin-bottom:4px;">
+          <div class="cp-row-wrap" style="gap:6px;">
+            <span class="cp-ts">[${escapeHtml(m.offset_mmss)}]</span>
+            <strong>${escapeHtml(m.author_name)}</strong>
+            <span class="cp-cat-pill">${escapeHtml(m.category)}</span>
+          </div>
+          <div class="cp-row-wrap" style="gap:6px;">
+            <span class="cp-upvote-pill cp-tabular">+${Number(m.upvotes || 0)}</span>
+            <button type="button" class="cp-btn cp-btn--secondary cp-btn--sm" onclick="togglePinChat(${Number(m.id)})">
+              ${m.is_pinned ? 'Unpin' : 'Pin'}
+            </button>
+          </div>
+        </div>
+        <div style="color:var(--cp-ink); overflow-wrap:anywhere;">${escapeHtml(m.body)}</div>
+      </div>
+    `).join("");
+  }
+
+  async function sendLecturerChat() {
+    const inp = document.getElementById("lecturer-chat-input");
+    const body = inp.value.trim();
+    if (!body) return;
+    inp.value = "";
+    await fetch(`/api/sessions/${SESSION_ID}/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        author_name: "Lecturer",
+        category: "Comment",
+        body: body,
+      }),
+    });
+  }
+
+  async function togglePinChat(msgId) {
+    await fetch(`/api/chat/${msgId}/pin`, { method: "POST" });
+  }
+
+  window.addEventListener("DOMContentLoaded", () => {
+    if (window.ClassPulseNotify) {
+      window.ClassPulseNotify.init({
+        role: "lecturer",
+        isChatVisibleFn: () => true,
+        onOpenMessage: (payload) => {
+          if (payload && (payload.message_id || payload.id)) {
+            window.ClassPulseNotify.highlightMessage(payload.message_id || payload.id);
+          }
+        },
+      });
+    }
+    loadPolls();
+    {% if latest_snap %}
+    if (window.initHeadcountCanvas) {
+      window.initHeadcountCanvas(
+        "{{ url_for('attendance.get_headcount_image', session_id=session.id, kind='raw', snap_id=latest_snap.id) }}",
+        {{ latest_snap.boxes_json | safe }}
+      );
+    }
     {% endif %}
-  </script>
-</body>
-</html>
+  });
+</script>
+{% endblock %}

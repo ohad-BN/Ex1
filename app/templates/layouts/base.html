@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}ClassPulse{% endblock %}</title>
+  <link id="cp-favicon" rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='1' y='1' width='30' height='30' rx='8' fill='%23FFFFFF' stroke='%23E5E0DC' stroke-width='1.5'/%3E%3Cpath d='M5 18h6l3-9 4 15 3-8h6' fill='none' stroke='%23E87148' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/classpulse.css') }}">
+  {% block styles %}{% endblock %}
+  {% block head_csrf %}{% if cp_use_csrf is defined and cp_use_csrf %}<script src="/static/js/csrf.js"></script>{% endif %}{% endblock %}
+  {% block head_notifications %}{% if cp_use_notifications is defined and cp_use_notifications %}<script src="/static/js/notifications.js"></script>{% endif %}{% endblock %}
+  {% block head_socketio %}{% if cp_use_socketio is defined and cp_use_socketio %}<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>{% endif %}{% endblock %}
+  <script>
+    window.cpCreateSocket = function (opts) {
+      if (typeof window.io === "function") {
+        return opts !== undefined ? window.io(opts) : window.io();
+      }
+      var noop = {
+        connected: false,
+        disconnected: true,
+        id: null,
+        on: function () { return noop; },
+        once: function () { return noop; },
+        off: function () { return noop; },
+        emit: function () { return noop; },
+        connect: function () { return noop; },
+        disconnect: function () { return noop; },
+        close: function () { return noop; }
+      };
+      return noop;
+    };
+  </script>
+  {% block head_extra %}{% endblock %}
+</head>
+<body class="{% block body_class %}cp-body{% endblock %}" {% block body_attrs %}{% endblock %}>
+  {% block body %}{% endblock %}
+  {% block headcount_script %}{% if cp_use_headcount is defined and cp_use_headcount %}<script src="/static/js/headcount_canvas.js"></script>{% endif %}{% endblock %}
+  {% block scripts %}{% endblock %}
+  {% block extra_scripts %}{% endblock %}
+</body>
+</html>

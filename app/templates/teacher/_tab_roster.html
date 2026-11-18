@@ -1,93 +1,105 @@
-    <!-- TAB 6: Course Attendance Monitor, Staff/TAs & Roster File Import -->
-    <section id="tab-course-roster" class="tab-pane">
-      <div class="grid-2">
-        <div style="display:flex; flex-direction:column; gap:18px;">
-          <div class="card">
-            <h2>Import Roster into {{ selected_course.course_code }}</h2>
-            <p style="font-size:12px; color:var(--muted); margin-top:0;">
-              Student Join Code: <span class="code-pill">{{ selected_course.join_code or selected_course.course_code }}</span> &bull; Upload a <code>.csv</code> or Excel (<code>.xlsx</code> / <code>.xlsm</code>) file containing columns for <code>Full Name</code> and <code>Email</code> (and optional <code>Student ID</code>).
-            </p>
-            <div style="background:#0f172a; border:1px dashed var(--border); border-radius:10px; padding:14px; display:flex; flex-direction:column; gap:10px;">
-              <input type="file" id="roster-file-input" accept=".csv,.xlsx,.xlsm" style="font-size:12px; color:var(--text);" />
-              <div style="font-size:11px; color:var(--muted);">
-                Example columns: <code>208123456, Ohad Ben Nun, ohad@ariel.ac.il</code>
-              </div>
-            </div>
-            <div style="margin-top:10px; display:flex; justify-content:space-between; align-items:center; gap:8px;">
-              <button type="button" onclick="importCourseRoster()">Import CSV / Excel File</button>
-              <span id="roster-import-msg" style="font-size:12px; color:var(--green);"></span>
-            </div>
-          </div>
-
-          <div class="card">
-            <h2>Co-Lecturers &amp; Teaching Assistants</h2>
-            <p style="font-size:12px; color:var(--muted); margin-top:0;">
-              Grant another registered professor or TA access to manage sessions, polls, and grading for <strong>{{ selected_course.course_code }}</strong>.
-            </p>
-            <div style="display:grid; grid-template-columns: 1fr 120px auto; gap:8px; margin-bottom:10px;">
-              <input type="text" id="staff-identifier" placeholder="TA username or email" />
-              <select id="staff-role">
-                <option value="ta">TA</option>
-                <option value="co_lecturer">Co-Lecturer</option>
-              </select>
-              <button type="button" class="btn-sm" onclick="addCourseStaff()">+ Add</button>
-            </div>
-            <div id="course-staff-list" style="display:flex; flex-direction:column; gap:6px; font-size:12px;">
-              {% for m in selected_course.staff or [] %}
-              <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 10px; border-radius:8px; background:#0f172a; border:1px solid var(--border);">
-                <span><strong>{{ m.full_name }}</strong> (@{{ m.username or m.email }}) &bull; <span class="code-pill">{{ m.role }}</span></span>
-                <button type="button" class="btn-secondary btn-sm" onclick="removeCourseStaff({{ m.lecturer_id }})">Remove</button>
-              </div>
-              {% else %}
-              <div style="color:var(--muted); font-size:12px;">Only the primary owner currently has access to this course.</div>
-              {% endfor %}
-            </div>
+{% from "macros/icons.html" import cp_icon %}
+<!-- TAB 6: Course Attendance Monitor, Staff/TAs & Roster File Import -->
+<section id="tab-course-roster" class="cp-tab-pane tab-pane">
+  <div class="cp-grid-2">
+    <div class="cp-stack-md">
+      <div class="cp-card">
+        <div class="cp-card-header">
+          <h2>
+            {{ cp_icon('upload', 18) }}
+            <span>Import Roster into {{ selected_course.course_code }}</span>
+          </h2>
+        </div>
+        <div class="cp-dropzone">
+          <input type="file" id="roster-file-input" class="cp-file-input" accept=".csv,.xlsx,.xlsm" />
+          <div class="cp-muted" style="font-size:11px;">
+            Example columns: <code>208123456, Ohad Ben Nun, ohad@ariel.ac.il</code>
           </div>
         </div>
-
-        <div class="card">
-          <h2>
-            <span>Course Attendance Monitor &mdash; Enrolled Students</span>
-            <span class="code-pill">{{ selected_course.students|length }} Students</span>
-          </h2>
-          <div style="max-height:420px; overflow-y:auto;">
-            <table>
-              <thead>
-                <tr>
-                  <th>Student Name</th>
-                  <th>Student ID</th>
-                  <th>Email</th>
-                  <th>Lectures Attended</th>
-                  <th>Course Attendance %</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody id="course-students-tbody">
-                {% for st in selected_course.students %}
-                <tr>
-                  <td><strong>{{ st.full_name }}</strong></td>
-                  <td><code>{{ st.student_id_number or '-' }}</code></td>
-                  <td>{{ st.email }}</td>
-                  <td>{{ st.attended_sessions }} / {{ st.total_sessions }}</td>
-                  <td>
-                    <span class="badge {% if st.attendance_rate_pct >= 75 %}VERIFIED{% elif st.attendance_rate_pct >= 50 %}UNDER_SCANNED{% else %}ABSENT{% endif %}">
-                      {{ st.attendance_rate_pct }}%
-                    </span>
-                  </td>
-                  <td>
-                    <button type="button" class="btn-secondary btn-sm" style="color:#f87171; border-color:rgba(248,113,113,0.35);" onclick='removeStudentFromCourse({{ st.student_id }}, {{ st.full_name | tojson }})'>Remove Student</button>
-                  </td>
-                </tr>
-                {% else %}
-                <tr>
-                  <td colspan="6" style="text-align:center; color:var(--muted);">
-                    No students enrolled yet. Import a CSV/Excel file or have students scan the lecture QR!
-                  </td>
-                </tr>
-                {% endfor %}
-              </tbody>
-            </table>
-          </div>
+        <div class="cp-row-between" style="margin-top:12px;">
+          <button type="button" class="cp-btn cp-btn--primary cp-btn--sm" onclick="importCourseRoster()">
+            {{ cp_icon('upload', 14) }}
+            <span>Import CSV / Excel File</span>
+          </button>
+          <span id="roster-import-msg" style="font-size:12px; font-weight:700; color:var(--cp-green-ink);"></span>
         </div>
       </div>
-    </section>
+
+      <div class="cp-card">
+        <div class="cp-card-header">
+          <h2>
+            {{ cp_icon('user-plus', 18) }}
+            <span>Co-Lecturers &amp; Teaching Assistants</span>
+          </h2>
+        </div>
+        <div class="cp-staff-form-grid" style="margin-bottom:10px;">
+          <input type="text" id="staff-identifier" class="cp-input" placeholder="TA username or email" />
+          <select id="staff-role" class="cp-select">
+            <option value="ta">TA</option>
+            <option value="co_lecturer">Co-Lecturer</option>
+          </select>
+          <button type="button" class="cp-btn cp-btn--indigo cp-btn--sm" onclick="addCourseStaff()">
+            {{ cp_icon('plus', 14) }}
+            <span>Add</span>
+          </button>
+        </div>
+        <div id="course-staff-list" class="cp-stack-xs" style="font-size:12px;">
+          {% for m in selected_course.staff or [] %}
+          <div class="cp-log-row">
+            <span><strong>{{ m.full_name }}</strong> (@{{ m.username or m.email }}) &bull; <span class="cp-code-pill code-pill">{{ m.role }}</span></span>
+            <button type="button" class="cp-btn cp-btn--secondary cp-btn--sm" onclick="removeCourseStaff({{ m.lecturer_id }})">Remove</button>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+
+    <div class="cp-card">
+      <div class="cp-card-header">
+        <h2>
+          {{ cp_icon('users', 18) }}
+          <span>Course Attendance Monitor &mdash; Enrolled Students</span>
+        </h2>
+        <span class="cp-code-pill code-pill">{{ selected_course.students|length }} Students</span>
+      </div>
+      <div class="cp-table-scroll" style="max-height:420px; overflow-y:auto;">
+        <table class="cp-table">
+          <thead>
+            <tr>
+              <th>Student Name</th>
+              <th>Student ID</th>
+              <th>Email</th>
+              <th>Lectures Attended</th>
+              <th>Course Attendance %</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="course-students-tbody">
+            {% for st in selected_course.students %}
+            <tr>
+              <td><strong>{{ st.full_name }}</strong></td>
+              <td><code>{{ st.student_id_number or '-' }}</code></td>
+              <td>{{ st.email }}</td>
+              <td class="cp-tabular">{{ st.attended_sessions }} / {{ st.total_sessions }}</td>
+              <td>
+                <span class="cp-badge badge cp-tabular {% if st.attendance_rate_pct >= 75 %}VERIFIED{% elif st.attendance_rate_pct >= 50 %}UNDER_SCANNED{% else %}ABSENT{% endif %}">
+                  {{ st.attendance_rate_pct }}%
+                </span>
+              </td>
+              <td>
+                <button type="button" class="cp-btn cp-btn--danger-soft cp-btn--sm" onclick='removeStudentFromCourse({{ st.student_id }}, {{ st.full_name | tojson }})'>Remove Student</button>
+              </td>
+            </tr>
+            {% else %}
+            <tr>
+              <td colspan="6" class="cp-muted" style="text-align:center;">
+                No students enrolled yet. Import a CSV/Excel file or have students scan the lecture QR!
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</section>

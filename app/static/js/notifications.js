@@ -29,20 +29,62 @@
         }
         .cp-toast {
           pointer-events: auto;
-          background: #0f172a;
-          border: 1.5px solid #38bdf8;
-          border-left: 5px solid #ef4444;
-          color: #f8fafc;
-          border-radius: 12px;
+          background: var(--cp-surface-solid, #FFFFFF);
+          backdrop-filter: blur(18px);
+          -webkit-backdrop-filter: blur(18px);
+          border: 1px solid var(--cp-border, rgba(24, 26, 31, 0.12));
+          border-left: 4px solid var(--cp-coral, #E87148);
+          color: var(--cp-ink, #181A1F);
+          border-radius: var(--cp-radius-well, 14px);
           padding: 12px 14px;
-          box-shadow: 0 14px 32px rgba(0, 0, 0, 0.55);
+          box-shadow: var(--cp-card-shadow, 0 14px 32px rgba(31, 34, 51, 0.14));
           cursor: pointer;
           transition: transform 0.14s ease, border-color 0.14s ease;
-          font-family: system-ui, -apple-system, sans-serif;
+          font-family: var(--cp-font-sans, system-ui, -apple-system, sans-serif);
         }
         .cp-toast:hover {
           transform: translateY(-2px);
-          border-color: #22c55e;
+          border-color: var(--cp-indigo, #5B5FEF);
+        }
+        .cp-toast-hdr {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 8px;
+          margin-bottom: 4px;
+        }
+        .cp-toast-title {
+          display: inline-flex;
+          align-items: center;
+          gap: 5px;
+          font-size: 11px;
+          font-weight: 800;
+          color: var(--cp-coral-cta, #C84E27);
+        }
+        .cp-toast-close {
+          background: transparent;
+          border: none;
+          color: var(--cp-ink-muted, #555D6E);
+          cursor: pointer;
+          font-size: 16px;
+          line-height: 1;
+          padding: 0 2px;
+          width: auto;
+        }
+        .cp-toast-body {
+          font-size: 13px;
+          color: var(--cp-ink, #181A1F);
+          margin-bottom: 4px;
+          line-height: 1.35;
+        }
+        .cp-toast-cat {
+          font-size: 11px;
+          color: var(--cp-ink-muted, #555D6E);
+        }
+        .cp-toast-cta {
+          font-size: 11px;
+          color: var(--cp-green-ink, #166534);
+          font-weight: 700;
         }
         .cp-red-dot {
           display: inline-flex;
@@ -52,7 +94,7 @@
           height: 18px;
           padding: 0 5px;
           border-radius: 999px;
-          background: #ef4444;
+          background: var(--cp-red, #DC2626);
           color: #ffffff;
           font-size: 10px;
           font-weight: 800;
@@ -60,9 +102,9 @@
           vertical-align: middle;
         }
         .cp-msg-flash {
-          outline: 2px solid #38bdf8 !important;
-          box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.28) !important;
-          background: rgba(56, 189, 248, 0.14) !important;
+          outline: 2px solid var(--cp-coral, #E87148) !important;
+          box-shadow: 0 0 0 4px var(--cp-coral-soft, rgba(232, 113, 72, 0.22)) !important;
+          background: var(--cp-coral-soft, rgba(232, 113, 72, 0.14)) !important;
           transition: box-shadow 0.4s ease, background 0.4s ease;
         }
       `;
@@ -82,9 +124,9 @@
       link = document.querySelector("link[rel*='icon']") || document.createElement("link");
       link.id = "cp-favicon";
       link.rel = "icon";
-      link.type = "image/png";
       document.head.appendChild(link);
     }
+    link.type = "image/png";
 
     const canvas = document.createElement("canvas");
     canvas.width = 32;
@@ -92,14 +134,19 @@
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    // Rounded dark background with cyan pulse emblem
-    ctx.fillStyle = "#0b1120";
+    // White rounded badge with hairline border and coral pulse emblem
+    ctx.fillStyle = "#FFFFFF";
     ctx.beginPath();
-    ctx.roundRect ? ctx.roundRect(0, 0, 32, 32, 7) : ctx.rect(0, 0, 32, 32);
+    ctx.roundRect ? ctx.roundRect(1, 1, 30, 30, 8) : ctx.rect(1, 1, 30, 30);
     ctx.fill();
+    ctx.strokeStyle = "#E5E0DC";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
 
-    ctx.strokeStyle = "#38bdf8";
+    ctx.strokeStyle = "#E87148";
     ctx.lineWidth = 2.6;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
     ctx.beginPath();
     ctx.moveTo(5, 18);
     ctx.lineTo(11, 18);
@@ -110,17 +157,17 @@
     ctx.stroke();
 
     if (count > 0) {
-      // Bright red notification circle on top-right corner of the Chrome tab icon
-      ctx.fillStyle = "#ef4444";
+      // High-contrast red notification badge on top-right corner
+      ctx.fillStyle = "#DC2626";
       ctx.beginPath();
       ctx.arc(23, 9, 9, 0, Math.PI * 2);
       ctx.fill();
 
-      ctx.strokeStyle = "#ffffff";
+      ctx.strokeStyle = "#FFFFFF";
       ctx.lineWidth = 1.6;
       ctx.stroke();
 
-      ctx.fillStyle = "#ffffff";
+      ctx.fillStyle = "#FFFFFF";
       ctx.font = "bold 11px system-ui, sans-serif";
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
@@ -203,23 +250,25 @@
     const courseLabel = payload.course_code ? `${payload.course_code} • ` : "";
     const sessionLabel = payload.session_code || "";
     const lectureLabel = payload.lecture_title ? ` — ${payload.lecture_title}` : "";
-    const snippet = (payload.body || "").length > 90
-      ? payload.body.slice(0, 87) + "..."
-      : (payload.body || "");
+    const rawBody = String(payload.body != null ? payload.body : (payload.text || ""));
+    const snippet = rawBody.length > 90
+      ? rawBody.slice(0, 87) + "..."
+      : rawBody;
 
     toast.innerHTML = `
-      <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:4px;">
-        <span style="font-size:11px; font-weight:800; color:#38bdf8;">
-          &#128172; ${_escape(courseLabel + sessionLabel)}${_escape(lectureLabel)}
+      <div class="cp-toast-hdr">
+        <span class="cp-toast-title">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          ${_escape(courseLabel + sessionLabel)}${_escape(lectureLabel)}
         </span>
-        <button type="button" aria-label="Dismiss" style="background:transparent; border:none; color:#94a3b8; cursor:pointer; font-size:14px; padding:0; width:auto;">&times;</button>
+        <button type="button" class="cp-toast-close" aria-label="Dismiss">&times;</button>
       </div>
-      <div style="font-size:13px; margin-bottom:4px;">
+      <div class="cp-toast-body">
         <strong>${_escape(payload.author_name || "User")}</strong>
-        <span style="font-size:11px; color:#94a3b8;">(${_escape(payload.category || "Message")})</span>:
+        <span class="cp-toast-cat">(${_escape(payload.category || "Message")})</span>:
         ${_escape(snippet)}
       </div>
-      <div style="font-size:11px; color:#4ade80; font-weight:700;">Click to open lecture &amp; view message &rarr;</div>
+      <div class="cp-toast-cta">Click to open lecture &amp; view message &rarr;</div>
     `;
 
     const dismissBtn = toast.querySelector("button");

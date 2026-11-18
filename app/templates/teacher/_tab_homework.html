@@ -1,35 +1,47 @@
-    <!-- TAB 5: Dedicated Homework Cohort Analytics (Feature 5) -->
-    <section id="tab-homework" class="tab-pane">
-      <div class="card" style="margin-bottom:18px;">
-        <h2>
-          <span>&#128202; Homework Cohort Analytics ({{ selected_course.course_code }})</span>
-          <button class="btn-secondary btn-sm" onclick="seedSampleAssignment()">&#9889; Seed Sample Cohort</button>
-        </h2>
-        <p style="font-size:13px; color:var(--muted); margin-top:0;">
-          $O(1)$ incremental aggregation (cohort mean score, topic averages, error tags, student percentile) paired with Stage-2 zero-PII comparative AI code/solution reviews.
-        </p>
+{% from "macros/icons.html" import cp_icon %}
+<!-- TAB 5: Dedicated Homework Cohort Analytics (Feature 5) -->
+<section id="tab-homework" class="cp-tab-pane tab-pane">
+  <div class="cp-card" style="margin-bottom:16px;">
+    <div class="cp-card-header">
+      <h2>
+        {{ cp_icon('award', 18) }}
+        <span>Homework Cohort Analytics ({{ selected_course.course_code }})</span>
+      </h2>
+      <button type="button" class="cp-btn cp-btn--secondary cp-btn--sm" onclick="seedSampleAssignment()">
+        {{ cp_icon('zap', 14) }}
+        <span>Seed Sample Cohort</span>
+      </button>
+    </div>
 
-        <div style="display:grid; grid-template-columns: 1.2fr 1fr; gap:14px; align-items:end; background:#0f172a; border:1px solid var(--border); border-radius:10px; padding:12px;">
-          <div>
-            <label style="font-size:11px; font-weight:700; color:var(--accent); display:block; margin-bottom:6px;">Create New Assignment</label>
-            <div style="display:grid; grid-template-columns: 1fr auto; gap:8px; margin-bottom:8px;">
-              <input type="text" id="hw-new-title" placeholder="New Assignment Title (e.g. Ex3 — Concurrency)" />
-              <button class="btn-sm" onclick="createAssignment()">+ Create</button>
-            </div>
-            <input type="text" id="hw-new-rubric" placeholder="Grading rubric & topics (e.g. OOP design, pytest coverage, error handling)" />
-          </div>
-
-          <div>
-            <label style="font-size:11px; font-weight:700; color:var(--muted); display:block; margin-bottom:6px;">Select Assignment to Inspect</label>
-            <select id="hw-assignment-select" onchange="renderSelectedAssignment()" style="width:100%;"></select>
-          </div>
+    <div class="cp-well cp-grid-asymmetric">
+      <div>
+        <label class="cp-label" for="hw-new-title">Create New Assignment</label>
+        <div class="cp-input-action" style="margin-bottom:8px;">
+          <input type="text" id="hw-new-title" class="cp-input" placeholder="New Assignment Title (e.g. Ex3 — Concurrency)" />
+          <button type="button" class="cp-btn cp-btn--primary cp-btn--sm" onclick="createAssignment()">
+            {{ cp_icon('plus', 14) }}
+            <span>Create</span>
+          </button>
         </div>
+        <input type="text" id="hw-new-rubric" class="cp-input" placeholder="Grading rubric &amp; topics (e.g. OOP design, pytest coverage, error handling)" />
       </div>
 
-      <div class="card">
-        <div id="hw-cohort-kpis" style="display:grid; grid-template-columns: repeat(3, 1fr); gap:12px; margin-bottom:14px;"></div>
-        <div id="hw-top-tags" style="margin-bottom:14px; font-size:13px;"></div>
-        <h3 style="font-size:15px; margin:0 0 10px 0;">Student Submissions &amp; Comparative AI Reviews</h3>
-        <div id="hw-submissions-list" style="max-height:480px; overflow-y:auto;"></div>
+      <div>
+        <label class="cp-label" for="hw-assignment-select">Select Assignment to Inspect</label>
+        <select id="hw-assignment-select" class="cp-select" onchange="renderSelectedAssignment()"></select>
       </div>
-    </section>
+    </div>
+  </div>
+
+  <div class="cp-card">
+    <div id="hw-cohort-kpis" class="cp-kpi-grid-3"></div>
+    <div id="hw-top-tags" style="margin-bottom:14px; font-size:13px;"></div>
+    <div class="cp-card-header" style="margin-top:4px;">
+      <h3>
+        {{ cp_icon('bar-chart', 17) }}
+        <span>Student Submissions &amp; Comparative AI Reviews</span>
+      </h3>
+    </div>
+    <div id="hw-submissions-list" style="max-height:480px; overflow-y:auto;"></div>
+  </div>
+</section>

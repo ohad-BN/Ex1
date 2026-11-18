@@ -1,529 +1,351 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>ClassPulse — Teacher Portal ({{ selected_course.course_code }})</title>
-  <script src="/static/js/csrf.js"></script>
-  <script src="/static/js/notifications.js"></script>
-  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
-  <style>
-    :root {
-      --bg: #0b1120;
-      --sidebar: #111827;
-      --panel: #1e293b;
-      --border: #334155;
-      --text: #f8fafc;
-      --muted: #94a3b8;
-      --accent: #38bdf8;
-      --green: #22c55e;
-      --amber: #f59e0b;
-      --red: #ef4444;
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      min-height: 100vh;
-      background: var(--bg);
-      color: var(--text);
-      font-family: system-ui, -apple-system, sans-serif;
-      display: grid;
-      grid-template-columns: 280px 1fr;
-    }
-    @media (max-width: 980px) {
-      body { grid-template-columns: 1fr; }
-    }
-    /* Left School Sidebar */
-    aside.sidebar {
-      background: var(--sidebar);
-      border-right: 1px solid var(--border);
-      padding: 18px 14px;
-      display: flex;
-      flex-direction: column;
-      gap: 18px;
-      min-height: 100vh;
-    }
-    .brand {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 0 6px 12px 6px;
-      border-bottom: 1px solid var(--border);
-    }
-    .brand h1 {
-      font-size: 18px;
-      margin: 0;
-      color: var(--accent);
-      letter-spacing: -0.02em;
-    }
-    .section-label {
-      font-size: 11px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: var(--muted);
-      margin-bottom: 8px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-    }
-    .course-item, .session-item {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 10px 12px;
-      border-radius: 10px;
-      text-decoration: none;
-      color: var(--text);
-      font-size: 13px;
-      margin-bottom: 6px;
-      border: 1px solid transparent;
-      transition: background 0.12s;
-    }
-    .course-item:hover, .session-item:hover {
-      background: rgba(255, 255, 255, 0.05);
-    }
-    .course-item.active {
-      background: rgba(56, 189, 248, 0.15);
-      border-color: var(--accent);
-      font-weight: 700;
-    }
-    .session-item.active {
-      background: rgba(34, 197, 94, 0.14);
-      border-color: var(--green);
-      font-weight: 700;
-    }
-    .code-pill {
-      font-family: monospace;
-      font-size: 11px;
-      padding: 2px 7px;
-      border-radius: 6px;
-      background: #0f172a;
-      color: var(--accent);
-      border: 1px solid var(--border);
-    }
-    input[type="file"] {
-      color: var(--muted);
-      font-size: 12px;
-    }
-    input[type="file"]::file-selector-button {
-      background: #334155;
-      color: var(--text);
-      border: 1px solid var(--border);
-      border-radius: 7px;
-      padding: 6px 10px;
-      font-size: 12px;
-      font-weight: 700;
-      cursor: pointer;
-      margin-inline-end: 8px;
-    }
+{% extends "layouts/base.html" %}
+{% set cp_use_csrf = true %}
+{% set cp_use_notifications = true %}
+{% set cp_use_socketio = true %}
+{% set cp_use_headcount = true %}
+{% from "macros/icons.html" import cp_icon %}
 
-    /* Main Workspace Area */
-    main.workspace {
-      display: flex;
-      flex-direction: column;
-      min-width: 0;
-    }
-    header.topbar {
-      background: #0f172a;
-      border-bottom: 1px solid var(--border);
-      padding: 14px 24px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      flex-wrap: wrap;
-      gap: 12px;
-    }
-    .tab-bar {
-      background: #111827;
-      border-bottom: 1px solid var(--border);
-      padding: 0 24px;
-      display: flex;
-      gap: 6px;
-      overflow-x: auto;
-    }
-    .tab-btn {
-      background: transparent;
-      color: var(--muted);
-      border: none;
-      border-bottom: 3px solid transparent;
-      padding: 14px 16px;
-      font-size: 13px;
-      font-weight: 700;
-      cursor: pointer;
-      white-space: nowrap;
-      border-radius: 0;
-    }
-    .tab-btn:hover { color: var(--text); }
-    .tab-btn.active {
-      color: var(--accent);
-      border-bottom-color: var(--accent);
-      background: rgba(56, 189, 248, 0.06);
-    }
-    .tab-pane {
-      display: none;
-      padding: 22px 24px;
-      max-width: 1400px;
-      width: 100%;
-    }
-    .tab-pane.active { display: block; }
+{% block title %}ClassPulse — Teacher Portal ({{ selected_course.course_code }}){% endblock %}
 
-    /* Shared UI Components */
-    .grid-2 {
-      display: grid;
-      grid-template-columns: 400px 1fr;
-      gap: 20px;
-      align-items: start;
-    }
-    @media (max-width: 1100px) {
-      .grid-2 { grid-template-columns: 1fr; }
-    }
-    .card {
-      background: var(--panel);
-      border: 1px solid var(--border);
-      border-radius: 14px;
-      padding: 18px;
-      margin-bottom: 18px;
-    }
-    .card h2, .card h3 {
-      margin-top: 0;
-      font-size: 16px;
-      border-bottom: 1px solid var(--border);
-      padding-bottom: 10px;
-      margin-bottom: 14px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-    }
-    .btn, button {
-      background: var(--accent);
-      color: #0f172a;
-      border: none;
-      border-radius: 8px;
-      padding: 8px 14px;
-      font-weight: 700;
-      font-size: 13px;
-      cursor: pointer;
-      text-decoration: none;
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-    }
-    .btn-secondary {
-      background: #334155;
-      color: var(--text);
-    }
-    .btn-green {
-      background: var(--green);
-      color: #052e16;
-    }
-    .btn-sm {
-      padding: 5px 10px;
-      font-size: 12px;
-    }
-    input[type="text"], input[type="number"], textarea, select {
-      background: #0f172a;
-      color: var(--text);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 8px 10px;
-      font-size: 13px;
-      width: 100%;
-    }
-    .kpi-row {
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 12px;
-      margin-bottom: 16px;
-    }
-    .kpi {
-      background: #0f172a;
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 12px;
-      text-align: center;
-    }
-    .kpi .num { font-size: 26px; font-weight: 800; color: var(--accent); }
-    .kpi .lbl { font-size: 11px; color: var(--muted); text-transform: uppercase; margin-top: 4px; }
-    .qr-preview {
-      background: #ffffff;
-      border-radius: 12px;
-      padding: 10px;
-      width: 230px;
-      height: 230px;
-      margin: 0 auto 10px auto;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-    .qr-preview img { width: 100%; height: 100%; object-fit: contain; }
-    .qr-progress-track {
-      width: 230px;
-      height: 7px;
-      background: #0f172a;
-      border: 1px solid var(--border);
-      border-radius: 999px;
-      overflow: hidden;
-      margin: 0 auto 10px auto;
-    }
-    .qr-progress-fill {
-      height: 100%;
-      width: 100%;
-      background: linear-gradient(90deg, var(--accent), var(--green));
-      transition: width 0.08s linear;
-    }
-    .badge {
-      padding: 4px 10px;
-      border-radius: 999px;
-      font-size: 11px;
-      font-weight: 700;
-    }
-    .badge.VERIFIED, .badge.PRESENT { background: rgba(34,197,94,0.2); color: #4ade80; }
-    .badge.UNDER_SCANNED, .badge.UNLISTED { background: rgba(245,158,11,0.2); color: #fbbf24; }
-    .badge.DISCREPANCY_ALERT, .badge.ABSENT { background: rgba(239,68,68,0.2); color: #f87171; }
-    .badge.AWAITING_PHOTO { background: #334155; color: #cbd5e1; }
-    table { width: 100%; border-collapse: collapse; font-size: 13px; }
-    th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--border); }
-    th { color: var(--muted); font-size: 11px; text-transform: uppercase; }
-    canvas#headcount-canvas {
-      width: 100%;
-      max-height: 500px;
-      background: #090d16;
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      cursor: crosshair;
-      display: block;
-    }
-    /* Modal */
-    .modal-backdrop {
-      display: none;
-      position: fixed;
-      inset: 0;
-      background: rgba(0, 0, 0, 0.7);
-      align-items: center;
-      justify-content: center;
-      z-index: 999;
-    }
-    .modal-backdrop.open { display: flex; }
-    .modal-card {
-      background: var(--panel);
-      border: 1px solid var(--border);
-      border-radius: 14px;
-      padding: 22px;
-      width: 100%;
-      max-width: 440px;
-    }
-  </style>
-</head>
-<body>
-  <!-- Left Sidebar: School-Wide Course & Lecture Selector -->
-  <aside class="sidebar">
-    <div class="brand">
-      <div>
-        <h1>ClassPulse</h1>
-        <div style="font-size:11px; color:var(--muted);">Teacher Multi-Course Portal</div>
+{% block styles %}
+<style>
+  .cp-sidebar-section-hdr {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .cp-sidebar-divider {
+    border-top: 1px solid var(--cp-border);
+    padding-top: 12px;
+  }
+  .cp-topbar-meta {
+    font-size: 12px;
+    color: var(--cp-ink-muted);
+    margin-top: 5px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .cp-topbar-meta a {
+    font-family: var(--cp-font-mono);
+    overflow-wrap: anywhere;
+    word-break: break-all;
+  }
+  .cp-poll-stage-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 12px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--cp-border);
+  }
+  .cp-poll-empty {
+    text-align: center;
+    padding: 40px 20px;
+    color: var(--cp-ink-muted);
+  }
+  .cp-poll-empty-icon {
+    width: 46px;
+    height: 46px;
+    margin: 0 auto 10px auto;
+    border-radius: 14px;
+    background: var(--cp-indigo-soft);
+    color: var(--cp-indigo-ink);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .cp-review-h {
+    font-size: 11px;
+    font-weight: 800;
+    color: var(--cp-indigo-ink);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin: 10px 0 4px;
+  }
+  .cp-review-code {
+    background: var(--cp-surface-solid);
+    color: var(--cp-indigo-ink);
+    border: 1px solid var(--cp-border);
+    padding: 1px 6px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-family: var(--cp-font-mono);
+  }
+</style>
+{% endblock %}
+
+{% block body %}
+<div class="cp-teacher-shell">
+  <!-- Collapsible Mobile/Tablet Drawer Summary Bar (<=980px) -->
+  <div class="cp-mobile-drawer-bar">
+    <div class="cp-brand-lockup">
+      <span class="cp-orb cp-orb--xs" aria-hidden="true"></span>
+      <div style="min-width:0;">
+        <div class="cp-row-wrap" style="gap:6px;">
+          <strong style="font-size:14px; color:var(--cp-ink);">ClassPulse</strong>
+          <span class="cp-code-pill code-pill">{{ selected_course.course_code }}</span>
+          <span class="cp-code-pill code-pill">{{ session.session_code }}</span>
+        </div>
+        <div class="cp-brand-sub" style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ session.title }}</div>
       </div>
-      <a class="btn btn-secondary btn-sm" href="/student" target="_blank">Student App &nearr;</a>
+    </div>
+    <button type="button"
+            id="mobile-sidebar-toggle"
+            class="cp-btn cp-btn--white cp-btn--sm"
+            aria-expanded="false"
+            aria-controls="teacher-sidebar"
+            onclick="toggleMobileSidebar()">
+      {{ cp_icon('menu', 16) }}
+      <span>Courses &amp; Lectures</span>
+    </button>
+  </div>
+
+  <!-- Left Sidebar: School-Wide Course & Lecture Selector -->
+  <aside id="teacher-sidebar" class="cp-sidebar sidebar">
+    <div class="cp-row-between cp-sidebar-divider" style="border-top:none; padding-top:0; padding-bottom:12px; border-bottom:1px solid var(--cp-border);">
+      <div class="cp-brand-lockup">
+        <span class="cp-orb cp-orb--sm" aria-hidden="true"></span>
+        <div>
+          <h1 class="cp-brand-title">ClassPulse</h1>
+          <div class="cp-brand-sub">Teacher Multi-Course Portal</div>
+        </div>
+      </div>
+      <a class="cp-btn cp-btn--white cp-btn--sm" href="/student" target="_blank">
+        <span>Student App</span>
+        {{ cp_icon('external-link', 13) }}
+      </a>
     </div>
 
     <!-- Lecturer Courses List -->
     <div>
-      <div class="section-label">
-        <span>My Courses ({{ courses|length }})</span>
-        <button class="btn btn-sm" onclick="openModal('modal-new-course')">+ Course</button>
+      <div class="cp-sidebar-section-hdr">
+        <span class="cp-eyebrow">My Courses ({{ courses|length }})</span>
+        <button type="button" class="cp-btn cp-btn--primary cp-btn--sm" onclick="openModal('modal-new-course')">
+          {{ cp_icon('plus', 13) }}
+          <span>Course</span>
+        </button>
       </div>
       {% for c in courses %}
-        <a class="course-item {% if c.id == selected_course.id %}active{% endif %}"
+        <a class="cp-nav-item course-item {% if c.id == selected_course.id %}active{% endif %}"
            href="/teacher?course_id={{ c.id }}">
-          <div style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:165px;">
-            {{ c.name }}
-          </div>
-          <span class="code-pill">{{ c.course_code }}</span>
+          <span class="cp-nav-label">{{ c.name }}</span>
+          <span class="cp-code-pill code-pill">{{ c.course_code }}</span>
         </a>
       {% endfor %}
     </div>
 
     <!-- Course Lecture Sessions List -->
-    <div style="flex:1; overflow-y:auto;">
-      <div class="section-label">
-        <span>{{ selected_course.course_code }} Lectures ({{ course_sessions|length }})</span>
-        <button class="btn btn-green btn-sm" onclick="openModal('modal-new-lecture')">+ Lecture</button>
+    <div style="flex:1; overflow-y:auto; min-height:0;">
+      <div class="cp-sidebar-section-hdr">
+        <span class="cp-eyebrow">{{ selected_course.course_code }} Lectures ({{ course_sessions|length }})</span>
+        <button type="button" class="cp-btn cp-btn--green cp-btn--sm" onclick="openModal('modal-new-lecture')">
+          {{ cp_icon('plus', 13) }}
+          <span>Lecture</span>
+        </button>
       </div>
       {% for s in course_sessions %}
-        <a class="session-item {% if s.session_code == session.session_code %}active{% endif %}"
+        <a class="cp-session-item session-item {% if s.session_code == session.session_code %}active{% endif %}"
            href="/teacher?course_id={{ selected_course.id }}&session={{ s.session_code }}">
-          <div>
-            <div style="font-size:13px;">{{ s.title }}</div>
-            <div style="font-size:11px; color:var(--muted);">
+          <div class="cp-nav-label">
+            <div style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ s.title }}</div>
+            <div class="cp-muted cp-tabular" style="font-size:11px; font-weight:500;">
               {{ s.started_at.strftime('%Y-%m-%d %H:%M') }}
             </div>
           </div>
-          <span class="code-pill">{{ s.session_code }}</span>
+          <span class="cp-code-pill code-pill">{{ s.session_code }}</span>
         </a>
       {% endfor %}
     </div>
 
-    <div style="font-size:11px; color:var(--muted); border-top:1px solid var(--border); padding-top:10px;">
-      Lecturer: <strong style="color:var(--text);">{{ lecturer.full_name if lecturer else selected_course.lecturer_name }}</strong>
-      {% if lecturer and lecturer.username %}<span style="color:var(--accent);">(@{{ lecturer.username }})</span>{% endif %}<br/>
-      Dept: {{ lecturer.department if lecturer else selected_course.department }} &bull; {{ selected_course.semester }}
-      <div style="margin-top:8px; display:flex; gap:6px; flex-wrap:wrap;">
-        <button type="button" class="btn-secondary btn-sm" onclick="openModal('modal-account-security')" style="border-radius:6px; padding:4px 8px;">
-          Security
+    <!-- Lecturer Identity & Account Actions -->
+    <div class="cp-well" style="font-size:11.5px;">
+      <div class="cp-secondary">
+        Lecturer: <strong style="color:var(--cp-ink);">{{ lecturer.full_name if lecturer else selected_course.lecturer_name }}</strong>
+        {% if lecturer and lecturer.username %}<span style="color:var(--cp-indigo-ink); font-weight:700;">(@{{ lecturer.username }})</span>{% endif %}
+      </div>
+      <div class="cp-muted" style="margin-top:2px;">
+        Dept: {{ lecturer.department if lecturer else selected_course.department }} &bull; {{ selected_course.semester }}
+      </div>
+      <div class="cp-row-wrap" style="margin-top:10px; gap:6px;">
+        <button type="button" class="cp-btn cp-btn--white cp-btn--sm" onclick="openModal('modal-account-security')">
+          {{ cp_icon('shield', 13) }}
+          <span>Security</span>
         </button>
-        <a class="btn-secondary btn-sm" href="/teacher/login" style="text-decoration:none; color:var(--text); border-radius:6px; padding:4px 8px;">
-          Switch Lecturer
+        <a class="cp-btn cp-btn--white cp-btn--sm" href="/teacher/login">
+          <span>Switch Lecturer</span>
         </a>
-        <button type="button" class="btn-secondary btn-sm" onclick="logoutLecturer()" style="border-radius:6px; padding:4px 8px;">
-          Sign Out
+        <button type="button" class="cp-btn cp-btn--secondary cp-btn--sm" onclick="logoutLecturer()">
+          {{ cp_icon('log-out', 13) }}
+          <span>Sign Out</span>
         </button>
       </div>
     </div>
   </aside>
 
   <!-- Right Main Modular Workspace -->
-  <main class="workspace">
-    <!-- Top Header -->
-    <header class="topbar">
-      <div>
-        <div style="display:flex; align-items:center; gap:10px;">
-          <span class="code-pill" style="font-size:13px; padding:4px 10px;">{{ selected_course.course_code }}</span>
-          <h2 style="margin:0; font-size:20px;">{{ session.title }}</h2>
-          <span class="badge {% if session.attendance_open %}VERIFIED{% else %}ABSENT{% endif %}">
-            {% if session.attendance_open %}LIVE SESSION ({{ session.session_code }}){% else %}CLOSED ({{ session.session_code }}){% endif %}
-          </span>
-        </div>
-        <div style="font-size:12px; color:var(--muted); margin-top:4px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-          <span>Course: {{ selected_course.name }} &bull; Enrolled Students: <strong id="top-enrolled-count">{{ selected_course.students|length }}</strong></span>
-          <span>&bull;</span>
-          <span>Public URL: <a id="top-tunnel-url" href="{{ base_url }}" target="_blank" style="color:var(--accent); font-family:monospace;">{{ base_url }}</a></span>
-        </div>
-      </div>
-
-      <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-        <a class="btn" href="/projector/{{ session.session_code }}?ptok={{ projector_token }}" target="_blank">&#128250; Launch Projector QR</a>
-        <a class="btn btn-secondary" href="/lecturer/chat-popout/{{ session.session_code }}" target="_blank">&#128172; Q&amp;A Pop-Out</a>
-        <a class="btn btn-secondary" href="/student?session={{ session.session_code }}" target="_blank">&#128241; Preview Student App</a>
-      </div>
-    </header>
-
-    <!-- 6 Modular Workspace Tabs -->
-    <nav class="tab-bar">
-      <button class="tab-btn active" data-tab-target="tab-attendance" onclick="switchTab('tab-attendance', this)">
-        1. Live Attendance &amp; CV Headcount
+  <main class="cp-workspace workspace">
+    <!-- 6 Modular Workspace Tabs (Single-Line Top Bar) -->
+    <nav class="cp-tab-bar tab-bar" aria-label="Lecturer workspace tabs">
+      <button type="button" class="cp-tab-btn tab-btn active" data-tab-target="tab-attendance" onclick="switchTab('tab-attendance', this)">
+        {{ cp_icon('qr', 15) }}
+        <span>Attendance</span>
       </button>
-      <button class="tab-btn" data-tab-target="tab-polls" onclick="switchTab('tab-polls', this)">
-        2. Live Lecture Polls
+      <button type="button" class="cp-tab-btn tab-btn" data-tab-target="tab-polls" onclick="switchTab('tab-polls', this)">
+        {{ cp_icon('bar-chart', 15) }}
+        <span>Polls</span>
       </button>
-      <button class="tab-btn" data-tab-target="tab-chat" onclick="switchTab('tab-chat', this)">
-        3. Live Classroom Q&amp;A <span id="tab-chat-badge" class="cp-red-dot" style="display:none;"></span>
+      <button type="button" class="cp-tab-btn tab-btn" data-tab-target="tab-chat" onclick="switchTab('tab-chat', this)">
+        {{ cp_icon('message-square', 15) }}
+        <span>Q&amp;A <span id="tab-chat-badge" class="cp-red-dot" style="display:none;"></span></span>
       </button>
-      <button class="tab-btn" data-tab-target="tab-ai-lectures" onclick="switchTab('tab-ai-lectures', this)">
-        4. AI Lecture Summarizer
+      <button type="button" class="cp-tab-btn tab-btn" data-tab-target="tab-ai-lectures" onclick="switchTab('tab-ai-lectures', this)">
+        {{ cp_icon('sparkles', 15) }}
+        <span>AI Summary</span>
       </button>
-      <button class="tab-btn" data-tab-target="tab-homework" onclick="switchTab('tab-homework', this)">
-        5. Homework Cohort Analytics
+      <button type="button" class="cp-tab-btn tab-btn" data-tab-target="tab-homework" onclick="switchTab('tab-homework', this)">
+        {{ cp_icon('award', 15) }}
+        <span>Homework</span>
       </button>
-      <button id="tab-btn-course-monitor" class="tab-btn" data-tab-target="tab-course-roster" onclick="switchTab('tab-course-roster', this)">
-        6. Course Attendance Monitor ({{ selected_course.students|length }})
+      <button type="button" id="tab-btn-course-monitor" class="cp-tab-btn tab-btn" data-tab-target="tab-course-roster" onclick="switchTab('tab-course-roster', this)">
+        {{ cp_icon('users', 15) }}
+        <span>Roster ({{ selected_course.students|length }})</span>
       </button>
     </nav>
 
-    <!-- TAB 1: Live Attendance & CV Headcount (Feature 1 P0) -->
-    <section id="tab-attendance" class="tab-pane active">
-      <div class="kpi-row">
-        <div class="kpi">
-          <div class="num" id="kpi-roster">{{ verdict.roster_count }}</div>
-          <div class="lbl">Session Roster</div>
-        </div>
-        <div class="kpi">
-          <div class="num" id="kpi-qr">{{ verdict.qr_count }}</div>
-          <div class="lbl">QR Self Check-Ins</div>
-        </div>
-        <div class="kpi">
-          <div class="num" id="kpi-visual">
-            {% if verdict.visual_count is not none %}{{ verdict.visual_count }}{% else %}&mdash;{% endif %}
-          </div>
-          <div class="lbl">Verified Headcount</div>
-        </div>
-        <div class="kpi">
-          <div class="num" id="kpi-delta">
-            {% if verdict.delta is not none %}{{ "%+d"|format(verdict.delta) }}{% else %}&mdash;{% endif %}
-          </div>
-          <div class="lbl">Discrepancy (&Delta;)</div>
+    <!-- Top Header -->
+    <header class="cp-topbar topbar">
+      <div style="min-width:0; flex:1 1 300px;">
+        <div class="cp-row-wrap" style="gap:10px;">
+          <span class="cp-code-pill code-pill" style="font-size:12.5px; padding:4px 10px;">{{ selected_course.course_code }}</span>
+          <h2 style="margin:0; font-size:20px; font-weight:800; color:var(--cp-ink);">{{ session.title }}</h2>
+          <span class="cp-badge badge {% if session.attendance_open %}VERIFIED{% else %}ABSENT{% endif %}">
+            {% if session.attendance_open %}LIVE SESSION ({{ session.session_code }}){% else %}CLOSED ({{ session.session_code }}){% endif %}
+          </span>
         </div>
       </div>
 
-      <div class="grid-2">
+      <div class="cp-row-wrap">
+        <a class="cp-btn cp-btn--primary cp-btn--sm" href="/projector/{{ session.session_code }}?ptok={{ projector_token }}" target="_blank">
+          {{ cp_icon('monitor', 15) }}
+          <span>Launch Projector QR</span>
+        </a>
+        <a class="cp-btn cp-btn--white cp-btn--sm" href="/lecturer/chat-popout/{{ session.session_code }}" target="_blank">
+          {{ cp_icon('message-square', 15) }}
+          <span>Q&amp;A Pop-Out</span>
+        </a>
+        <a class="cp-btn cp-btn--white cp-btn--sm" href="/student?session={{ session.session_code }}" target="_blank">
+          {{ cp_icon('smartphone', 15) }}
+          <span>Preview Student App</span>
+        </a>
+      </div>
+    </header>
+
+    <!-- TAB 1: Live Attendance & CV Headcount (Feature 1 P0) -->
+    <section id="tab-attendance" class="cp-tab-pane tab-pane active">
+      <div class="cp-kpi-grid-4">
+        <div class="cp-kpi">
+          <div class="cp-kpi-num cp-kpi-num--indigo cp-tabular" id="kpi-roster">{{ verdict.roster_count }}</div>
+          <div class="cp-kpi-lbl">Session Roster</div>
+        </div>
+        <div class="cp-kpi">
+          <div class="cp-kpi-num cp-kpi-num--coral cp-tabular" id="kpi-qr">{{ verdict.qr_count }}</div>
+          <div class="cp-kpi-lbl">QR Self Check-Ins</div>
+        </div>
+        <div class="cp-kpi">
+          <div class="cp-kpi-num cp-kpi-num--green cp-tabular" id="kpi-visual">
+            {% if verdict.visual_count is not none %}{{ verdict.visual_count }}{% else %}&mdash;{% endif %}
+          </div>
+          <div class="cp-kpi-lbl">Verified Headcount</div>
+        </div>
+        <div class="cp-kpi">
+          <div class="cp-kpi-num cp-tabular" id="kpi-delta">
+            {% if verdict.delta is not none %}{{ "%+d"|format(verdict.delta) }}{% else %}&mdash;{% endif %}
+          </div>
+          <div class="cp-kpi-lbl">Discrepancy (&Delta;)</div>
+        </div>
+      </div>
+
+      <div class="cp-grid-2" style="margin-bottom:16px;">
         <!-- Left: 5s Rotating QR -->
-        <div class="card" style="text-align:center;">
-          <h2>
-            <span>5-Second Rolling QR</span>
-            <button class="btn-secondary btn-sm" onclick="toggleSessionOpen({{ session.id }})">
+        <div class="cp-card" style="text-align:center;">
+          <div class="cp-card-header">
+            <h2>{{ cp_icon('qr', 18) }} <span>5-Second Rolling QR</span></h2>
+            <button type="button" class="cp-btn cp-btn--secondary cp-btn--sm" onclick="toggleSessionOpen({{ session.id }})">
               {% if session.attendance_open %}Close Check-In{% else %}Reopen Check-In{% endif %}
             </button>
-          </h2>
-          <div class="qr-preview">
+          </div>
+          <div class="cp-qr-island">
             <img id="dash-qr-img" src="{{ qr_payload.svg_data_uri }}" alt="Rolling QR" />
           </div>
-          <div class="qr-progress-track">
-            <div class="qr-progress-fill" id="dash-qr-progress"></div>
+          <div class="cp-progress-track">
+            <div class="cp-progress-fill" id="dash-qr-progress"></div>
           </div>
-          <div style="font-size:12px; color:var(--muted); margin-bottom:6px; display:flex; justify-content:center; align-items:center; gap:8px;">
-            <span>Bucket <code id="dash-bucket">{{ qr_payload.bucket }}</code></span>
-            <span>&bull;</span>
-            <span id="qr-countdown-badge" style="color:var(--accent); font-weight:700;">Refreshing in 5s</span>
-            <button type="button" class="btn-secondary btn-sm" onclick="rotateQR()" style="padding:2px 8px; font-size:11px;">&#8635; Now</button>
+          <div class="cp-row-wrap" style="justify-content:center; font-size:12px; color:var(--cp-ink-muted); margin-bottom:10px;">
+            <span id="qr-countdown-badge" class="cp-tabular" style="color:var(--cp-coral-cta); font-weight:700;">Refreshing in 5s</span>
+            <button type="button" class="cp-btn cp-btn--secondary cp-btn--sm" onclick="rotateQR()">
+              {{ cp_icon('refresh', 13) }}
+              <span>Now</span>
+            </button>
           </div>
-          <div style="font-size:11px; word-break:break-all; background:#0f172a; padding:8px; border-radius:8px;">
-            <a id="dash-scan-url" href="{{ qr_payload.url }}" target="_blank" onclick="openFreshStudentScanLink(event)" style="color:var(--accent);">
+          <div class="cp-well" style="font-size:11px; word-break:break-all; overflow-wrap:anywhere; text-align:left;">
+            <a id="dash-scan-url" href="{{ qr_payload.url }}" target="_blank" onclick="openFreshStudentScanLink(event)">
               {{ qr_payload.url }}
             </a>
           </div>
         </div>
 
         <!-- Right: CV Headcounter + Interactive Canvas -->
-        <div class="card">
-          <h2>
-            <span>AI Classroom Face Counter (Tiled SCRFD + Interactive Audit)</span>
-            <span id="audit-badge" class="badge {{ verdict.status }}">{{ verdict.status }}</span>
-          </h2>
-          <p id="audit-explanation" style="font-size:13px; color:var(--muted); margin-top:0;">
-            {{ verdict.explanation }}
-          </p>
-
-          <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:12px;">
-            <input type="file" id="photo-input" accept="image/*" style="max-width:250px;" />
-            <button onclick="uploadClassroomPhoto()">Upload &amp; Count Faces</button>
-            <button class="btn-secondary" onclick="runSamplePhoto()">Use Ariel Classroom Sample</button>
-            <span id="cv-status" style="font-size:12px; color:var(--accent);"></span>
+        <div class="cp-card">
+          <div class="cp-card-header">
+            <h2>{{ cp_icon('camera', 18) }} <span>AI Classroom Face Counter</span></h2>
+            <span id="audit-badge" class="cp-badge badge {{ verdict.status }}">{{ verdict.status }}</span>
           </div>
 
-          <canvas id="headcount-canvas"></canvas>
+          <div class="cp-row-wrap" style="margin-bottom:12px;">
+            <input type="file" id="photo-input" class="cp-file-input" accept="image/*" style="max-width:100%;" />
+            <button type="button" class="cp-btn cp-btn--primary cp-btn--sm" onclick="uploadClassroomPhoto()">
+              {{ cp_icon('camera', 14) }}
+              <span>Upload &amp; Count Faces</span>
+            </button>
+            <button type="button" class="cp-btn cp-btn--secondary cp-btn--sm" onclick="runSamplePhoto()">Use Ariel Classroom Sample</button>
+            <span id="cv-status" style="font-size:12px; font-weight:700; color:var(--cp-indigo-ink);"></span>
+          </div>
 
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-top:10px; font-size:12px; color:var(--muted);">
-            <span>
-              <strong>Interactive Correction:</strong> Click empty head to <strong>+Add Box</strong>; click existing box to <strong>&times; Remove</strong>.
-            </span>
-            <span>
+          <div class="cp-cv-frame">
+            <canvas id="headcount-canvas"></canvas>
+          </div>
+
+          <div style="display:flex; justify-content:flex-end; margin-top:10px; font-size:12px; color:var(--cp-ink-secondary);">
+            <span class="cp-tabular">
               Auto CV: <strong id="snap-auto-count">{{ latest_snap.auto_count if latest_snap else 0 }}</strong> |
-              Verified: <strong id="snap-verified-count" style="color:#4ade80;">{{ latest_snap.verified_count if latest_snap else 0 }}</strong>
+              Verified: <strong id="snap-verified-count" style="color:var(--cp-green-ink);">{{ latest_snap.verified_count if latest_snap else 0 }}</strong>
             </span>
           </div>
         </div>
       </div>
 
       <!-- Session Attendance Table & Export -->
-      <div class="card">
-        <h2>
-          <span>Lecture Attendance Log ({{ session.session_code }})</span>
-          <div style="display:flex; gap:8px;">
-            <a class="btn btn-sm" href="/api/sessions/{{ session.id }}/reports/attendance.xlsx">Download Excel (.xlsx)</a>
-            <a class="btn btn-secondary btn-sm" href="/api/sessions/{{ session.id }}/reports/attendance.csv">Download CSV (.csv)</a>
+      <div class="cp-card">
+        <div class="cp-card-header">
+          <h2>{{ cp_icon('user-check', 18) }} <span>Lecture Attendance Log</span></h2>
+          <div class="cp-row-wrap">
+            <a class="cp-btn cp-btn--primary cp-btn--sm" href="/api/sessions/{{ session.id }}/report?format=xlsx">
+              {{ cp_icon('download', 14) }}
+              <span>Download Excel (.xlsx)</span>
+            </a>
+            <a class="cp-btn cp-btn--secondary cp-btn--sm" href="/api/sessions/{{ session.id }}/report?format=csv">
+              {{ cp_icon('file-text', 14) }}
+              <span>Download CSV (.csv)</span>
+            </a>
           </div>
-        </h2>
-        <div style="max-height:300px; overflow-y:auto;">
-          <table>
+        </div>
+        <div class="cp-table-scroll" style="max-height:320px; overflow-y:auto;">
+          <table class="cp-table">
             <thead>
               <tr>
                 <th>#</th>
@@ -539,18 +361,18 @@
             <tbody id="attendance-tbody">
               {% for r in rows %}
               <tr>
-                <td>{{ r.index }}</td>
+                <td class="cp-tabular">{{ r.index }}</td>
                 <td><strong>{{ r.full_name }}</strong></td>
                 <td><code>{{ r.student_id_number or '-' }}</code></td>
                 <td>{{ r.email }}</td>
-                <td><span class="badge {{ r.roster_status }}">{{ r.roster_status }}</span></td>
-                <td><span class="badge {{ r.attendance_status }}">{{ r.attendance_status }}</span></td>
-                <td>{{ r.checked_in_at or '—' }}</td>
+                <td><span class="cp-badge badge {{ r.roster_status }}">{{ r.roster_status }}</span></td>
+                <td><span class="cp-badge badge {{ r.attendance_status }}">{{ r.attendance_status }}</span></td>
+                <td class="cp-tabular">{{ r.checked_in_at or '—' }}</td>
                 <td><code>{{ r.device_hash or '—' }}</code></td>
               </tr>
               {% else %}
               <tr>
-                <td colspan="8" style="text-align:center; color:var(--muted);">
+                <td colspan="8" class="cp-muted" style="text-align:center;">
                   No students checked in yet. Scan the QR code above!
                 </td>
               </tr>
@@ -562,121 +384,119 @@
     </section>
 
     <!-- TAB 2: Live Lecture Polls (Feature 3 — Real-Time Socket.IO Studio) -->
-    <section id="tab-polls" class="tab-pane">
-      <!-- 1-Click Instant Polls Bar (Mentimeter / Slido Style) -->
-      <div class="card" style="padding:14px 18px; margin-bottom:16px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; background:linear-gradient(135deg, rgba(30,41,59,0.95), rgba(15,23,42,0.95));">
-        <div style="display:flex; align-items:center; gap:10px;">
-          <span style="background:rgba(56,189,248,0.16); color:var(--accent); border:1px solid rgba(56,189,248,0.35); padding:4px 10px; border-radius:999px; font-size:11px; font-weight:700;">
-            &#9889; Live Lecture Polls ({{ session.session_code }})
-          </span>
-          <span style="font-size:13px; color:var(--muted);">
-            <strong>1-Click Instant Polls:</strong> Launch immediately &amp; save to this lecture
-          </span>
-        </div>
-        <div style="display:flex; gap:8px; flex-wrap:wrap;">
-          <button class="btn-green btn-sm" onclick="quickLaunchPoll('Pulse Check: Do you follow this topic so far?', ['👍 Yes, clear!', '🤔 Need an example', '✋ Please slow down'])">
-            &#128077; Pulse Check (Yes / Example / Slow Down)
+    <section id="tab-polls" class="cp-tab-pane tab-pane">
+      <!-- 1-Click Instant Polls Bar -->
+      <div class="cp-card cp-card--compact" style="margin-bottom:16px;">
+        <div class="cp-row-wrap">
+          <button type="button" class="cp-btn cp-btn--green cp-btn--sm" onclick="quickLaunchPoll('Pulse Check: Do you follow this topic so far?', ['👍 Yes, clear!', '🤔 Need an example', '✋ Please slow down'])">
+            {{ cp_icon('check-circle', 14) }}
+            <span>Pulse Check (Yes / Example / Slow Down)</span>
           </button>
-          <button class="btn-sm" onclick="quickLaunchPoll('True or False?', ['✅ True', '❌ False'])">
-            &#9889; Quick True / False
+          <button type="button" class="cp-btn cp-btn--primary cp-btn--sm" onclick="quickLaunchPoll('True or False?', ['✅ True', '❌ False'])">
+            {{ cp_icon('zap', 14) }}
+            <span>Quick True / False</span>
           </button>
-          <button class="btn-secondary btn-sm" onclick="quickLaunchPoll('Select the correct option:', ['A', 'B', 'C', 'D'])">
-            &#128292; Quick A / B / C / D
+          <button type="button" class="cp-btn cp-btn--secondary cp-btn--sm" onclick="quickLaunchPoll('Select the correct option:', ['A', 'B', 'C', 'D'])">
+            {{ cp_icon('bar-chart', 14) }}
+            <span>Quick A / B / C / D</span>
           </button>
         </div>
       </div>
 
-      <div class="grid-2" style="grid-template-columns: 400px 1fr;">
+      <div class="cp-split-400">
         <!-- Left Column: Simple Custom Poll Launcher + Lecture Polls History -->
-        <div class="card" style="margin-bottom:0;">
-          <h2 style="margin-bottom:10px;">
-            <span>Launch Custom Poll</span>
-            <span style="font-size:11px; color:var(--muted); font-weight:400;">{{ session.session_code }}</span>
-          </h2>
-          <input type="text" id="poll-question" placeholder="Ask the class a question..." style="margin-bottom:8px;" />
-          <textarea id="poll-options" rows="3" placeholder="Options (one per line):&#10;Option A&#10;Option B&#10;Option C"></textarea>
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-top:8px;">
-            <span style="font-size:12px; color:var(--muted);">Correct Option # (1-based, optional):</span>
-            <input type="number" id="poll-correct-idx" min="1" max="10" placeholder="—" style="width:70px; padding:5px 8px;" />
+        <div class="cp-card">
+          <div class="cp-card-header">
+            <h2>{{ cp_icon('plus', 17) }} <span>Launch Custom Poll</span></h2>
+            <span class="cp-code-pill code-pill">{{ session.session_code }}</span>
+          </div>
+          <input type="text" id="poll-question" class="cp-input" placeholder="Ask the class a question..." style="margin-bottom:8px;" />
+          <textarea id="poll-options" class="cp-textarea" rows="3" placeholder="Options (one per line):&#10;Option A&#10;Option B&#10;Option C"></textarea>
+          <div class="cp-row-between" style="margin-top:8px;">
+            <label class="cp-secondary" for="poll-correct-idx" style="font-size:12px; font-weight:600;">Correct Option # (1-based, optional):</label>
+            <input type="number" id="poll-correct-idx" class="cp-input" min="1" max="10" placeholder="—" style="width:76px; padding:6px 10px;" />
           </div>
           <div style="margin-top:12px;">
-            <button class="btn-green" onclick="createPoll(true)" style="width:100%; justify-content:center; padding:11px;">
-              &#128640; Launch Live Poll Now
+            <button type="button" class="cp-btn cp-btn--green cp-btn--block" onclick="createPoll(true)">
+              {{ cp_icon('play', 14) }}
+              <span>Launch Live Poll Now</span>
             </button>
           </div>
 
-          <div style="border-top:1px solid var(--border); margin-top:18px; padding-top:14px;">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-              <strong style="font-size:13px; color:#cbd5e1;">Polls in This Lecture ({{ session.session_code }})</strong>
-              <span style="font-size:11px; color:var(--muted);">Saved automatically</span>
+          <div style="border-top:1px solid var(--cp-border); margin-top:18px; padding-top:14px;">
+            <div style="margin-bottom:8px;">
+              <strong style="font-size:13px; color:var(--cp-ink);">Polls in This Lecture</strong>
             </div>
             <div id="poll-bank-list" style="max-height:260px; overflow-y:auto; font-size:13px;"></div>
           </div>
         </div>
 
-        <!-- Right Column: Mentimeter-Style Live Stage -->
-        <div class="card" style="margin-bottom:0; display:flex; flex-direction:column; justify-content:space-between; background:#0b1120; border:1px solid rgba(56,189,248,0.28);">
+        <!-- Right Column: Live Poll Stage -->
+        <div class="cp-card" style="display:flex; flex-direction:column; justify-content:space-between;">
           <div>
-            <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; padding-bottom:14px; border-bottom:1px solid var(--border);">
-              <div>
-                <div id="live-poll-status-pill" style="display:inline-block; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; padding:3px 10px; border-radius:999px; background:rgba(148,163,184,0.15); color:var(--muted); margin-bottom:6px;">
+            <div class="cp-poll-stage-head">
+              <div style="min-width:0; flex:1 1 220px;">
+                <div id="live-poll-status-pill" class="cp-badge cp-badge--neutral" style="margin-bottom:8px;">
                   Waiting for Poll
                 </div>
-                <div id="live-poll-title" style="font-size:20px; font-weight:800; color:#f8fafc;">
+                <div id="live-poll-title" style="font-size:20px; font-weight:800; color:var(--cp-ink); overflow-wrap:anywhere;">
                   No Active Poll — Click any Quick Poll above!
                 </div>
               </div>
-              <div style="display:flex; align-items:center; gap:10px;">
-                <div style="text-align:right; background:#1e293b; padding:8px 14px; border-radius:12px; border:1px solid var(--border);">
-                  <div id="live-poll-vote-num" style="font-size:22px; font-weight:800; color:var(--accent); line-height:1;">0</div>
-                  <div style="font-size:10px; color:var(--muted); text-transform:uppercase;">Total Votes</div>
+              <div class="cp-row-wrap">
+                <div class="cp-well" style="text-align:right; padding:8px 14px;">
+                  <div id="live-poll-vote-num" class="cp-tabular" style="font-size:22px; font-weight:800; color:var(--cp-coral-cta); line-height:1;">0</div>
+                  <div class="cp-eyebrow" style="font-size:10px; margin-top:3px;">Total Votes</div>
                 </div>
-                <button id="btn-close-poll" class="btn-secondary" style="display:none; background:rgba(239,68,68,0.16); color:#f87171; border-color:rgba(239,68,68,0.35);" onclick="closeActivePoll()">
-                  &#9209; Stop &amp; Reveal
+                <button type="button" id="btn-close-poll" class="cp-btn cp-btn--danger-soft cp-btn--sm" style="display:none;" onclick="closeActivePoll()">
+                  {{ cp_icon('stop-circle', 14) }}
+                  <span>Stop &amp; Reveal</span>
                 </button>
               </div>
             </div>
 
-            <div id="live-poll-bars" style="margin-top:18px; font-size:14px; color:var(--muted);">
-              <div style="text-align:center; padding:45px 20px; color:var(--muted);">
-                <div style="font-size:32px; margin-bottom:8px;">&#128202;</div>
+            <div id="live-poll-bars" style="margin-top:18px; font-size:14px; color:var(--cp-ink-muted);">
+              <div class="cp-poll-empty">
+                <div class="cp-poll-empty-icon">{{ cp_icon('bar-chart', 22) }}</div>
                 <div>Use the <strong>1-Click Instant Polls</strong> bar at the top or create a custom question on the left.</div>
-                <div style="font-size:12px; margin-top:4px;">Polls pop up automatically on every student's phone screen in real time.</div>
               </div>
             </div>
-          </div>
-
-          <div style="margin-top:16px; padding-top:12px; border-top:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; font-size:12px; color:var(--muted);">
-            <span>Students vote at <strong style="color:var(--accent);">{{ base_url }}/student</strong> or via the lecture QR</span>
-            <span id="poll-sync-indicator">&#9679; Live Sync Connected</span>
           </div>
         </div>
       </div>
     </section>
 
     <!-- TAB 3: Live Classroom Q&A (Feature 2) -->
-    <section id="tab-chat" class="tab-pane">
-      <div class="card">
-        <h2>
-          <span>Timestamped Classroom Q&amp;A ({{ session.session_code }})</span>
-          <div style="display:flex; gap:8px;">
-            <a class="btn-secondary btn-sm" href="/lecturer/chat-popout/{{ session.session_code }}" target="_blank">
-              &#128172; Open Live Q&amp;A Companion Pop-Out
+    <section id="tab-chat" class="cp-tab-pane tab-pane">
+      <div class="cp-card">
+        <div class="cp-card-header cp-dot-header" style="padding:12px 14px; margin:-4px -4px 14px -4px; background:var(--cp-well); border:1px solid var(--cp-border); border-radius:14px;">
+          <h2>
+            {{ cp_icon('message-square', 18) }}
+            <span>Timestamped Classroom Q&amp;A</span>
+          </h2>
+          <div class="cp-row-wrap">
+            <a class="cp-btn cp-btn--white cp-btn--sm" href="/lecturer/chat-popout/{{ session.session_code }}" target="_blank">
+              {{ cp_icon('external-link', 14) }}
+              <span>Open Live Q&amp;A Companion Pop-Out</span>
             </a>
-            <a class="btn-secondary btn-sm" href="/api/sessions/{{ session.id }}/chat/export">
-              &#128190; Export Transcript (.txt)
+            <a class="cp-btn cp-btn--secondary cp-btn--sm" href="/api/sessions/{{ session.id }}/chat/export">
+              {{ cp_icon('download', 14) }}
+              <span>Export Transcript (.txt)</span>
             </a>
           </div>
-        </h2>
+        </div>
 
-        <div style="display:flex; gap:8px; margin-bottom:12px;">
-          <select id="lecturer-chat-cat" style="width:150px;">
+        <div class="cp-composer" style="margin-bottom:14px;">
+          <select id="lecturer-chat-cat" class="cp-select">
             <option value="Comment">Announcement</option>
             <option value="Question">Question</option>
             <option value="Suggestion">Suggestion</option>
           </select>
-          <input type="text" id="lecturer-chat-body" placeholder="Post an announcement or answer to the live classroom feed..." onkeydown="if(event.key==='Enter') sendLecturerChat()" />
-          <button onclick="sendLecturerChat()">Send</button>
+          <input type="text" id="lecturer-chat-body" class="cp-input" placeholder="Post an announcement or answer to the live classroom feed..." onkeydown="if(event.key==='Enter') sendLecturerChat()" />
+          <button type="button" class="cp-btn cp-btn--primary" onclick="sendLecturerChat()">
+            {{ cp_icon('send', 15) }}
+            <span>Send</span>
+          </button>
         </div>
 
         <div id="lecturer-chat-feed" style="max-height:420px; overflow-y:auto;"></div>
@@ -688,914 +508,964 @@
     {% include "teacher/_tab_roster.html" %}
 
     <!-- Modal: Inspect Student Homework Deep AI Review -->
-    <div id="modal-hw-review" class="modal-backdrop">
-      <div class="modal-card" style="width:680px; max-width:95vw; max-height:85vh; overflow-y:auto;">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+    <div id="modal-hw-review" class="cp-modal-backdrop modal-backdrop">
+      <div class="cp-modal-card cp-modal-card--lg modal-card">
+        <div class="cp-card-header">
           <h3 id="modal-hw-review-title" style="margin:0;">Student Comparative AI Review</h3>
-          <button class="btn-secondary btn-sm" onclick="closeModal('modal-hw-review')">Close</button>
+          <button type="button" class="cp-btn cp-btn--secondary cp-btn--sm" onclick="closeModal('modal-hw-review')">
+            {{ cp_icon('x', 14) }}
+            <span>Close</span>
+          </button>
         </div>
-        <div id="modal-hw-review-body" style="background:#0f172a; padding:14px; border-radius:10px; border:1px solid var(--border); font-size:13px; line-height:1.5; color:#e2e8f0;"></div>
+        <div id="modal-hw-review-body" class="cp-review-md"></div>
       </div>
     </div>
   </main>
+</div>
 
-  <!-- Modal: Create New School Course -->
-  <div id="modal-new-course" class="modal-backdrop">
-    <div class="modal-card">
-      <h3 style="margin-top:0;">Create New School Course</h3>
-      <div style="margin-bottom:10px;">
-        <label style="font-size:12px; color:var(--muted);">Course Code (e.g. CS305)</label>
-        <input type="text" id="new-course-code" placeholder="CS305" />
+<!-- Modal: Create New School Course -->
+<div id="modal-new-course" class="cp-modal-backdrop modal-backdrop">
+  <div class="cp-modal-card modal-card">
+    <div class="cp-card-header">
+      <h3 style="margin:0;">Create New School Course</h3>
+      <button type="button" class="cp-btn cp-btn--secondary cp-btn--sm" onclick="closeModal('modal-new-course')">
+        {{ cp_icon('x', 14) }}
+        <span>Close</span>
+      </button>
+    </div>
+    <div class="cp-stack-sm" style="margin-bottom:16px;">
+      <div>
+        <label class="cp-label" for="new-course-code">Course Code (e.g. CS305)</label>
+        <input type="text" id="new-course-code" class="cp-input" placeholder="CS305" />
       </div>
-      <div style="margin-bottom:10px;">
-        <label style="font-size:12px; color:var(--muted);">Course Name</label>
-        <input type="text" id="new-course-name" placeholder="Machine Learning & Vision" />
+      <div>
+        <label class="cp-label" for="new-course-name">Course Name</label>
+        <input type="text" id="new-course-name" class="cp-input" placeholder="Machine Learning &amp; Vision" />
       </div>
-      <div style="margin-bottom:10px;">
-        <label style="font-size:12px; color:var(--muted);">Department</label>
-        <input type="text" id="new-course-dept" value="{{ lecturer.department if lecturer else selected_course.department }}" />
+      <div>
+        <label class="cp-label" for="new-course-dept">Department</label>
+        <input type="text" id="new-course-dept" class="cp-input" value="{{ lecturer.department if lecturer else selected_course.department }}" />
       </div>
-      <div style="margin-bottom:14px;">
-        <label style="font-size:12px; color:var(--muted);">Lecturer Name</label>
-        <input type="text" id="new-course-lecturer" value="{{ lecturer.full_name if lecturer else selected_course.lecturer_name }}" />
-      </div>
-      <div style="display:flex; justify-content:flex-end; gap:8px;">
-        <button class="btn-secondary" onclick="closeModal('modal-new-course')">Cancel</button>
-        <button onclick="submitNewCourse()">Create Course</button>
+      <div>
+        <label class="cp-label" for="new-course-lecturer">Lecturer Name</label>
+        <input type="text" id="new-course-lecturer" class="cp-input" value="{{ lecturer.full_name if lecturer else selected_course.lecturer_name }}" />
       </div>
     </div>
-  </div>
-
-  {% include "teacher/_modal_security.html" %}
-
-  <!-- Modal: Create New Lecture Session in Current Course -->
-  <div id="modal-new-lecture" class="modal-backdrop">
-    <div class="modal-card">
-      <h3 style="margin-top:0;">New Lecture in {{ selected_course.course_code }}</h3>
-      <div style="margin-bottom:10px;">
-        <label style="font-size:12px; color:var(--muted);">Lecture Title</label>
-        <input type="text" id="new-lecture-title" placeholder="Lecture {{ course_sessions|length + 1 }} — Design Patterns" />
-      </div>
-      <div style="margin-bottom:14px;">
-        <label style="font-size:12px; color:var(--muted);">Custom Session Code (optional)</label>
-        <input type="text" id="new-lecture-code" placeholder="Auto-generated if blank" />
-      </div>
-      <div style="display:flex; justify-content:flex-end; gap:8px;">
-        <button class="btn-secondary" onclick="closeModal('modal-new-lecture')">Cancel</button>
-        <button class="btn-green" onclick="submitNewLecture()">Start Lecture Session</button>
-      </div>
+    <div class="cp-row-wrap" style="justify-content:flex-end;">
+      <button type="button" class="cp-btn cp-btn--secondary cp-btn--sm" onclick="closeModal('modal-new-course')">Cancel</button>
+      <button type="button" class="cp-btn cp-btn--primary cp-btn--sm" onclick="submitNewCourse()">Create Course</button>
     </div>
   </div>
+</div>
 
-  <script src="/static/js/headcount_canvas.js"></script>
-  <script>
-    const COURSE_ID = {{ selected_course.id }};
-    const SESSION_ID = {{ session.id }};
-    const SESSION_CODE = "{{ session.session_code }}";
-    const INITIAL_SNAP = {% if latest_snap %}{
-      snapshot_id: {{ latest_snap.id }},
-      image_url: "{{ latest_snap.image_url }}",
-      auto_count: {{ latest_snap.auto_count }},
-      verified_count: {{ latest_snap.verified_count }},
-      boxes: {{ latest_snap.boxes_json | safe }}
-    }{% else %}null{% endif %};
+{% include "teacher/_modal_security.html" %}
 
-    const LECTURER_ID = {{ lecturer.id if lecturer else 'null' }};
-    let activeTabId = "tab-attendance";
+<!-- Modal: Create New Lecture Session in Current Course -->
+<div id="modal-new-lecture" class="cp-modal-backdrop modal-backdrop">
+  <div class="cp-modal-card modal-card">
+    <div class="cp-card-header">
+      <h3 style="margin:0;">New Lecture in {{ selected_course.course_code }}</h3>
+      <button type="button" class="cp-btn cp-btn--secondary cp-btn--sm" onclick="closeModal('modal-new-lecture')">
+        {{ cp_icon('x', 14) }}
+        <span>Close</span>
+      </button>
+    </div>
+    <div class="cp-stack-sm" style="margin-bottom:16px;">
+      <div>
+        <label class="cp-label" for="new-lecture-title">Lecture Title</label>
+        <input type="text" id="new-lecture-title" class="cp-input" placeholder="Lecture {{ course_sessions|length + 1 }} — Design Patterns" />
+      </div>
+      <div>
+        <label class="cp-label" for="new-lecture-code">Custom Session Code (optional)</label>
+        <input type="text" id="new-lecture-code" class="cp-input" placeholder="Auto-generated if blank" />
+      </div>
+    </div>
+    <div class="cp-row-wrap" style="justify-content:flex-end;">
+      <button type="button" class="cp-btn cp-btn--secondary cp-btn--sm" onclick="closeModal('modal-new-lecture')">Cancel</button>
+      <button type="button" class="cp-btn cp-btn--green cp-btn--sm" onclick="submitNewLecture()">Start Lecture Session</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
 
-    function switchTab(tabId, btnEl) {
-      const targetPane = document.getElementById(tabId);
-      if (!targetPane) return;
-      activeTabId = tabId;
-      document.querySelectorAll(".tab-pane").forEach(el => el.classList.remove("active"));
-      document.querySelectorAll(".tab-btn").forEach(el => el.classList.remove("active"));
-      targetPane.classList.add("active");
-      const targetBtn = btnEl || document.querySelector(`.tab-btn[data-tab-target="${tabId}"]`);
-      if (targetBtn) targetBtn.classList.add("active");
-      if (tabId === "tab-chat" && window.ClassPulseNotify) {
-        window.ClassPulseNotify.clearUnread();
-      }
+{% block scripts %}
+<script>
+  const COURSE_ID = {{ selected_course.id }};
+  const SESSION_ID = {{ session.id }};
+  const SESSION_CODE = {{ session.session_code | tojson }};
+  const INITIAL_SNAP = {% if latest_snap %}{
+    snapshot_id: {{ latest_snap.id }},
+    image_url: {{ latest_snap.image_url | tojson }},
+    auto_count: {{ latest_snap.auto_count }},
+    verified_count: {{ latest_snap.verified_count }},
+    boxes: {{ latest_snap.boxes_json | safe }}
+  }{% else %}null{% endif %};
+
+  const LECTURER_ID = {{ lecturer.id if lecturer else 'null' }};
+  let activeTabId = "tab-attendance";
+
+  function escapeHtml(str) {
+    return String(str == null ? "" : str)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function toggleMobileSidebar() {
+    const sidebar = document.getElementById("teacher-sidebar");
+    const btn = document.getElementById("mobile-sidebar-toggle");
+    if (!sidebar) return;
+    const isOpen = sidebar.classList.toggle("open");
+    if (btn) btn.setAttribute("aria-expanded", isOpen ? "true" : "false");
+  }
+
+  function switchTab(tabId, btnEl) {
+    const targetPane = document.getElementById(tabId);
+    if (!targetPane) return;
+    activeTabId = tabId;
+    document.querySelectorAll(".tab-pane").forEach(el => el.classList.remove("active"));
+    document.querySelectorAll(".tab-btn").forEach(el => el.classList.remove("active"));
+    targetPane.classList.add("active");
+    const targetBtn = btnEl || document.querySelector(`.tab-btn[data-tab-target="${tabId}"]`);
+    if (targetBtn) targetBtn.classList.add("active");
+    if (tabId === "tab-chat" && window.ClassPulseNotify) {
+      window.ClassPulseNotify.clearUnread();
     }
+  }
 
-    function openModal(id) { document.getElementById(id).classList.add("open"); }
-    function closeModal(id) { document.getElementById(id).classList.remove("open"); }
+  function openModal(id) {
+    const el = document.getElementById(id);
+    if (el) el.classList.add("open");
+  }
+  function closeModal(id) {
+    const el = document.getElementById(id);
+    if (el) el.classList.remove("open");
+  }
 
-    async function logoutLecturer() {
-      await fetch("/api/auth/lecturer/logout", { method: "POST" });
-      window.location.href = "/teacher/login";
+  async function logoutLecturer() {
+    await fetch("/api/auth/lecturer/logout", { method: "POST" });
+    window.location.href = "/teacher/login";
+  }
+
+  async function logoutAllDevices() {
+    await fetch("/api/auth/lecturer/logout-all", { method: "POST" });
+    window.location.href = "/teacher/login";
+  }
+
+  async function submitChangePassword() {
+    const current_password = document.getElementById("sec-cur-pw").value;
+    const new_password = document.getElementById("sec-new-pw").value;
+    const confirm_password = document.getElementById("sec-confirm-pw").value;
+    const res = await fetch("/api/auth/lecturer/change-password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ current_password, new_password, confirm_password }),
+    });
+    const data = await res.json();
+    if (!res.ok) return alert(data.error || "Could not update password.");
+    alert("Password updated and older sessions rotated.");
+    closeModal("modal-account-security");
+  }
+
+  async function removeStudentFromCourse(studentId, fullName) {
+    const label = fullName ? `${fullName}` : `student #${studentId}`;
+    if (!confirm(`Remove ${label} from this course and clear their course attendance records?`)) return;
+    const res = await fetch(`/api/courses/${COURSE_ID}/students/${studentId}`, { method: "DELETE" });
+    const data = await res.json();
+    if (!res.ok) return alert(data.error || "Failed to remove student.");
+    window.location.reload();
+  }
+
+  async function loadAuditLogs() {
+    const box = document.getElementById("security-audit-list");
+    if (!box) return;
+    box.textContent = "Loading...";
+    const res = await fetch("/api/auth/lecturer/audit-logs?limit=20");
+    if (!res.ok) {
+      box.textContent = "Could not load security logs.";
+      return;
     }
-
-    async function logoutAllDevices() {
-      await fetch("/api/auth/lecturer/logout-all", { method: "POST" });
-      window.location.href = "/teacher/login";
+    const data = await res.json();
+    const logs = data.logs || [];
+    if (!logs.length) {
+      box.textContent = "No recent security events.";
+      return;
     }
+    box.innerHTML = logs.map(l =>
+      `<div class="cp-log-row" style="margin-top:0; margin-bottom:6px;">
+        <span><code>${escapeHtml(l.action)}</code> &bull; ${escapeHtml(l.detail || '')}</span>
+        <span class="cp-muted cp-tabular">(${escapeHtml((l.created_at || '').slice(0, 19))})</span>
+      </div>`
+    ).join("");
+  }
 
-    async function submitChangePassword() {
-      const current_password = document.getElementById("sec-cur-pw").value;
-      const new_password = document.getElementById("sec-new-pw").value;
-      const confirm_password = document.getElementById("sec-confirm-pw").value;
-      const res = await fetch("/api/auth/lecturer/change-password", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ current_password, new_password, confirm_password }),
-      });
-      const data = await res.json();
-      if (!res.ok) return alert(data.error || "Could not update password.");
-      alert("Password updated and older sessions rotated.");
-      closeModal("modal-account-security");
-    }
+  async function addCourseStaff() {
+    const identifier = document.getElementById("staff-identifier").value.trim();
+    const role = document.getElementById("staff-role").value;
+    if (!identifier) return alert("Enter a professor or TA username/email.");
+    const res = await fetch(`/api/courses/${COURSE_ID}/staff`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ identifier, role }),
+    });
+    const data = await res.json();
+    if (!res.ok) return alert(data.error || "Could not add course staff.");
+    window.location.reload();
+  }
 
-    async function removeStudentFromCourse(studentId, fullName) {
-      const label = fullName ? `${fullName}` : `student #${studentId}`;
-      if (!confirm(`Remove ${label} from this course and clear their course attendance records?`)) return;
-      const res = await fetch(`/api/courses/${COURSE_ID}/students/${studentId}`, { method: "DELETE" });
-      const data = await res.json();
-      if (!res.ok) return alert(data.error || "Failed to remove student.");
-      window.location.reload();
-    }
+  async function removeCourseStaff(staffLecturerId) {
+    if (!confirm("Remove this collaborator's access from the course?")) return;
+    const res = await fetch(`/api/courses/${COURSE_ID}/staff/${staffLecturerId}`, { method: "DELETE" });
+    const data = await res.json();
+    if (!res.ok) return alert(data.error || "Failed to remove staff member.");
+    window.location.reload();
+  }
 
-    async function loadAuditLogs() {
-      const box = document.getElementById("security-audit-list");
-      if (!box) return;
-      box.textContent = "Loading...";
-      const res = await fetch("/api/auth/lecturer/audit-logs?limit=20");
-      if (!res.ok) {
-        box.textContent = "Could not load security logs.";
-        return;
-      }
-      const data = await res.json();
-      const logs = data.logs || [];
-      if (!logs.length) {
-        box.textContent = "No recent security events.";
-        return;
-      }
-      box.innerHTML = logs.map(l =>
-        `<div style="padding:4px 0; border-bottom:1px solid #1e293b;"><code>${l.action}</code> &bull; ${l.detail || ''} <span style="color:#64748b;">(${l.created_at.slice(0,19)})</span></div>`
-      ).join("");
-    }
+  async function deleteLectureArtifact(artifactId) {
+    if (!confirm("Delete this lecture summary and uploaded recording?")) return;
+    const res = await fetch(`/api/lectures/${artifactId}`, { method: "DELETE" });
+    if (res.ok) loadLectureArtifacts();
+  }
 
-    async function addCourseStaff() {
-      const identifier = document.getElementById("staff-identifier").value.trim();
-      const role = document.getElementById("staff-role").value;
-      if (!identifier) return alert("Enter a professor or TA username/email.");
-      const res = await fetch(`/api/courses/${COURSE_ID}/staff`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ identifier, role }),
-      });
-      const data = await res.json();
-      if (!res.ok) return alert(data.error || "Could not add course staff.");
-      window.location.reload();
-    }
+  async function submitNewCourse() {
+    const course_code = document.getElementById("new-course-code").value.trim();
+    const name = document.getElementById("new-course-name").value.trim();
+    const department = document.getElementById("new-course-dept").value.trim();
+    const lecturer_name = document.getElementById("new-course-lecturer").value.trim();
+    if (!course_code || !name) return alert("Course code and name are required.");
+    const res = await fetch("/api/courses", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ course_code, name, department, lecturer_name }),
+    });
+    const data = await res.json();
+    if (!res.ok) return alert(data.error || "Failed to create course");
+    window.location.href = `/teacher?course_id=${data.id}`;
+  }
 
-    async function removeCourseStaff(staffLecturerId) {
-      if (!confirm("Remove this collaborator's access from the course?")) return;
-      const res = await fetch(`/api/courses/${COURSE_ID}/staff/${staffLecturerId}`, { method: "DELETE" });
-      const data = await res.json();
-      if (!res.ok) return alert(data.error || "Failed to remove staff member.");
-      window.location.reload();
-    }
+  async function submitNewLecture() {
+    const title = document.getElementById("new-lecture-title").value.trim() || "New Lecture";
+    const session_code = document.getElementById("new-lecture-code").value.trim();
+    const res = await fetch(`/api/courses/${COURSE_ID}/sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title, session_code }),
+    });
+    const data = await res.json();
+    if (!res.ok) return alert(data.error || "Failed to create lecture");
+    window.location.href = `/teacher?course_id=${COURSE_ID}&session=${data.session_code}`;
+  }
 
-    async function deleteLectureArtifact(artifactId) {
-      if (!confirm("Delete this lecture summary and uploaded recording?")) return;
-      const res = await fetch(`/api/lectures/${artifactId}`, { method: "DELETE" });
-      if (res.ok) loadLectureArtifacts();
-    }
-
-    async function submitNewCourse() {
-      const course_code = document.getElementById("new-course-code").value.trim();
-      const name = document.getElementById("new-course-name").value.trim();
-      const department = document.getElementById("new-course-dept").value.trim();
-      const lecturer_name = document.getElementById("new-course-lecturer").value.trim();
-      if (!course_code || !name) return alert("Course code and name are required.");
-      const res = await fetch("/api/courses", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ course_code, name, department, lecturer_name }),
-      });
-      const data = await res.json();
-      if (!res.ok) return alert(data.error || "Failed to create course");
-      window.location.href = `/teacher?course_id=${data.id}`;
-    }
-
-    async function submitNewLecture() {
-      const title = document.getElementById("new-lecture-title").value.trim() || "New Lecture";
-      const session_code = document.getElementById("new-lecture-code").value.trim();
-      const res = await fetch(`/api/courses/${COURSE_ID}/sessions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title, session_code }),
-      });
-      const data = await res.json();
-      if (!res.ok) return alert(data.error || "Failed to create lecture");
-      window.location.href = `/teacher?course_id=${COURSE_ID}&session=${data.session_code}`;
-    }
-
-    async function importCourseRoster() {
-      const fileEl = document.getElementById("roster-file-input");
-      const msgEl = document.getElementById("roster-import-msg");
-      if (!fileEl || !fileEl.files || !fileEl.files.length) {
-        if (msgEl) {
-          msgEl.style.color = "#f87171";
-          msgEl.textContent = "Please choose a .csv or .xlsx file first.";
-        }
-        return;
-      }
-      const fd = new FormData();
-      fd.append("file", fileEl.files[0]);
+  async function importCourseRoster() {
+    const fileEl = document.getElementById("roster-file-input");
+    const msgEl = document.getElementById("roster-import-msg");
+    if (!fileEl || !fileEl.files || !fileEl.files.length) {
       if (msgEl) {
-        msgEl.style.color = "var(--accent)";
-        msgEl.textContent = "Importing roster file...";
+        msgEl.style.color = "var(--cp-red-ink)";
+        msgEl.textContent = "Please choose a .csv or .xlsx file first.";
       }
-      const res = await fetch(`/api/courses/${COURSE_ID}/roster`, {
-        method: "POST",
-        body: fd,
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        if (msgEl) {
-          msgEl.style.color = "#f87171";
-          msgEl.textContent = data.error || "Roster import failed.";
-        }
-        return;
-      }
+      return;
+    }
+    const fd = new FormData();
+    fd.append("file", fileEl.files[0]);
+    if (msgEl) {
+      msgEl.style.color = "var(--cp-indigo-ink)";
+      msgEl.textContent = "Importing roster file...";
+    }
+    const res = await fetch(`/api/courses/${COURSE_ID}/roster`, {
+      method: "POST",
+      body: fd,
+    });
+    const data = await res.json();
+    if (!res.ok) {
       if (msgEl) {
-        msgEl.style.color = "var(--green)";
-        msgEl.textContent = `Imported ${data.imported} student(s)! Reloading...`;
+        msgEl.style.color = "var(--cp-red-ink)";
+        msgEl.textContent = data.error || "Roster import failed.";
       }
-      setTimeout(() => window.location.reload(), 600);
+      return;
     }
-
-    // Start 5-second QR rotation + smooth loading bar + 1-second visual countdown
-    const QR_STEP_MS = 5000;
-    let lastQrRotateTs = Date.now();
-
-    async function rotateQR() {
-      try {
-        const resp = await fetch(`/api/sessions/${SESSION_CODE}/qr?_ts=${Date.now()}`, { cache: "no-store" });
-        if (!resp.ok) return null;
-        const data = await resp.json();
-        const qrImg = document.getElementById("dash-qr-img");
-        if (qrImg && data.svg_data_uri) qrImg.src = data.svg_data_uri;
-        const bucketEl = document.getElementById("dash-bucket");
-        if (bucketEl) bucketEl.textContent = data.bucket;
-        const link = document.getElementById("dash-scan-url");
-        const targetUrl = data.scan_url || data.url || "";
-        if (link && targetUrl) {
-          link.href = targetUrl;
-          link.textContent = targetUrl;
-          try {
-            const u = new URL(targetUrl);
-            const topTunnel = document.getElementById("top-tunnel-url");
-            if (topTunnel) {
-              topTunnel.href = u.origin;
-              topTunnel.textContent = u.origin;
-            }
-          } catch (_e) {}
-        }
-        lastQrRotateTs = Date.now();
-        return targetUrl;
-      } catch (err) {
-        console.error("QR rotation error:", err);
-        return null;
-      }
+    if (msgEl) {
+      msgEl.style.color = "var(--cp-green-ink)";
+      msgEl.textContent = `Imported ${data.imported} student(s)! Reloading...`;
     }
+    setTimeout(() => window.location.reload(), 600);
+  }
 
-    async function openFreshStudentScanLink(evt) {
-      evt.preventDefault();
-      const win = window.open("about:blank", "_blank");
-      const freshUrl = await rotateQR();
-      const fallbackUrl = document.getElementById("dash-scan-url").href;
-      if (win) {
-        win.location.href = freshUrl || fallbackUrl;
-      } else {
-        window.location.href = freshUrl || fallbackUrl;
-      }
-    }
+  // Start 5-second QR rotation + smooth loading bar + 1-second visual countdown
+  const QR_STEP_MS = 5000;
+  let lastQrRotateTs = Date.now();
 
-    setInterval(() => {
-      const elapsed = Date.now() - lastQrRotateTs;
-      if (elapsed >= QR_STEP_MS) {
-        lastQrRotateTs = Date.now();
-        rotateQR();
-      }
-      const pct = Math.max(0, 100 - (elapsed / QR_STEP_MS) * 100);
-      const barEl = document.getElementById("dash-qr-progress");
-      if (barEl) barEl.style.width = `${pct}%`;
-
-      const secsLeft = Math.max(1, Math.ceil((QR_STEP_MS - elapsed) / 1000));
-      const cdEl = document.getElementById("qr-countdown-badge");
-      if (cdEl) cdEl.textContent = `Refreshing in ${secsLeft}s`;
-    }, 80);
-
-    // Initialize interactive CV headcount canvas safely
-    let editor = null;
+  async function rotateQR() {
     try {
-      if (window.HeadcountCanvasEditor) {
-        editor = new window.HeadcountCanvasEditor("headcount-canvas", SESSION_ID, (data) => {
-          document.getElementById("snap-auto-count").textContent = data.auto_count;
-          document.getElementById("snap-verified-count").textContent = data.verified_count;
-          if (data.verdict) applyVerdict(data.verdict);
-        });
-        if (INITIAL_SNAP && INITIAL_SNAP.image_url) {
-          editor.loadSnapshot(INITIAL_SNAP);
-        }
-      }
-    } catch (err) {
-      console.error("Canvas init error:", err);
-    }
-
-    function applyVerdict(v) {
-      if (!v) return;
-      const rosterCount = v.roster_count !== undefined ? v.roster_count : v.roster_total;
-      document.getElementById("kpi-roster").textContent = rosterCount !== undefined ? rosterCount : 0;
-      document.getElementById("kpi-qr").textContent = v.qr_count !== undefined ? v.qr_count : 0;
-      document.getElementById("kpi-visual").textContent = v.visual_count !== null && v.visual_count !== undefined ? v.visual_count : "—";
-      document.getElementById("kpi-delta").textContent = v.delta !== null && v.delta !== undefined ? (v.delta >= 0 ? `+${v.delta}` : `${v.delta}`) : "—";
-      const badge = document.getElementById("audit-badge");
-      if (badge && v.status) {
-        badge.textContent = v.status;
-        badge.className = `badge ${v.status}`;
-      }
-      const explEl = document.getElementById("audit-explanation");
-      if (explEl) {
-        explEl.textContent = v.explanation || v.summary_note || "";
-      }
-    }
-
-    async function refreshOverview() {
-      try {
-        const resp = await fetch(`/api/sessions/${SESSION_ID}/overview?_ts=${Date.now()}`, { cache: "no-store" });
-        if (!resp.ok) return;
-        const data = await resp.json();
-        if (data.verdict) applyVerdict(data.verdict);
-        const tbody = document.getElementById("attendance-tbody");
-        if (!tbody) return;
-        if (!data.rows || data.rows.length === 0) {
-          tbody.innerHTML = `
-            <tr>
-              <td colspan="8" style="text-align:center; color:var(--muted);">
-                No students checked in yet. Scan the QR code above!
-              </td>
-            </tr>
-          `;
-          return;
-        }
-        tbody.innerHTML = data.rows.map((r, i) => `
-          <tr>
-            <td>${r.index || (i + 1)}</td>
-            <td><strong>${r.full_name}</strong></td>
-            <td><code>${r.student_id_number || '-'}</code></td>
-            <td>${r.email}</td>
-            <td><span class="badge ${(r.roster_status || '').toUpperCase().includes('REG') ? 'VERIFIED' : 'AWAITING_PHOTO'}">${r.roster_status}</span></td>
-            <td><span class="badge ${(r.attendance_status || '').toUpperCase() === 'PRESENT' ? 'PRESENT' : 'ABSENT'}">${r.attendance_status}</span></td>
-            <td>${r.checked_in_at || '—'}</td>
-            <td><code>${r.device_hash || '—'}</code></td>
-          </tr>
-        `).join("");
-      } catch (err) {
-        console.error("refreshOverview error:", err);
-      }
-    }
-
-    async function toggleSessionOpen(sessionId) {
-      await fetch("/api/sessions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "toggle_open", session_id: sessionId }),
-      });
-      window.location.reload();
-    }
-
-    async function uploadClassroomPhoto() {
-      const input = document.getElementById("photo-input");
-      if (!input.files.length) return alert("Select a classroom photo first.");
-      const statusEl = document.getElementById("cv-status");
-      statusEl.textContent = "Running Tiled SCRFD face detection...";
-      const fd = new FormData();
-      fd.append("photo", input.files[0]);
-      const resp = await fetch(`/api/sessions/${SESSION_ID}/headcount`, { method: "POST", body: fd });
+      const resp = await fetch(`/api/sessions/${SESSION_CODE}/qr?_ts=${Date.now()}`, { cache: "no-store" });
+      if (!resp.ok) return null;
       const data = await resp.json();
-      statusEl.textContent = `Detected ${data.auto_count} faces!`;
-      editor.loadSnapshot(data);
-    }
-
-    async function runSamplePhoto() {
-      const statusEl = document.getElementById("cv-status");
-      statusEl.textContent = "Running Tiled SCRFD on Ariel University sample...";
-      const resp = await fetch(`/api/sessions/${SESSION_ID}/headcount`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ use_sample: true }),
-      });
-      const data = await resp.json();
-      statusEl.textContent = `Detected ${data.auto_count} faces on Ariel sample!`;
-      editor.loadSnapshot(data);
-    }
-
-    // Polls & Chat JS
-    let activePollId = null;
-    let selectedViewPollId = null;
-    let cachedPolls = [];
-    let chatMessages = [];
-    const BAR_COLORS = ["#38bdf8", "#a855f7", "#f59e0b", "#22c55e", "#ec4899", "#14b8a6"];
-    const LETTERS = ["A", "B", "C", "D", "E", "F", "G", "H"];
-
-    async function loadPolls() {
-      try {
-        const res = await fetch(`/api/sessions/${SESSION_ID}/polls?_ts=${Date.now()}`, { cache: "no-store" });
-        if (!res.ok) return;
-        const data = await res.json();
-        const polls = data.polls || [];
-        cachedPolls = polls;
-        const active = polls.find(p => p.status === "ACTIVE");
-        activePollId = active ? active.id : null;
-
-        if (selectedViewPollId) {
-          const viewed = polls.find(p => p.id === selectedViewPollId);
-          if (viewed) {
-            renderLivePoll(viewed);
-          } else if (active) {
-            selectedViewPollId = active.id;
-            renderLivePoll(active);
+      const qrImg = document.getElementById("dash-qr-img");
+      if (qrImg && data.svg_data_uri) qrImg.src = data.svg_data_uri;
+      const bucketEl = document.getElementById("dash-bucket");
+      if (bucketEl) bucketEl.textContent = data.bucket;
+      const link = document.getElementById("dash-scan-url");
+      const targetUrl = data.scan_url || data.url || "";
+      if (link && targetUrl) {
+        link.href = targetUrl;
+        link.textContent = targetUrl;
+        try {
+          const u = new URL(targetUrl);
+          const topTunnel = document.getElementById("top-tunnel-url");
+          if (topTunnel) {
+            topTunnel.href = u.origin;
+            topTunnel.textContent = u.origin;
           }
+        } catch (_e) {}
+      }
+      lastQrRotateTs = Date.now();
+      return targetUrl;
+    } catch (err) {
+      console.error("QR rotation error:", err);
+      return null;
+    }
+  }
+
+  async function openFreshStudentScanLink(evt) {
+    evt.preventDefault();
+    const win = window.open("about:blank", "_blank");
+    const freshUrl = await rotateQR();
+    const fallbackUrl = document.getElementById("dash-scan-url").href;
+    if (win) {
+      win.location.href = freshUrl || fallbackUrl;
+    } else {
+      window.location.href = freshUrl || fallbackUrl;
+    }
+  }
+
+  setInterval(() => {
+    const elapsed = Date.now() - lastQrRotateTs;
+    if (elapsed >= QR_STEP_MS) {
+      lastQrRotateTs = Date.now();
+      rotateQR();
+    }
+    const pct = Math.max(0, 100 - (elapsed / QR_STEP_MS) * 100);
+    const barEl = document.getElementById("dash-qr-progress");
+    if (barEl) barEl.style.width = `${pct}%`;
+
+    const secsLeft = Math.max(1, Math.ceil((QR_STEP_MS - elapsed) / 1000));
+    const cdEl = document.getElementById("qr-countdown-badge");
+    if (cdEl) cdEl.textContent = `Refreshing in ${secsLeft}s`;
+  }, 80);
+
+  // Initialize interactive CV headcount canvas safely
+  let editor = null;
+  try {
+    if (window.HeadcountCanvasEditor) {
+      editor = new window.HeadcountCanvasEditor("headcount-canvas", SESSION_ID, (data) => {
+        const autoEl = document.getElementById("snap-auto-count");
+        const verEl = document.getElementById("snap-verified-count");
+        if (autoEl) autoEl.textContent = data.auto_count;
+        if (verEl) verEl.textContent = data.verified_count;
+        if (data.verdict) applyVerdict(data.verdict);
+      });
+      if (INITIAL_SNAP && INITIAL_SNAP.image_url) {
+        editor.loadSnapshot(INITIAL_SNAP);
+      }
+    }
+  } catch (err) {
+    console.error("Canvas init error:", err);
+  }
+
+  function applyVerdict(v) {
+    if (!v) return;
+    const rosterCount = v.roster_count !== undefined ? v.roster_count : v.roster_total;
+    const rosterEl = document.getElementById("kpi-roster");
+    const qrEl = document.getElementById("kpi-qr");
+    const visEl = document.getElementById("kpi-visual");
+    const deltaEl = document.getElementById("kpi-delta");
+    if (rosterEl) rosterEl.textContent = rosterCount !== undefined ? rosterCount : 0;
+    if (qrEl) qrEl.textContent = v.qr_count !== undefined ? v.qr_count : 0;
+    if (visEl) visEl.textContent = v.visual_count !== null && v.visual_count !== undefined ? v.visual_count : "—";
+    if (deltaEl) deltaEl.textContent = v.delta !== null && v.delta !== undefined ? (v.delta >= 0 ? `+${v.delta}` : `${v.delta}`) : "—";
+    const badge = document.getElementById("audit-badge");
+    if (badge && v.status) {
+      badge.textContent = v.status;
+      badge.className = `cp-badge badge ${v.status}`;
+    }
+    const explEl = document.getElementById("audit-explanation");
+    if (explEl) {
+      explEl.textContent = v.explanation || v.summary_note || "";
+    }
+  }
+
+  async function refreshOverview() {
+    try {
+      const resp = await fetch(`/api/sessions/${SESSION_ID}/overview?_ts=${Date.now()}`, { cache: "no-store" });
+      if (!resp.ok) return;
+      const data = await resp.json();
+      if (data.verdict) applyVerdict(data.verdict);
+      const tbody = document.getElementById("attendance-tbody");
+      if (!tbody) return;
+      if (!data.rows || data.rows.length === 0) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="8" class="cp-muted" style="text-align:center;">
+              No students checked in yet. Scan the QR code above!
+            </td>
+          </tr>
+        `;
+        return;
+      }
+      tbody.innerHTML = data.rows.map((r, i) => `
+        <tr>
+          <td class="cp-tabular">${escapeHtml(r.index || (i + 1))}</td>
+          <td><strong>${escapeHtml(r.full_name)}</strong></td>
+          <td><code>${escapeHtml(r.student_id_number || '-')}</code></td>
+          <td>${escapeHtml(r.email)}</td>
+          <td><span class="cp-badge badge ${(r.roster_status || '').toUpperCase().includes('REG') ? 'VERIFIED' : 'AWAITING_PHOTO'}">${escapeHtml(r.roster_status)}</span></td>
+          <td><span class="cp-badge badge ${(r.attendance_status || '').toUpperCase() === 'PRESENT' ? 'PRESENT' : 'ABSENT'}">${escapeHtml(r.attendance_status)}</span></td>
+          <td class="cp-tabular">${escapeHtml(r.checked_in_at || '—')}</td>
+          <td><code>${escapeHtml(r.device_hash || '—')}</code></td>
+        </tr>
+      `).join("");
+    } catch (err) {
+      console.error("refreshOverview error:", err);
+    }
+  }
+
+  async function toggleSessionOpen(sessionId) {
+    await fetch("/api/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "toggle_open", session_id: sessionId }),
+    });
+    window.location.reload();
+  }
+
+  async function uploadClassroomPhoto() {
+    const input = document.getElementById("photo-input");
+    if (!input.files.length) return alert("Select a classroom photo first.");
+    const statusEl = document.getElementById("cv-status");
+    statusEl.textContent = "Running Tiled SCRFD face detection...";
+    const fd = new FormData();
+    fd.append("photo", input.files[0]);
+    const resp = await fetch(`/api/sessions/${SESSION_ID}/headcount`, { method: "POST", body: fd });
+    const data = await resp.json();
+    statusEl.textContent = `Detected ${data.auto_count} faces!`;
+    if (editor) editor.loadSnapshot(data);
+  }
+
+  async function runSamplePhoto() {
+    const statusEl = document.getElementById("cv-status");
+    statusEl.textContent = "Running Tiled SCRFD on Ariel University sample...";
+    const resp = await fetch(`/api/sessions/${SESSION_ID}/headcount`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ use_sample: true }),
+    });
+    const data = await resp.json();
+    statusEl.textContent = `Detected ${data.auto_count} faces on Ariel sample!`;
+    if (editor) editor.loadSnapshot(data);
+  }
+
+  // Polls & Chat JS
+  let activePollId = null;
+  let selectedViewPollId = null;
+  let cachedPolls = [];
+  let chatMessages = [];
+  const BAR_COLORS = ["#E87148", "#5B5FEF", "#16A34A", "#D97706", "#0F766E", "#BE185D"];
+  const LETTERS = ["A", "B", "C", "D", "E", "F", "G", "H"];
+
+  async function loadPolls() {
+    try {
+      const res = await fetch(`/api/sessions/${SESSION_ID}/polls?_ts=${Date.now()}`, { cache: "no-store" });
+      if (!res.ok) return;
+      const data = await res.json();
+      const polls = data.polls || [];
+      cachedPolls = polls;
+      const active = polls.find(p => p.status === "ACTIVE");
+      activePollId = active ? active.id : null;
+
+      if (selectedViewPollId) {
+        const viewed = polls.find(p => p.id === selectedViewPollId);
+        if (viewed) {
+          renderLivePoll(viewed);
         } else if (active) {
           selectedViewPollId = active.id;
           renderLivePoll(active);
-        } else if (polls.length > 0) {
-          const latest = polls[polls.length - 1];
-          selectedViewPollId = latest.id;
-          renderLivePoll(latest);
         }
-        renderPollBank(polls);
-      } catch (err) {
-        console.error("loadPolls error:", err);
+      } else if (active) {
+        selectedViewPollId = active.id;
+        renderLivePoll(active);
+      } else if (polls.length > 0) {
+        const latest = polls[polls.length - 1];
+        selectedViewPollId = latest.id;
+        renderLivePoll(latest);
       }
+      renderPollBank(polls);
+    } catch (err) {
+      console.error("loadPolls error:", err);
     }
+  }
 
-    function viewPollResults(pollId) {
-      selectedViewPollId = pollId;
-      const found = cachedPolls.find(p => p.id === pollId);
-      if (found) {
-        renderLivePoll(found);
-        renderPollBank(cachedPolls);
-      }
+  function viewPollResults(pollId) {
+    selectedViewPollId = pollId;
+    const found = cachedPolls.find(p => p.id === pollId);
+    if (found) {
+      renderLivePoll(found);
+      renderPollBank(cachedPolls);
     }
+  }
 
-    function renderPollBank(polls) {
-      const el = document.getElementById("poll-bank-list");
-      if (!el) return;
-      if (!polls.length) {
-        el.innerHTML = `<div style="color:var(--muted); padding:10px 0;">No polls in this lecture yet. Click any Quick Poll above or launch a custom question!</div>`;
-        return;
-      }
-      el.innerHTML = [...polls].reverse().map(p => {
-        const isViewing = selectedViewPollId === p.id;
-        return `
-          <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; padding:10px; background:#0f172a; border:1px solid ${p.status === 'ACTIVE' ? 'rgba(34,197,94,0.5)' : (isViewing ? 'var(--accent)' : 'var(--border)')}; border-radius:10px; margin-bottom:8px;">
-            <div style="min-width:0; flex:1;">
-              <div style="font-weight:700; color:#f8fafc; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${p.question}</div>
-              <div style="font-size:11px; color:var(--muted); margin-top:2px;">
-                <span class="badge ${p.status === 'ACTIVE' ? 'VERIFIED' : 'AWAITING_PHOTO'}" style="font-size:10px; padding:1px 6px;">${p.status}</span>
-                <span style="margin-left:6px;">${p.total_votes} vote${p.total_votes === 1 ? '' : 's'} &bull; ${(p.options || []).length} options</span>
-              </div>
-            </div>
-            <div style="display:flex; gap:6px; flex-shrink:0;">
-              <button class="btn-secondary btn-sm" onclick="viewPollResults(${p.id})" style="${isViewing ? 'border:1px solid var(--accent); color:var(--accent);' : ''}">
-                &#128202; See Results
-              </button>
-              ${p.status !== 'ACTIVE'
-                ? `<button class="btn-sm" onclick="launchPoll(${p.id})">&#9654; Launch</button>`
-                : `<button class="btn-secondary btn-sm" onclick="closeActivePoll()" style="color:#f87171;">&#9209; Stop</button>`}
-            </div>
-          </div>
-        `;
-      }).join("");
+  function renderPollBank(polls) {
+    const el = document.getElementById("poll-bank-list");
+    if (!el) return;
+    if (!polls.length) {
+      el.innerHTML = "";
+      return;
     }
-
-    function renderLivePoll(poll) {
-      if (!poll) return;
-      if (poll.status === "ACTIVE") {
-        activePollId = poll.id;
-      }
-      const statusPill = document.getElementById("live-poll-status-pill");
-      if (statusPill) {
-        if (poll.status === "ACTIVE") {
-          statusPill.textContent = "🔴 LIVE ON STUDENT PHONES";
-          statusPill.style.background = "rgba(34,197,94,0.18)";
-          statusPill.style.color = "#4ade80";
-        } else {
-          statusPill.textContent = `SAVED POLL RESULTS (${poll.status})`;
-          statusPill.style.background = "rgba(56,189,248,0.18)";
-          statusPill.style.color = "var(--accent)";
-        }
-      }
-      document.getElementById("live-poll-title").textContent = poll.question;
-      const voteNumEl = document.getElementById("live-poll-vote-num");
-      if (voteNumEl) voteNumEl.textContent = poll.total_votes || 0;
-      document.getElementById("btn-close-poll").style.display = poll.status === "ACTIVE" ? "inline-flex" : "none";
-      const barsEl = document.getElementById("live-poll-bars");
-      barsEl.innerHTML = (poll.options || []).map((opt, idx) => {
-        const count = (poll.counts && poll.counts[idx]) || 0;
-        const pct = (poll.percentages && poll.percentages[idx]) || 0;
-        const isCorrect = poll.correct_index === idx;
-        const barColor = isCorrect ? "var(--green)" : BAR_COLORS[idx % BAR_COLORS.length];
-        const letter = LETTERS[idx] || (idx + 1);
-        return `
-          <div style="margin-bottom:14px; background:#1e293b; border:1px solid ${isCorrect ? 'rgba(34,197,94,0.5)' : 'var(--border)'}; border-radius:12px; padding:12px 14px;">
-            <div style="display:flex; justify-content:space-between; align-items:center; font-size:14px; margin-bottom:8px;">
-              <div style="display:flex; align-items:center; gap:10px;">
-                <span style="display:inline-flex; align-items:center; justify-content:center; width:26px; height:26px; border-radius:7px; background:${barColor}; color:#0f172a; font-weight:800; font-size:12px;">${letter}</span>
-                <strong style="color:#f8fafc;">${opt}</strong>
-                ${isCorrect ? '<span class="badge VERIFIED" style="margin-left:4px;">&#10003; Correct</span>' : ''}
-              </div>
-              <div style="font-weight:800; color:#e2e8f0;">
-                <span style="font-size:16px; color:${barColor};">${pct}%</span>
-                <span style="font-size:12px; color:var(--muted); margin-left:4px;">(${count} vote${count === 1 ? '' : 's'})</span>
-              </div>
-            </div>
-            <div style="height:12px; background:#0f172a; border-radius:999px; overflow:hidden;">
-              <div style="height:100%; width:${pct}%; background:${barColor}; transition:width 0.3s ease;"></div>
+    el.innerHTML = [...polls].reverse().map(p => {
+      const isViewing = selectedViewPollId === p.id;
+      const borderStyle = p.status === "ACTIVE"
+        ? "border-color: rgba(22, 163, 74, 0.45);"
+        : (isViewing ? "border-color: var(--cp-coral);" : "");
+      return `
+        <div class="cp-log-row" style="margin-top:0; margin-bottom:8px; padding:10px 12px; ${borderStyle}">
+          <div style="min-width:0; flex:1;">
+            <div style="font-weight:700; color:var(--cp-ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(p.question)}</div>
+            <div class="cp-muted cp-tabular" style="font-size:11px; margin-top:3px;">
+              <span class="cp-badge badge ${p.status === 'ACTIVE' ? 'VERIFIED' : 'AWAITING_PHOTO'}" style="font-size:10px; padding:2px 7px;">${escapeHtml(p.status)}</span>
+              <span style="margin-left:6px;">${Number(p.total_votes || 0)} vote${p.total_votes === 1 ? '' : 's'} &bull; ${(p.options || []).length} options</span>
             </div>
           </div>
-        `;
-      }).join("");
-    }
-
-    async function createPoll(launchNow = true) {
-      const question = document.getElementById("poll-question").value.trim();
-      const rawOpts = document.getElementById("poll-options").value.split("\n").map(s => s.trim()).filter(Boolean);
-      const corrRaw = document.getElementById("poll-correct-idx").value;
-      const correct_index = corrRaw !== "" ? Math.max(0, parseInt(corrRaw, 10) - 1) : null;
-      if (!question || rawOpts.length < 2) return alert("Enter a question and at least 2 options (one per line).");
-      const res = await fetch(`/api/sessions/${SESSION_ID}/polls`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question, options: rawOpts, correct_index, launch_now: launchNow }),
-      });
-      if (res.ok) {
-        const created = await res.json();
-        document.getElementById("poll-question").value = "";
-        selectedViewPollId = created.id;
-        renderLivePoll(created);
-        loadPolls();
-      }
-    }
-
-    async function quickLaunchPoll(question, options) {
-      const res = await fetch(`/api/sessions/${SESSION_ID}/polls`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question, options, launch_now: true }),
-      });
-      if (res.ok) {
-        const created = await res.json();
-        selectedViewPollId = created.id;
-        renderLivePoll(created);
-        loadPolls();
-      }
-    }
-
-    async function launchPoll(pollId) {
-      const res = await fetch(`/api/polls/${pollId}/launch`, { method: "POST" });
-      if (res.ok) {
-        const launched = await res.json();
-        selectedViewPollId = launched.id;
-        renderLivePoll(launched);
-        loadPolls();
-      }
-    }
-
-    async function closeActivePoll() {
-      const targetId = activePollId || selectedViewPollId;
-      if (!targetId) return;
-      const res = await fetch(`/api/polls/${targetId}/close`, { method: "POST" });
-      if (res.ok) {
-        const closed = await res.json();
-        selectedViewPollId = closed.id;
-        renderLivePoll(closed);
-        loadPolls();
-      }
-    }
-
-    function renderChatFeed() {
-      const feed = document.getElementById("lecturer-chat-feed");
-      if (!chatMessages.length) {
-        feed.innerHTML = `<div style="color:var(--muted); font-size:13px;">No student messages yet.</div>`;
-        return;
-      }
-      const sorted = [...chatMessages].sort((a, b) => (b.is_pinned - a.is_pinned) || (a.id - b.id));
-      feed.innerHTML = sorted.map(m => `
-        <div data-msg-id="${m.id}" style="background:#0f172a; border:1px solid ${m.is_pinned ? 'var(--amber)' : 'var(--border)'}; border-radius:10px; padding:10px 12px; margin-bottom:8px; font-size:13px;">
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
-            <div>
-              <span class="code-pill">[${escapeHtml(m.offset_mmss)}]</span>
-              <strong style="margin-left:6px;">${escapeHtml(m.author_name)}</strong>
-              <span style="font-size:11px; color:var(--muted); margin-left:6px;">(${escapeHtml(m.category)})</span>
-              ${m.is_pinned ? '<span style="color:var(--amber); margin-left:6px;">&#128204; Pinned</span>' : ''}
-            </div>
-            <div style="display:flex; gap:6px;">
-              <button class="btn-secondary btn-sm" onclick="upvoteChat(${m.id})">&#9650; ${m.upvotes}</button>
-              <button class="btn-secondary btn-sm" onclick="pinChat(${m.id})">${m.is_pinned ? 'Unpin' : 'Pin'}</button>
-            </div>
+          <div class="cp-row-wrap" style="gap:6px; flex-shrink:0;">
+            <button type="button" class="cp-btn ${isViewing ? 'cp-btn--white' : 'cp-btn--secondary'} cp-btn--sm" onclick="viewPollResults(${Number(p.id)})" style="${isViewing ? 'border-color:var(--cp-indigo); color:var(--cp-indigo-ink);' : ''}">
+              See Results
+            </button>
+            ${p.status !== 'ACTIVE'
+              ? `<button type="button" class="cp-btn cp-btn--primary cp-btn--sm" onclick="launchPoll(${Number(p.id)})">Launch</button>`
+              : `<button type="button" class="cp-btn cp-btn--danger-soft cp-btn--sm" onclick="closeActivePoll()">Stop</button>`}
           </div>
-          <div>${escapeHtml(m.body)}</div>
         </div>
-      `).join("");
-    }
+      `;
+    }).join("");
+  }
 
-    async function fetchLatestLecturerChat() {
-      try {
-        const res = await fetch(`/api/sessions/${SESSION_ID}/chat?_ts=${Date.now()}`, { cache: "no-store" });
-        if (!res.ok) return;
-        const data = await res.json();
-        chatMessages = data.messages || [];
-        renderChatFeed();
-      } catch (_err) {}
+  function renderLivePoll(poll) {
+    if (!poll) return;
+    if (poll.status === "ACTIVE") {
+      activePollId = poll.id;
     }
+    const statusPill = document.getElementById("live-poll-status-pill");
+    if (statusPill) {
+      if (poll.status === "ACTIVE") {
+        statusPill.textContent = "LIVE ON STUDENT PHONES";
+        statusPill.className = "cp-badge cp-badge--green";
+      } else {
+        statusPill.textContent = `SAVED POLL RESULTS (${poll.status})`;
+        statusPill.className = "cp-badge cp-badge--indigo";
+      }
+    }
+    document.getElementById("live-poll-title").textContent = poll.question;
+    const voteNumEl = document.getElementById("live-poll-vote-num");
+    if (voteNumEl) voteNumEl.textContent = poll.total_votes || 0;
+    document.getElementById("btn-close-poll").style.display = poll.status === "ACTIVE" ? "inline-flex" : "none";
+    const barsEl = document.getElementById("live-poll-bars");
+    barsEl.innerHTML = (poll.options || []).map((opt, idx) => {
+      const count = (poll.counts && poll.counts[idx]) || 0;
+      const pct = (poll.percentages && poll.percentages[idx]) || 0;
+      const isCorrect = poll.correct_index === idx;
+      const barColor = isCorrect ? "var(--cp-green)" : BAR_COLORS[idx % BAR_COLORS.length];
+      const letter = LETTERS[idx] || (idx + 1);
+      return `
+        <div class="cp-poll-bar-card" style="${isCorrect ? 'border-color:rgba(22,163,74,0.45); background:rgba(22,163,74,0.06);' : ''}">
+          <div class="cp-row-between" style="font-size:14px;">
+            <div class="cp-row-wrap" style="gap:10px; min-width:0; flex:1;">
+              <span class="cp-opt-badge" style="background:${barColor};">${escapeHtml(letter)}</span>
+              <strong style="color:var(--cp-ink); overflow-wrap:anywhere;">${escapeHtml(opt)}</strong>
+              ${isCorrect ? '<span class="cp-badge cp-badge--green">Correct</span>' : ''}
+            </div>
+            <div class="cp-tabular" style="font-weight:800; color:var(--cp-ink); flex-shrink:0;">
+              <span style="font-size:16px; color:${barColor};">${pct}%</span>
+              <span class="cp-muted" style="font-size:12px; margin-left:4px;">(${count} vote${count === 1 ? '' : 's'})</span>
+            </div>
+          </div>
+          <div class="cp-poll-track">
+            <div class="cp-poll-fill" style="width:${pct}%; background:${barColor};"></div>
+          </div>
+        </div>
+      `;
+    }).join("");
+  }
 
-    async function sendLecturerChat() {
-      const bodyEl = document.getElementById("lecturer-chat-body");
-      const catEl = document.getElementById("lecturer-chat-cat");
-      const body = bodyEl.value.trim();
-      if (!body) return;
-      bodyEl.value = "";
+  async function createPoll(launchNow = true) {
+    const question = document.getElementById("poll-question").value.trim();
+    const rawOpts = document.getElementById("poll-options").value.split("\n").map(s => s.trim()).filter(Boolean);
+    const corrRaw = document.getElementById("poll-correct-idx").value;
+    const correct_index = corrRaw !== "" ? Math.max(0, parseInt(corrRaw, 10) - 1) : null;
+    if (!question || rawOpts.length < 2) return alert("Enter a question and at least 2 options (one per line).");
+    const res = await fetch(`/api/sessions/${SESSION_ID}/polls`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question, options: rawOpts, correct_index, launch_now: launchNow }),
+    });
+    if (res.ok) {
+      const created = await res.json();
+      document.getElementById("poll-question").value = "";
+      selectedViewPollId = created.id;
+      renderLivePoll(created);
+      loadPolls();
+    }
+  }
+
+  async function quickLaunchPoll(question, options) {
+    const res = await fetch(`/api/sessions/${SESSION_ID}/polls`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question, options, launch_now: true }),
+    });
+    if (res.ok) {
+      const created = await res.json();
+      selectedViewPollId = created.id;
+      renderLivePoll(created);
+      loadPolls();
+    }
+  }
+
+  async function launchPoll(pollId) {
+    const res = await fetch(`/api/polls/${pollId}/launch`, { method: "POST" });
+    if (res.ok) {
+      const launched = await res.json();
+      selectedViewPollId = launched.id;
+      renderLivePoll(launched);
+      loadPolls();
+    }
+  }
+
+  async function closeActivePoll() {
+    const targetId = activePollId || selectedViewPollId;
+    if (!targetId) return;
+    const res = await fetch(`/api/polls/${targetId}/close`, { method: "POST" });
+    if (res.ok) {
+      const closed = await res.json();
+      selectedViewPollId = closed.id;
+      renderLivePoll(closed);
+      loadPolls();
+    }
+  }
+
+  function renderChatFeed() {
+    const feed = document.getElementById("lecturer-chat-feed");
+    if (!feed) return;
+    if (!chatMessages.length) {
+      feed.innerHTML = `<div class="cp-well cp-muted" style="text-align:center; font-size:13px;">No student messages yet.</div>`;
+      return;
+    }
+    const sorted = [...chatMessages].sort((a, b) => (b.is_pinned - a.is_pinned) || (a.id - b.id));
+    feed.innerHTML = sorted.map(m => `
+      <div class="cp-chat-msg msg ${m.is_pinned ? 'pinned' : ''}" data-msg-id="${escapeHtml(m.id)}">
+        <div class="cp-row-between" style="margin-bottom:4px;">
+          <div class="cp-row-wrap" style="gap:6px;">
+            <span class="cp-ts ts">[${escapeHtml(m.offset_mmss)}]</span>
+            <strong>${escapeHtml(m.author_name)}</strong>
+            <span class="cp-cat-pill cat">${escapeHtml(m.category)}</span>
+            ${m.is_pinned ? '<span class="cp-badge cp-badge--amber">Pinned</span>' : ''}
+          </div>
+          <div class="cp-row-wrap" style="gap:6px;">
+            <button type="button" class="cp-upvote-pill upvote-pill cp-tabular" onclick="upvoteChat(${Number(m.id)})">&#9650; ${Number(m.upvotes || 0)}</button>
+            <button type="button" class="cp-btn cp-btn--secondary cp-btn--sm" onclick="pinChat(${Number(m.id)})">${m.is_pinned ? 'Unpin' : 'Pin'}</button>
+          </div>
+        </div>
+        <div style="color:var(--cp-ink); overflow-wrap:anywhere;">${escapeHtml(m.body)}</div>
+      </div>
+    `).join("");
+  }
+
+  async function fetchLatestLecturerChat() {
+    try {
+      const res = await fetch(`/api/sessions/${SESSION_ID}/chat?_ts=${Date.now()}`, { cache: "no-store" });
+      if (!res.ok) return;
+      const data = await res.json();
+      chatMessages = data.messages || [];
+      renderChatFeed();
+    } catch (_err) {}
+  }
+
+  async function sendLecturerChat() {
+    const bodyEl = document.getElementById("lecturer-chat-body");
+    const catEl = document.getElementById("lecturer-chat-cat");
+    const body = bodyEl.value.trim();
+    if (!body) return;
+    bodyEl.value = "";
+    try {
+      const res = await fetch(`/api/sessions/${SESSION_ID}/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ as_lecturer: true, category: catEl.value, body }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        bodyEl.value = body;
+        return alert(data.error || "Could not send message.");
+      }
+      if (!chatMessages.find(x => x.id === data.id)) {
+        chatMessages.push(data);
+      }
+      renderChatFeed();
+    } catch (_err) {
+      bodyEl.value = body;
+      alert("Network error while sending chat message.");
+    }
+  }
+
+  async function upvoteChat(id) { await fetch(`/api/chat/${id}/upvote`, { method: "POST" }); }
+  async function pinChat(id) { await fetch(`/api/chat/${id}/pin`, { method: "POST" }); }
+
+  if (window.ClassPulseNotify) {
+    window.ClassPulseNotify.init({
+      role: "lecturer",
+      baseTitle: document.title,
+      currentLecturerId: LECTURER_ID,
+      isChatVisibleFn: (payload) =>
+        activeTabId === "tab-chat" && (!payload || payload.session_code === SESSION_CODE),
+      onOpenMessage: (payload) => {
+        const msgId = payload.message_id || payload.id;
+        if (payload.session_code === SESSION_CODE) {
+          switchTab("tab-chat");
+          if (!window.ClassPulseNotify.highlightMessage(msgId)) {
+            fetchLatestLecturerChat().then(() => window.ClassPulseNotify.highlightMessage(msgId));
+          }
+        } else {
+          const cidParam = payload.course_id || COURSE_ID;
+          window.location.href = `/teacher?course_id=${cidParam}&session=${encodeURIComponent(payload.session_code)}&tab=tab-chat&msg_id=${encodeURIComponent(msgId)}`;
+        }
+      },
+    });
+  }
+
+  const socket = window.cpCreateSocket({ transports: ["websocket", "polling"] });
+  socket.on("connect", () => {
+    socket.emit("join_session", { session_code: SESSION_CODE });
+    socket.emit("join_notifications", {});
+  });
+  socket.on("attendance:count_update", (d) => {
+    if (d && d.qr_count !== undefined) {
+      const qrEl = document.getElementById("kpi-qr");
+      if (qrEl) qrEl.textContent = d.qr_count;
+    }
+    refreshOverview();
+  });
+  socket.on("attendance:new_checkin", () => refreshOverview());
+  socket.on("headcount:updated", () => refreshOverview());
+  socket.on("poll:activated", (p) => { selectedViewPollId = p.id; renderLivePoll(p); loadPolls(); });
+  socket.on("poll:opened", (p) => { selectedViewPollId = p.id; renderLivePoll(p); loadPolls(); });
+  socket.on("poll:results_update", (p) => {
+    if (!selectedViewPollId || selectedViewPollId === p.id) renderLivePoll(p);
+    loadPolls();
+  });
+  socket.on("poll:closed", (p) => {
+    if (!selectedViewPollId || selectedViewPollId === p.id) renderLivePoll(p);
+    loadPolls();
+  });
+  socket.on("chat:init", (d) => { chatMessages = d.messages || []; renderChatFeed(); });
+  socket.on("chat:new", (m) => {
+    if (!chatMessages.find(x => x.id === m.id)) chatMessages.push(m);
+    renderChatFeed();
+  });
+  socket.on("chat:notify", (payload) => {
+    if (window.ClassPulseNotify) {
+      window.ClassPulseNotify.pushChatNotification(payload);
+    }
+  });
+  socket.on("chat:updated", (m) => {
+    const idx = chatMessages.findIndex(x => x.id === m.id);
+    if (idx >= 0) chatMessages[idx] = m;
+    renderChatFeed();
+  });
+
+  // =========================================================================
+  // Feature 4 & 5: AI Lecture Summarizer & Homework Cohort Studio JS
+  // =========================================================================
+  let courseAssignments = [];
+
+  async function loadLectureArtifacts() {
+    try {
+      const res = await fetch(`/api/sessions/${SESSION_ID}/lectures?_ts=${Date.now()}`, { cache: "no-store" });
+      if (!res.ok) return;
+      const data = await res.json();
+      renderLectureArtifacts(data.artifacts || []);
+    } catch (err) {
+      console.error("loadLectureArtifacts error:", err);
+    }
+  }
+
+  function formatStageLabel(status) {
+    const map = {
+      TRANSCRIBING: "Google Gemini: Transcribing class recording...",
+      AI_CORRECTING: "Google Gemini: Cleaning CS terminology...",
+      SUMMARIZING: "Google Gemini: Generating lecturer summary + Q&A...",
+      COMPLETED: "Completed & Ready to Download",
+      FAILED: "Processing Failed",
+    };
+    return map[status] || status || "Pending";
+  }
+
+  function renderLectureArtifacts(artifacts) {
+    const box = document.getElementById("lecture-artifacts-list");
+    if (!box) return;
+    if (!artifacts.length) {
+      box.innerHTML = `<div class="cp-well--dashed cp-muted" style="font-size:12px;">No lecture summaries yet for this session. Upload a recording file, paste notes, or click <strong>Run Ariel Lecture Sample</strong>.</div>`;
+      return;
+    }
+    box.innerHTML = artifacts.map(a => {
+      const transcriptHtml = (a.corrected_transcript || []).map(seg =>
+        `<div class="cp-log-row" style="justify-content:flex-start; margin-top:4px;"><span class="cp-ts ts">[${escapeHtml(seg.offset_mmss)}]</span> <span style="color:var(--cp-ink); overflow-wrap:anywhere;">${escapeHtml(seg.text)}</span></div>`
+      ).join("");
+      const badgeClass = a.status === "COMPLETED"
+        ? "VERIFIED"
+        : (a.status === "FAILED" ? "DISCREPANCY_ALERT" : "UNDER_SCANNED");
+      const downloadBar = a.status === "COMPLETED" ? `
+        <div class="cp-row-wrap" style="margin:8px 0;">
+          <a class="cp-btn cp-btn--green cp-btn--sm" href="/api/lectures/${Number(a.id)}/download/summary.md">Download Summary (.md)</a>
+          <a class="cp-btn cp-btn--secondary cp-btn--sm" href="/api/lectures/${Number(a.id)}/download/transcript.txt">Transcript (.txt)</a>
+          <button type="button" class="cp-btn cp-btn--danger-soft cp-btn--sm" onclick="deleteLectureArtifact(${Number(a.id)})">Delete</button>
+        </div>
+      ` : `<div style="font-size:12px; color:var(--cp-amber-ink-deep); font-weight:600; margin:6px 0;">${escapeHtml(formatStageLabel(a.status))}${a.error_message ? " — " + escapeHtml(a.error_message) : ""} <button type="button" class="cp-btn cp-btn--secondary cp-btn--sm" style="margin-left:8px;" onclick="deleteLectureArtifact(${Number(a.id)})">Delete</button></div>`;
+      return `
+        <div class="cp-artifact-card">
+          <div class="cp-row-between" style="margin-bottom:6px;">
+            <strong style="font-size:13.5px; color:var(--cp-indigo-ink);">Summary #${Number(a.id)} (${escapeHtml(a.source_type)})</strong>
+            <span class="cp-badge badge ${badgeClass}">${escapeHtml(a.status)}</span>
+          </div>
+          ${downloadBar}
+          ${a.summary_markdown ? `<pre class="cp-review-md" style="white-space:pre-wrap; font-family:inherit; margin:0 0 8px 0;">${escapeHtml(a.summary_markdown)}</pre>` : ""}
+          ${(a.corrected_transcript || []).length ? `
+            <details>
+              <summary style="cursor:pointer; font-size:12px; color:var(--cp-indigo-ink); font-weight:700;">View Pass-1 Corrected Transcript (${(a.corrected_transcript || []).length} segments)</summary>
+              <div style="margin-top:6px;">${transcriptHtml}</div>
+            </details>
+          ` : ""}
+        </div>
+      `;
+    }).join("");
+  }
+
+  function pollLectureJob(jobId) {
+    const statusEl = document.getElementById("lecture-ai-status");
+    const timer = setInterval(async () => {
       try {
-        const res = await fetch(`/api/sessions/${SESSION_ID}/chat`, {
+        const res = await fetch(`/api/jobs/${jobId}?_ts=${Date.now()}`, { cache: "no-store" });
+        if (!res.ok) { clearInterval(timer); return; }
+        const job = await res.json();
+        loadLectureArtifacts();
+        if (job.status === "DONE") {
+          clearInterval(timer);
+          statusEl.textContent = "Summary ready to download!";
+        } else if (job.status === "FAILED") {
+          clearInterval(timer);
+          statusEl.textContent = "Failed: " + (job.error || "Check Gemini API key");
+        }
+      } catch (_e) {
+        clearInterval(timer);
+      }
+    }, 2000);
+  }
+
+  async function summarizeLecture(useSample) {
+    const statusEl = document.getElementById("lecture-ai-status");
+    statusEl.textContent = "Uploading & processing with Google Gemini AI...";
+    try {
+      let res;
+      const fileInput = document.getElementById("lecture-media-input");
+      const rawText = document.getElementById("lecture-transcript-input").value.trim();
+      if (!useSample && fileInput && fileInput.files.length > 0) {
+        const fd = new FormData();
+        fd.append("media", fileInput.files[0]);
+        fd.append("async", "1");
+        res = await fetch(`/api/sessions/${SESSION_ID}/lectures/summarize?async=1`, { method: "POST", body: fd });
+      } else {
+        res = await fetch(`/api/sessions/${SESSION_ID}/lectures/summarize`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ as_lecturer: true, category: catEl.value, body }),
+          body: JSON.stringify({ use_sample: useSample || !rawText, transcript_text: rawText }),
         });
-        const data = await res.json();
-        if (!res.ok) {
-          bodyEl.value = body;
-          return alert(data.error || "Could not send message.");
-        }
-        if (!chatMessages.find(x => x.id === data.id)) {
-          chatMessages.push(data);
-        }
-        renderChatFeed();
-      } catch (_err) {
-        bodyEl.value = body;
-        alert("Network error while sending chat message.");
       }
-    }
-
-    async function upvoteChat(id) { await fetch(`/api/chat/${id}/upvote`, { method: "POST" }); }
-    async function pinChat(id) { await fetch(`/api/chat/${id}/pin`, { method: "POST" }); }
-
-    if (window.ClassPulseNotify) {
-      window.ClassPulseNotify.init({
-        role: "lecturer",
-        baseTitle: document.title,
-        currentLecturerId: LECTURER_ID,
-        isChatVisibleFn: (payload) =>
-          activeTabId === "tab-chat" && (!payload || payload.session_code === SESSION_CODE),
-        onOpenMessage: (payload) => {
-          const msgId = payload.message_id || payload.id;
-          if (payload.session_code === SESSION_CODE) {
-            switchTab("tab-chat");
-            if (!window.ClassPulseNotify.highlightMessage(msgId)) {
-              fetchLatestLecturerChat().then(() => window.ClassPulseNotify.highlightMessage(msgId));
-            }
-          } else {
-            const cidParam = payload.course_id || COURSE_ID;
-            window.location.href = `/teacher?course_id=${cidParam}&session=${encodeURIComponent(payload.session_code)}&tab=tab-chat&msg_id=${encodeURIComponent(msgId)}`;
-          }
-        },
-      });
-    }
-
-    const socket = io({ transports: ["websocket", "polling"] });
-    socket.on("connect", () => {
-      socket.emit("join_session", { session_code: SESSION_CODE });
-      socket.emit("join_notifications", {});
-    });
-    socket.on("attendance:count_update", (d) => {
-      if (d && d.qr_count !== undefined) {
-        document.getElementById("kpi-qr").textContent = d.qr_count;
-      }
-      refreshOverview();
-    });
-    socket.on("attendance:new_checkin", () => refreshOverview());
-    socket.on("headcount:updated", () => refreshOverview());
-    socket.on("poll:activated", (p) => { selectedViewPollId = p.id; renderLivePoll(p); loadPolls(); });
-    socket.on("poll:opened", (p) => { selectedViewPollId = p.id; renderLivePoll(p); loadPolls(); });
-    socket.on("poll:results_update", (p) => {
-      if (!selectedViewPollId || selectedViewPollId === p.id) renderLivePoll(p);
-      loadPolls();
-    });
-    socket.on("poll:closed", (p) => {
-      if (!selectedViewPollId || selectedViewPollId === p.id) renderLivePoll(p);
-      loadPolls();
-    });
-    socket.on("chat:init", (d) => { chatMessages = d.messages || []; renderChatFeed(); });
-    socket.on("chat:new", (m) => {
-      if (!chatMessages.find(x => x.id === m.id)) chatMessages.push(m);
-      renderChatFeed();
-    });
-    socket.on("chat:notify", (payload) => {
-      if (window.ClassPulseNotify) {
-        window.ClassPulseNotify.pushChatNotification(payload);
-      }
-    });
-    socket.on("chat:updated", (m) => {
-      const idx = chatMessages.findIndex(x => x.id === m.id);
-      if (idx >= 0) chatMessages[idx] = m;
-      renderChatFeed();
-    });
-
-    // =========================================================================
-    // Feature 4 & 5: AI Lecture Summarizer & Homework Cohort Studio JS
-    // =========================================================================
-    let courseAssignments = [];
-
-    function escapeHtml(str) {
-      return String(str || "")
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;");
-    }
-
-    async function loadLectureArtifacts() {
-      try {
-        const res = await fetch(`/api/sessions/${SESSION_ID}/lectures?_ts=${Date.now()}`, { cache: "no-store" });
-        if (!res.ok) return;
-        const data = await res.json();
-        renderLectureArtifacts(data.artifacts || []);
-      } catch (err) {
-        console.error("loadLectureArtifacts error:", err);
-      }
-    }
-
-    function formatStageLabel(status) {
-      const map = {
-        TRANSCRIBING: "Google Gemini: Transcribing class recording...",
-        AI_CORRECTING: "Google Gemini: Cleaning CS terminology...",
-        SUMMARIZING: "Google Gemini: Generating lecturer summary + Q&A...",
-        COMPLETED: "Completed & Ready to Download",
-        FAILED: "Processing Failed",
-      };
-      return map[status] || status || "Pending";
-    }
-
-    function renderLectureArtifacts(artifacts) {
-      const box = document.getElementById("lecture-artifacts-list");
-      if (!box) return;
-      if (!artifacts.length) {
-        box.innerHTML = `<div style="color:var(--muted); font-size:12px; padding:10px; border:1px dashed var(--border); border-radius:8px;">No lecture summaries yet for this session. Upload a recording file, paste notes, or click <strong>Run Ariel Lecture Sample</strong>.</div>`;
+      const data = await res.json();
+      if (!res.ok) {
+        statusEl.textContent = data.error || "Failed";
         return;
       }
-      box.innerHTML = artifacts.map(a => {
-        const transcriptHtml = (a.corrected_transcript || []).map(seg =>
-          `<div style="font-size:12px; padding:3px 0; border-bottom:1px solid #1e293b;"><span class="code-pill">[${escapeHtml(seg.offset_mmss)}]</span> <span style="color:#e2e8f0;">${escapeHtml(seg.text)}</span></div>`
-        ).join("");
-        const badgeClass = a.status === "COMPLETED"
-          ? "VERIFIED"
-          : (a.status === "FAILED" ? "DISCREPANCY_ALERT" : "UNDER_SCANNED");
-        const downloadBar = a.status === "COMPLETED" ? `
-          <div style="display:flex; gap:8px; flex-wrap:wrap; margin:8px 0;">
-            <a class="btn btn-green btn-sm" style="text-decoration:none; display:inline-block;" href="/api/lectures/${a.id}/download/summary.md">&#11015; Download Summary (.md)</a>
-            <a class="btn btn-secondary btn-sm" style="text-decoration:none; display:inline-block;" href="/api/lectures/${a.id}/download/transcript.txt">&#11015; Transcript (.txt)</a>
-            <button type="button" class="btn-secondary btn-sm" onclick="deleteLectureArtifact(${a.id})">&#128465; Delete</button>
-          </div>
-        ` : `<div style="font-size:12px; color:#f59e0b; margin:6px 0;">${escapeHtml(formatStageLabel(a.status))}${a.error_message ? " — " + escapeHtml(a.error_message) : ""} <button type="button" class="btn-secondary btn-sm" style="margin-left:8px;" onclick="deleteLectureArtifact(${a.id})">Delete</button></div>`;
-        return `
-          <div style="background:#0f172a; border:1px solid var(--border); border-radius:10px; padding:12px; margin-bottom:10px;">
-            <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:6px;">
-              <strong style="font-size:13px; color:var(--accent);">Summary #${a.id} (${escapeHtml(a.source_type)})</strong>
-              <span class="badge ${badgeClass}">${escapeHtml(a.status)}</span>
-            </div>
-            ${downloadBar}
-            ${a.summary_markdown ? `<pre style="white-space:pre-wrap; font-family:inherit; font-size:12px; line-height:1.45; color:#cbd5e1; margin:0 0 8px 0;">${escapeHtml(a.summary_markdown)}</pre>` : ""}
-            ${(a.corrected_transcript || []).length ? `
-              <details>
-                <summary style="cursor:pointer; font-size:12px; color:var(--accent); font-weight:700;">View Pass-1 Corrected Transcript (${(a.corrected_transcript || []).length} segments)</summary>
-                <div style="margin-top:6px;">${transcriptHtml}</div>
-              </details>
-            ` : ""}
-          </div>
-        `;
-      }).join("");
-    }
-
-    function pollLectureJob(jobId) {
-      const statusEl = document.getElementById("lecture-ai-status");
-      const timer = setInterval(async () => {
-        try {
-          const res = await fetch(`/api/jobs/${jobId}?_ts=${Date.now()}`, { cache: "no-store" });
-          if (!res.ok) { clearInterval(timer); return; }
-          const job = await res.json();
-          loadLectureArtifacts();
-          if (job.status === "DONE") {
-            clearInterval(timer);
-            statusEl.textContent = "Summary ready to download!";
-          } else if (job.status === "FAILED") {
-            clearInterval(timer);
-            statusEl.textContent = "Failed: " + (job.error || "Check Gemini API key");
-          }
-        } catch (_e) {
-          clearInterval(timer);
-        }
-      }, 2000);
-    }
-
-    async function summarizeLecture(useSample) {
-      const statusEl = document.getElementById("lecture-ai-status");
-      statusEl.textContent = "Uploading & processing with Google Gemini AI...";
-      try {
-        let res;
-        const fileInput = document.getElementById("lecture-media-input");
-        const rawText = document.getElementById("lecture-transcript-input").value.trim();
-        if (!useSample && fileInput && fileInput.files.length > 0) {
-          const fd = new FormData();
-          fd.append("media", fileInput.files[0]);
-          fd.append("async", "1");
-          res = await fetch(`/api/sessions/${SESSION_ID}/lectures/summarize?async=1`, { method: "POST", body: fd });
-        } else {
-          res = await fetch(`/api/sessions/${SESSION_ID}/lectures/summarize`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ use_sample: useSample || !rawText, transcript_text: rawText }),
-          });
-        }
-        const data = await res.json();
-        if (!res.ok) {
-          statusEl.textContent = data.error || "Failed";
-          return;
-        }
-        if (data.job_id) {
-          statusEl.textContent = "Google Gemini: Transcribing recording in background...";
-          loadLectureArtifacts();
-          pollLectureJob(data.job_id);
-          return;
-        }
-        statusEl.textContent = "Completed!";
+      if (data.job_id) {
+        statusEl.textContent = "Google Gemini: Transcribing recording in background...";
         loadLectureArtifacts();
-      } catch (err) {
-        statusEl.textContent = "Error: " + err.message;
+        pollLectureJob(data.job_id);
+        return;
       }
+      statusEl.textContent = "Completed!";
+      loadLectureArtifacts();
+    } catch (err) {
+      statusEl.textContent = "Error: " + err.message;
     }
+  }
 
-    async function loadAssignments() {
-      try {
-        const res = await fetch(`/api/courses/${COURSE_ID}/assignments?include_submissions=1&_ts=${Date.now()}`, { cache: "no-store" });
-        if (!res.ok) return;
-        const data = await res.json();
-        courseAssignments = data.assignments || [];
-        const sel = document.getElementById("hw-assignment-select");
-        if (!sel) return;
-        if (!courseAssignments.length) {
-          sel.innerHTML = `<option value="">No assignments yet — Create one or click Seed Sample Cohort</option>`;
-        } else {
-          const prevVal = sel.value;
-          sel.innerHTML = courseAssignments.map(a => `<option value="${a.id}">${escapeHtml(a.title)} (${a.cohort_stats.submission_count} subs)</option>`).join("");
-          if (prevVal && courseAssignments.some(a => String(a.id) === prevVal)) {
-            sel.value = prevVal;
-          }
-        }
-        renderSelectedAssignment();
-      } catch (err) {
-        console.error("loadAssignments error:", err);
-      }
-    }
-
-    function renderSelectedAssignment() {
+  async function loadAssignments() {
+    try {
+      const res = await fetch(`/api/courses/${COURSE_ID}/assignments?include_submissions=1&_ts=${Date.now()}`, { cache: "no-store" });
+      if (!res.ok) return;
+      const data = await res.json();
+      courseAssignments = data.assignments || [];
       const sel = document.getElementById("hw-assignment-select");
-      const kpiEl = document.getElementById("hw-cohort-kpis");
-      const tagsEl = document.getElementById("hw-top-tags");
-      const listEl = document.getElementById("hw-submissions-list");
-      if (!sel || !kpiEl) return;
-
-      const a = courseAssignments.find(x => String(x.id) === sel.value) || courseAssignments[0];
-      if (!a) {
-        kpiEl.innerHTML = "";
-        tagsEl.innerHTML = "";
-        listEl.innerHTML = `<div style="color:var(--muted); font-size:12px;">No submissions yet.</div>`;
-        return;
+      if (!sel) return;
+      if (!courseAssignments.length) {
+        sel.innerHTML = `<option value="">No assignments yet — Create one or click Seed Sample Cohort</option>`;
+      } else {
+        const prevVal = sel.value;
+        sel.innerHTML = courseAssignments.map(a => `<option value="${Number(a.id)}">${escapeHtml(a.title)} (${a.cohort_stats.submission_count} subs)</option>`).join("");
+        if (prevVal && courseAssignments.some(a => String(a.id) === prevVal)) {
+          sel.value = prevVal;
+        }
       }
-      const stats = a.cohort_stats || {};
-      const topicCount = Object.keys(stats.topic_averages || {}).length;
-      kpiEl.innerHTML = `
-        <div class="kpi" style="padding:10px;"><div class="num" style="font-size:20px;">${stats.submission_count || 0}</div><div class="lbl">Submissions</div></div>
-        <div class="kpi" style="padding:10px;"><div class="num" style="font-size:20px; color:#4ade80;">${stats.mean_overall_score || 0}</div><div class="lbl">O(1) Mean Score</div></div>
-        <div class="kpi" style="padding:10px;"><div class="num" style="font-size:20px;">${topicCount}</div><div class="lbl">Tracked Topics</div></div>
-      `;
-      const catAvgs = Object.entries(stats.category_averages || {}).map(
-        ([k, v]) => `<span class="code-pill" style="margin-right:4px;">${escapeHtml(k)}: ${v}/100</span>`
-      ).join("");
-      const tagsHtml = (stats.top_error_tags || []).map(t => `<span class="code-pill" style="margin-right:4px;">${escapeHtml(t.tag)} (${t.count})</span>`).join("");
-      tagsEl.innerHTML =
-        (catAvgs ? `<div style="margin-bottom:4px;"><strong>Category Cohort Averages:</strong> ${catAvgs}</div>` : "") +
-        (tagsHtml ? `<div><strong>Top Cohort Error Tags:</strong> ${tagsHtml}</div>` : "");
+      renderSelectedAssignment();
+    } catch (err) {
+      console.error("loadAssignments error:", err);
+    }
+  }
 
-      const subs = a.submissions || [];
-      if (!subs.length) {
-        listEl.innerHTML = `<div style="color:var(--muted); font-size:12px;">Awaiting student homework submissions.</div>`;
-        return;
-      }
-      listEl.innerHTML = `
-        <table>
+  function renderSelectedAssignment() {
+    const sel = document.getElementById("hw-assignment-select");
+    const kpiEl = document.getElementById("hw-cohort-kpis");
+    const tagsEl = document.getElementById("hw-top-tags");
+    const listEl = document.getElementById("hw-submissions-list");
+    if (!sel || !kpiEl) return;
+
+    const a = courseAssignments.find(x => String(x.id) === sel.value) || courseAssignments[0];
+    if (!a) {
+      kpiEl.innerHTML = "";
+      tagsEl.innerHTML = "";
+      listEl.innerHTML = `<div class="cp-muted" style="font-size:12px;">No submissions yet.</div>`;
+      return;
+    }
+    const stats = a.cohort_stats || {};
+    const topicCount = Object.keys(stats.topic_averages || {}).length;
+    kpiEl.innerHTML = `
+      <div class="cp-kpi"><div class="cp-kpi-num cp-kpi-num--indigo cp-tabular" style="font-size:22px;">${stats.submission_count || 0}</div><div class="cp-kpi-lbl">Submissions</div></div>
+      <div class="cp-kpi"><div class="cp-kpi-num cp-kpi-num--green cp-tabular" style="font-size:22px;">${stats.mean_overall_score || 0}</div><div class="cp-kpi-lbl">O(1) Mean Score</div></div>
+      <div class="cp-kpi"><div class="cp-kpi-num cp-kpi-num--coral cp-tabular" style="font-size:22px;">${topicCount}</div><div class="cp-kpi-lbl">Tracked Topics</div></div>
+    `;
+    const catAvgs = Object.entries(stats.category_averages || {}).map(
+      ([k, v]) => `<span class="cp-code-pill code-pill" style="margin:2px 4px 2px 0; display:inline-block;">${escapeHtml(k)}: ${escapeHtml(v)}/100</span>`
+    ).join("");
+    const tagsHtml = (stats.top_error_tags || []).map(t => `<span class="cp-code-pill code-pill" style="margin:2px 4px 2px 0; display:inline-block;">${escapeHtml(t.tag)} (${Number(t.count || 0)})</span>`).join("");
+    tagsEl.innerHTML =
+      (catAvgs ? `<div style="margin-bottom:6px;"><strong>Category Cohort Averages:</strong> ${catAvgs}</div>` : "") +
+      (tagsHtml ? `<div><strong>Top Cohort Error Tags:</strong> ${tagsHtml}</div>` : "");
+
+    const subs = a.submissions || [];
+    if (!subs.length) {
+      listEl.innerHTML = `<div class="cp-muted" style="font-size:12px;">Awaiting student homework submissions.</div>`;
+      return;
+    }
+    listEl.innerHTML = `
+      <div class="cp-table-scroll">
+        <table class="cp-table">
           <thead><tr><th>Student</th><th>Ver</th><th>AI Rubric</th><th>Class Score (1-10)</th><th>Weakest Category</th><th>Review</th></tr></thead>
           <tbody>
             ${subs.map(s => {
@@ -1609,123 +1479,124 @@
               return `
                 <tr>
                   <td><strong>${escapeHtml(s.student_name)}</strong></td>
-                  <td>v${s.version}</td>
-                  <td><span class="badge VERIFIED">${score}/100</span></td>
-                  <td><span class="badge" style="background:rgba(168,85,247,0.2); color:#d8b4fe; border:1px solid rgba(168,85,247,0.45);">${clsScore}</span></td>
-                  <td style="font-size:11px; color:var(--muted);">${weakest ? `${escapeHtml(weakest.label)} (${weakest.class_score}/10)` : "—"}</td>
-                  <td><button class="btn-secondary btn-sm" onclick="openReviewModal(${s.id}, ${a.id})">View Review</button></td>
+                  <td class="cp-tabular">v${Number(s.version || 1)}</td>
+                  <td><span class="cp-badge badge VERIFIED cp-tabular">${escapeHtml(score)}/100</span></td>
+                  <td><span class="cp-badge cp-badge--purple cp-tabular">${escapeHtml(clsScore)}</span></td>
+                  <td class="cp-muted" style="font-size:11.5px;">${weakest ? `${escapeHtml(weakest.label)} (${escapeHtml(weakest.class_score)}/10)` : "—"}</td>
+                  <td><button type="button" class="cp-btn cp-btn--secondary cp-btn--sm" onclick="openReviewModal(${Number(s.id)}, ${Number(a.id)})">View Review</button></td>
                 </tr>
               `;
             }).join("")}
           </tbody>
         </table>
-      `;
-    }
+      </div>
+    `;
+  }
 
-    function renderTeacherReviewHtml(md) {
-      const safe = escapeHtml(md || "No review generated yet.");
-      const fmt = (s) =>
-        s
-          .replace(/\*\*(.+?)\*\*/g, '<strong style="color:#f8fafc;">$1</strong>')
-          .replace(/`([^`]+)`/g, '<code style="background:#1e293b; color:#bae6fd; padding:1px 5px; border-radius:4px; font-size:11px;">$1</code>');
-      let html = "";
-      let inList = false;
-      for (const raw of safe.split(/\r?\n/)) {
-        const line = raw.trim();
-        if (!line) {
-          if (inList) { html += "</ul>"; inList = false; }
-          continue;
-        }
-        if (line.startsWith("### ") || line.startsWith("## ")) {
-          if (inList) { html += "</ul>"; inList = false; }
-          html += `<div style="font-size:11px; font-weight:800; color:var(--accent); text-transform:uppercase; letter-spacing:0.04em; margin:10px 0 4px;">${fmt(line.replace(/^#{2,3}\s+/, ""))}</div>`;
-        } else if (line.startsWith("- ") || line.startsWith("* ")) {
-          if (!inList) { html += '<ul style="margin:0 0 6px 18px; padding:0;">'; inList = true; }
-          html += `<li style="margin:3px 0; color:#e2e8f0;">${fmt(line.slice(2))}</li>`;
-        } else {
-          if (inList) { html += "</ul>"; inList = false; }
-          html += `<p style="margin:4px 0; color:#cbd5e1;">${fmt(line)}</p>`;
-        }
+  function renderTeacherReviewHtml(md) {
+    const safe = escapeHtml(md || "No review generated yet.");
+    const fmt = (s) =>
+      s
+        .replace(/&amp;bull;/g, "&bull;")
+        .replace(/\*\*(.+?)\*\*/g, '<strong style="color:var(--cp-ink);">$1</strong>')
+        .replace(/`([^`]+)`/g, '<code class="cp-review-code">$1</code>');
+    let html = "";
+    let inList = false;
+    for (const raw of safe.split(/\r?\n/)) {
+      const line = raw.trim();
+      if (!line) {
+        if (inList) { html += "</ul>"; inList = false; }
+        continue;
       }
-      if (inList) html += "</ul>";
-      return html;
-    }
-
-    function openReviewModal(subId, assignId) {
-      const a = courseAssignments.find(x => x.id === assignId);
-      const sub = a && (a.submissions || []).find(s => s.id === subId);
-      if (!sub) return;
-      document.getElementById("modal-hw-review-title").textContent = `${sub.student_name} — ${a.title} (v${sub.version})`;
-      const standing = sub.class_standing || {};
-      const rubricScore = sub.ai_rubric_grade !== undefined ? sub.ai_rubric_grade : (sub.metrics ? sub.metrics.overall_score : 0);
-      const summaryBadges = `
-        <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; padding-bottom:10px; border-bottom:1px solid var(--border);">
-          <span class="badge VERIFIED">AI Rubric: ${rubricScore}/100</span>
-          <span class="badge" style="background:rgba(168,85,247,0.2); color:#d8b4fe; border:1px solid rgba(168,85,247,0.45);">Class Standing: ${standing.class_score || 10}/10 (#${standing.rank || 1}/${standing.cohort_size || 1})</span>
-        </div>
-      `;
-      document.getElementById("modal-hw-review-body").innerHTML = summaryBadges + renderTeacherReviewHtml(sub.deep_review_md);
-      openModal("modal-hw-review");
-    }
-
-    async function createAssignment() {
-      const title = document.getElementById("hw-new-title").value.trim();
-      const rubric_text = document.getElementById("hw-new-rubric").value.trim() || "OOP modularity, automated pytest coverage, error handling.";
-      if (!title) return alert("Enter an assignment title.");
-      const res = await fetch(`/api/courses/${COURSE_ID}/assignments`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title, rubric_text }),
-      });
-      if (res.ok) {
-        document.getElementById("hw-new-title").value = "";
-        loadAssignments();
+      if (line.startsWith("### ") || line.startsWith("## ")) {
+        if (inList) { html += "</ul>"; inList = false; }
+        html += `<div class="cp-review-h">${fmt(line.replace(/^#{2,3}\s+/, ""))}</div>`;
+      } else if (line.startsWith("- ") || line.startsWith("* ")) {
+        if (!inList) { html += '<ul style="margin:0 0 6px 18px; padding:0;">'; inList = true; }
+        html += `<li style="margin:3px 0; color:var(--cp-ink);">${fmt(line.slice(2))}</li>`;
+      } else {
+        if (inList) { html += "</ul>"; inList = false; }
+        html += `<p style="margin:4px 0; color:var(--cp-ink-secondary);">${fmt(line)}</p>`;
       }
     }
+    if (inList) html += "</ul>";
+    return html;
+  }
 
-    async function seedSampleAssignment() {
-      const res = await fetch(`/api/courses/${COURSE_ID}/assignments/seed-sample`, { method: "POST" });
-      if (res.ok) loadAssignments();
-    }
+  function openReviewModal(subId, assignId) {
+    const a = courseAssignments.find(x => x.id === assignId);
+    const sub = a && (a.submissions || []).find(s => s.id === subId);
+    if (!sub) return;
+    document.getElementById("modal-hw-review-title").textContent = `${sub.student_name} — ${a.title} (v${sub.version})`;
+    const standing = sub.class_standing || {};
+    const rubricScore = sub.ai_rubric_grade !== undefined ? sub.ai_rubric_grade : (sub.metrics ? sub.metrics.overall_score : 0);
+    const summaryBadges = `
+      <div class="cp-row-wrap" style="margin-bottom:10px; padding-bottom:10px; border-bottom:1px solid var(--cp-border);">
+        <span class="cp-badge badge VERIFIED cp-tabular">AI Rubric: ${escapeHtml(rubricScore)}/100</span>
+        <span class="cp-badge cp-badge--purple cp-tabular">Class Standing: ${escapeHtml(standing.class_score || 10)}/10 (#${escapeHtml(standing.rank || 1)}/${escapeHtml(standing.cohort_size || 1)})</span>
+      </div>
+    `;
+    document.getElementById("modal-hw-review-body").innerHTML = summaryBadges + renderTeacherReviewHtml(sub.deep_review_md);
+    openModal("modal-hw-review");
+  }
 
-    socket.on("lecture:status", payload => {
-      const statusEl = document.getElementById("lecture-ai-status");
-      if (statusEl && payload && payload.status) {
-        statusEl.textContent = formatStageLabel(payload.status);
-      }
-      loadLectureArtifacts();
+  async function createAssignment() {
+    const title = document.getElementById("hw-new-title").value.trim();
+    const rubric_text = document.getElementById("hw-new-rubric").value.trim() || "OOP modularity, automated pytest coverage, error handling.";
+    if (!title) return alert("Enter an assignment title.");
+    const res = await fetch(`/api/courses/${COURSE_ID}/assignments`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title, rubric_text }),
     });
-    socket.on("lecture:summary_ready", () => {
-      const statusEl = document.getElementById("lecture-ai-status");
-      if (statusEl) statusEl.textContent = "Summary ready to download!";
-      loadLectureArtifacts();
-    });
+    if (res.ok) {
+      document.getElementById("hw-new-title").value = "";
+      loadAssignments();
+    }
+  }
 
-    // Initial load + resilient 3.5-second live background sync (guarantees zero-refresh updates even across tunnels)
+  async function seedSampleAssignment() {
+    const res = await fetch(`/api/courses/${COURSE_ID}/assignments/seed-sample`, { method: "POST" });
+    if (res.ok) loadAssignments();
+  }
+
+  socket.on("lecture:status", payload => {
+    const statusEl = document.getElementById("lecture-ai-status");
+    if (statusEl && payload && payload.status) {
+      statusEl.textContent = formatStageLabel(payload.status);
+    }
+    loadLectureArtifacts();
+  });
+  socket.on("lecture:summary_ready", () => {
+    const statusEl = document.getElementById("lecture-ai-status");
+    if (statusEl) statusEl.textContent = "Summary ready to download!";
+    loadLectureArtifacts();
+  });
+
+  // Initial load + resilient 3.5-second live background sync
+  refreshOverview();
+  loadPolls();
+  fetchLatestLecturerChat();
+  loadLectureArtifacts();
+  loadAssignments();
+
+  (function handleDeepLinkParams() {
+    const params = new URLSearchParams(window.location.search);
+    const targetTab = params.get("tab");
+    const targetMsgId = params.get("msg_id");
+    if (targetTab) switchTab(targetTab);
+    if (targetMsgId && window.ClassPulseNotify) {
+      setTimeout(() => {
+        if (!window.ClassPulseNotify.highlightMessage(targetMsgId)) {
+          fetchLatestLecturerChat().then(() => window.ClassPulseNotify.highlightMessage(targetMsgId));
+        }
+      }, 350);
+    }
+  })();
+
+  setInterval(() => {
     refreshOverview();
     loadPolls();
-    fetchLatestLecturerChat();
-    loadLectureArtifacts();
-    loadAssignments();
-
-    (function handleDeepLinkParams() {
-      const params = new URLSearchParams(window.location.search);
-      const targetTab = params.get("tab");
-      const targetMsgId = params.get("msg_id");
-      if (targetTab) switchTab(targetTab);
-      if (targetMsgId && window.ClassPulseNotify) {
-        setTimeout(() => {
-          if (!window.ClassPulseNotify.highlightMessage(targetMsgId)) {
-            fetchLatestLecturerChat().then(() => window.ClassPulseNotify.highlightMessage(targetMsgId));
-          }
-        }, 350);
-      }
-    })();
-
-    setInterval(() => {
-      refreshOverview();
-      loadPolls();
-    }, 3500);
-  </script>
-</body>
-</html>
+  }, 3500);
+</script>
+{% endblock %}

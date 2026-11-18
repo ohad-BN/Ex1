@@ -1,1540 +1,1449 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
-  <title>ClassPulse — Student Classroom App</title>
-  <script src="/static/js/csrf.js"></script>
-  <script src="/static/js/notifications.js"></script>
-  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
-  <style>
-    :root {
-      --bg: #0b1120;
-      --panel: #151f32;
-      --panel-elevated: #1e293b;
-      --border: #2d3d54;
-      --text: #f8fafc;
-      --muted: #94a3b8;
-      --accent: #38bdf8;
-      --green: #22c55e;
-      --amber: #f59e0b;
-      --purple: #a855f7;
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      min-height: 100vh;
-      background: var(--bg);
-      color: var(--text);
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      display: flex;
-      justify-content: center;
-      padding-bottom: 24px;
-    }
-    .app-shell {
-      width: 100%;
-      max-width: 600px;
-      padding: 10px 12px;
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-    }
+{% extends "layouts/base.html" %}
+{% set cp_use_csrf = true %}
+{% set cp_use_notifications = true %}
+{% set cp_use_socketio = true %}
+{% from "macros/icons.html" import cp_icon %}
 
-    /* Compact Sticky Top Bar (TopHat + Slido Inspired) */
-    header.top-bar {
-      position: sticky;
-      top: 6px;
-      z-index: 800;
-      background: rgba(21, 31, 50, 0.94);
-      backdrop-filter: blur(12px);
-      border: 1px solid var(--border);
-      border-radius: 14px;
-      padding: 9px 12px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 8px;
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
-    }
-    .brand-col {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      min-width: 0;
-    }
-    .brand-dot {
-      width: 10px;
-      height: 10px;
-      border-radius: 999px;
-      background: var(--green);
-      box-shadow: 0 0 10px var(--green);
-      flex-shrink: 0;
-    }
-    .brand-title {
-      font-size: 13px;
-      font-weight: 800;
-      color: var(--accent);
-      white-space: nowrap;
-    }
-    .identity-pill {
-      font-size: 11px;
-      color: #cbd5e1;
-      background: #0f172a;
-      border: 1px solid var(--border);
-      padding: 3px 8px;
-      border-radius: 999px;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      max-width: 210px;
-    }
+{% block title %}ClassPulse — Student Classroom App{% endblock %}
 
-    /* Segmented 3-Mode Switcher (Live Class | Courses & Logs | AI Study Hub) */
-    .mode-tabs {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      background: #0f172a;
-      border: 1px solid var(--border);
-      border-radius: 11px;
-      padding: 3px;
-      gap: 4px;
-    }
-    .mode-tab {
-      border: none;
-      background: transparent;
-      color: var(--muted);
-      font-size: 12px;
-      font-weight: 700;
-      padding: 8px 10px;
-      border-radius: 8px;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 6px;
-      transition: all 0.15s ease;
-    }
-    .mode-tab.active {
-      background: var(--panel-elevated);
-      color: var(--text);
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
-    }
-    .live-dot {
-      width: 7px;
-      height: 7px;
-      border-radius: 999px;
-      background: var(--muted);
-    }
-    .live-dot.hot {
-      background: #ef4444;
-      box-shadow: 0 0 8px #ef4444;
-    }
+{% block styles %}
+<style>
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+  .cp-poll-question {
+    font-weight: 800;
+    color: var(--cp-ink);
+    margin: 10px 0 12px 0;
+    font-size: 16px;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+  }
+  .cp-session-chip {
+    max-width: 100%;
+    white-space: normal;
+    text-align: left;
+    line-height: 1.3;
+  }
+  .cp-hw-eval-box {
+    background: var(--cp-well);
+    border: 1px solid rgba(91, 95, 239, 0.20);
+    border-radius: 14px;
+    padding: 12px;
+    margin-bottom: 10px;
+  }
+  .cp-poll-stage.cp-poll-idle #student-poll-box {
+    display: none;
+  }
+  .cp-hw-kpi-val {
+    font-size: 20px;
+    font-weight: 800;
+    color: var(--cp-ink);
+    margin: 2px 0;
+    font-variant-numeric: tabular-nums;
+  }
+</style>
+{% endblock %}
 
-    /* Compact Session & Attendance Strip */
-    .session-strip {
-      background: var(--panel);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 8px 12px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 8px;
-      flex-wrap: wrap;
-    }
-    .pill {
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-size: 11px;
-      padding: 2px 8px;
-      border-radius: 6px;
-      background: rgba(56, 189, 248, 0.15);
-      color: var(--accent);
-      font-weight: 700;
-    }
-    .pill.green {
-      background: rgba(34, 197, 94, 0.18);
-      color: #4ade80;
-      border: 1px solid rgba(34, 197, 94, 0.35);
-    }
-    .pill.amber {
-      background: rgba(245, 158, 11, 0.18);
-      color: #fbbf24;
-    }
+{% block body %}
+<div class="cp-shell cp-shell--mobile">
+  <span class="sr-only">ClassPulse Student App</span>
 
-    .card {
-      background: var(--panel);
-      border: 1px solid var(--border);
-      border-radius: 14px;
-      padding: 14px;
-      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.24);
-    }
-    .card h2, .card h3 {
-      margin: 0 0 8px 0;
-      font-size: 15px;
-    }
+  <!-- Slide-Over Overlay Backdrop -->
+  <div id="student-drawer-backdrop" class="cp-m-backdrop" onclick="closeStudentDrawer()" aria-hidden="true"></div>
 
-    /* Slido/Mentimeter Auto-Expanding Poll Stage */
-    .poll-stage {
-      background: var(--panel);
-      border: 1px solid var(--border);
-      border-radius: 14px;
-      padding: 12px 14px;
-      transition: all 0.2s ease;
-    }
-    .poll-stage.active-poll {
-      background: linear-gradient(160deg, #172554 0%, #0f172a 100%);
-      border: 2px solid var(--accent);
-      box-shadow: 0 0 28px rgba(56, 189, 248, 0.22);
-      padding: 16px;
-    }
-    .poll-opt {
-      position: relative;
-      overflow: hidden;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      width: 100%;
-      padding: 12px 14px;
-      margin-bottom: 8px;
-      border-radius: 11px;
-      border: 1.5px solid #334155;
-      background: rgba(15, 23, 42, 0.9);
-      color: var(--text);
-      font-weight: 700;
-      font-size: 14px;
-      text-align: left;
-      cursor: pointer;
-      transition: border-color 0.15s, transform 0.08s;
-    }
-    .poll-opt:active:not(:disabled) {
-      transform: scale(0.99);
-    }
-    .poll-opt.selected {
-      border-color: var(--accent);
-      background: rgba(56, 189, 248, 0.16);
-    }
-    .poll-opt.correct {
-      border-color: var(--green);
-      background: rgba(34, 197, 94, 0.18);
-    }
-    .poll-opt-fill {
-      position: absolute;
-      left: 0;
-      top: 0;
-      bottom: 0;
-      background: rgba(56, 189, 248, 0.15);
-      z-index: 0;
-      transition: width 0.3s ease;
-    }
-    .poll-opt.correct .poll-opt-fill {
-      background: rgba(34, 197, 94, 0.22);
-    }
-    .poll-opt-content {
-      position: relative;
-      z-index: 1;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      width: 100%;
-      gap: 8px;
-    }
-    .opt-badge {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      width: 24px;
-      height: 24px;
-      border-radius: 7px;
-      font-size: 12px;
-      font-weight: 800;
-      color: #0f172a;
-      flex-shrink: 0;
-    }
-
-    /* Inputs & Buttons */
-    input[type="text"], input[type="email"], select {
-      width: 100%;
-      padding: 9px 11px;
-      border-radius: 9px;
-      border: 1px solid var(--border);
-      background: #0f172a;
-      color: var(--text);
-      font-size: 13px;
-    }
-    button.primary-btn {
-      padding: 9px 14px;
-      border-radius: 9px;
-      border: none;
-      background: var(--accent);
-      color: #0f172a;
-      font-weight: 800;
-      font-size: 13px;
-      cursor: pointer;
-      white-space: nowrap;
-    }
-
-    /* Course & Session Chips */
-    .course-card {
-      background: #0f172a;
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 12px;
-      margin-bottom: 10px;
-    }
-    .course-card.selected {
-      border-color: var(--accent);
-    }
-    .session-chip {
-      display: inline-flex;
-      align-items: center;
-      gap: 5px;
-      padding: 5px 10px;
-      border-radius: 999px;
-      background: var(--panel-elevated);
-      border: 1px solid var(--border);
-      color: var(--text);
-      font-size: 11px;
-      font-weight: 600;
-      cursor: pointer;
-      margin: 4px 4px 0 0;
-    }
-    .session-chip.active {
-      border-color: var(--accent);
-      background: rgba(56, 189, 248, 0.2);
-      color: var(--accent);
-    }
-
-    .view-pane { display: none; flex-direction: column; gap: 10px; }
-    .view-pane.active { display: flex; }
-
-    /* High-Density Chat Stream */
-    .chat-composer {
-      display: grid;
-      grid-template-columns: 105px 1fr auto;
-      gap: 6px;
-      align-items: center;
-      margin-bottom: 10px;
-    }
-    .chat-item {
-      background: #0f172a;
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 8px 11px;
-      margin-bottom: 6px;
-      font-size: 13px;
-    }
-    .chat-item.pinned {
-      border-color: var(--amber);
-      background: rgba(245, 158, 11, 0.07);
-    }
-    .upvote-pill {
-      border: 1px solid var(--border);
-      background: var(--panel-elevated);
-      color: #4ade80;
-      font-size: 11px;
-      font-weight: 700;
-      padding: 3px 8px;
-      border-radius: 999px;
-      cursor: pointer;
-    }
-  </style>
-</head>
-<body>
-  <div class="app-shell">
-    <!-- Top Compact Header -->
-    <header class="top-bar">
-      <div class="brand-col">
-        <span class="brand-dot"></span>
-        <span class="brand-title">ClassPulse Student App</span>
-        <span class="identity-pill" id="student-identity-line">
-          {% if dashboard.authenticated %}
-            &#10003; {{ dashboard.student.full_name }}{% if dashboard.student.student_id_number %} (ID {{ dashboard.student.student_id_number }}){% endif %}
-          {% else %}
-            Guest Student
-          {% endif %}
-        </span>
+  <!-- Phone-App Slide-Over Overlay Sidebar (Tabs + Student Profile + Room + Utility Link) -->
+  <aside id="student-nav-drawer" class="cp-m-drawer" aria-label="Student navigation drawer" aria-hidden="true">
+    <div class="cp-m-drawer-header">
+      <div class="cp-brand-lockup" style="gap:9px;">
+        <span class="cp-orb cp-orb--xs" aria-hidden="true"></span>
+        <strong style="font-size:15px; color:var(--cp-ink); letter-spacing:-0.01em;">ClassPulse</strong>
       </div>
-      <a href="/teacher" style="font-size:11px; color:var(--muted); text-decoration:none; border:1px solid var(--border); padding:4px 8px; border-radius:7px;">
-        Lecturer
+      <button type="button" class="cp-m-drawer-close" onclick="closeStudentDrawer()" aria-label="Close navigation menu">
+        {{ cp_icon('x', 18) }}
+      </button>
+    </div>
+
+    <div class="cp-m-identity-box">
+      <div class="cp-eyebrow" style="font-size:10px;">Student Profile</div>
+      <div id="student-identity-line" style="font-size:14px; font-weight:800; color:var(--cp-ink); overflow-wrap:anywhere;">
+        {% if dashboard.authenticated %}
+          {{ dashboard.student.full_name }}
+        {% else %}
+          Guest Student
+        {% endif %}
+      </div>
+      {% if dashboard.authenticated %}
+      <div class="cp-muted cp-tabular" style="font-size:12px; overflow-wrap:anywhere;">
+        {% if dashboard.student.student_id_number %}ID {{ dashboard.student.student_id_number }} &bull; {% endif %}{{ dashboard.student.email or '' }}
+      </div>
+      {% else %}
+      <button type="button" class="cp-btn cp-btn--primary cp-btn--sm" style="margin-top:6px;" onclick="closeStudentDrawer(); focusStudentSignIn();">
+        <span>Sign In &amp; Sync</span>
+      </button>
+      {% endif %}
+    </div>
+
+    <div>
+      <div class="cp-eyebrow" style="font-size:10px; padding:0 4px 6px 4px;">Workspace</div>
+      <nav class="cp-m-drawer-nav" aria-label="Student workspace views">
+        <button type="button" id="tab-btn-live" class="cp-mode-tab mode-tab active" onclick="switchView('view-live', this)">
+          {{ cp_icon('zap', 17) }}
+          <span style="flex:1; text-align:left;">Live Class</span>
+          <span id="poll-live-dot" class="cp-live-dot live-dot"></span>
+        </button>
+        <button type="button" id="tab-btn-classes" class="cp-mode-tab mode-tab" onclick="switchView('view-classes', this)">
+          {{ cp_icon('book-open', 17) }}
+          <span style="flex:1; text-align:left;">Courses &amp; Logs</span>
+        </button>
+        <button type="button" id="tab-btn-study" class="cp-mode-tab mode-tab" onclick="switchView('view-study', this)">
+          {{ cp_icon('sparkles', 17) }}
+          <span style="flex:1; text-align:left;">AI Study Hub</span>
+          <span id="study-new-dot" class="cp-live-dot live-dot" style="display:none;"></span>
+        </button>
+      </nav>
+    </div>
+
+    <div class="cp-m-drawer-room">
+      <div class="cp-row-between">
+        <span class="cp-eyebrow" style="font-size:10px;">Active Room</span>
+        <span id="active-session-pill" class="cp-code-pill code-pill">&mdash;</span>
+      </div>
+      <div id="active-session-label" style="font-size:13px; font-weight:700; color:var(--cp-ink); overflow-wrap:anywhere;">
+        Select a lecture
+      </div>
+      <button type="button" class="cp-btn cp-btn--secondary cp-btn--sm" style="margin-top:4px; justify-content:space-between;" onclick="switchView('view-classes')">
+        <span>Switch Course / Lecture</span>
+        {{ cp_icon('chevron-right', 14) }}
+      </button>
+    </div>
+
+    <div class="cp-m-drawer-footer">
+      <a class="cp-btn cp-btn--white cp-btn--sm" style="justify-content:space-between;" href="/teacher">
+        <span>Lecturer Portal</span>
+        {{ cp_icon('external-link', 14) }}
       </a>
-    </header>
+    </div>
+  </aside>
+
+  <!-- Minimal Sticky App Bar (Hamburger + Active Screen Title + Compact Status) -->
+  <header class="cp-m-appbar">
+    <button type="button"
+            id="student-drawer-toggle"
+            class="cp-m-menu-btn"
+            aria-label="Open navigation menu"
+            aria-expanded="false"
+            aria-controls="student-nav-drawer"
+            onclick="toggleStudentDrawer()">
+      {{ cp_icon('menu', 20) }}
+    </button>
+    <div class="cp-m-title-wrap">
+      <h1 id="m-topbar-title" class="cp-m-title">Live Class</h1>
+      <div id="m-topbar-sub" class="cp-m-subtitle">Ready to join</div>
+    </div>
+    <div id="live-attendance-box" style="flex-shrink:0;"></div>
+  </header>
+
+  <!-- Spacious Phone Viewport Content -->
+  <main id="student-main-content" class="cp-m-content">
+    {% if checked_in_banner %}
+    <div id="verified-checkin-banner" class="cp-m-verified-toast" role="status">
+      <div style="min-width:0; flex:1;">
+        <span>&#10003; Attendance Verified!</span>
+        <span style="font-weight:600;"> &mdash; {{ checked_in_banner.student_name }}</span>
+        <div class="cp-tabular" style="font-size:11px; opacity:0.85; font-weight:600;">
+          {{ checked_in_banner.session_title }} ({{ checked_in_banner.session_code }}) &bull; {{ checked_in_banner.checked_in_at }}
+        </div>
+      </div>
+      <button type="button" class="cp-toast-close" onclick="this.parentElement.remove()" aria-label="Dismiss verification notice">&times;</button>
+    </div>
+    {% endif %}
 
     {% if not dashboard.authenticated %}
-    <!-- Compact One-Time Sign-In Bar -->
-    <div class="card" id="login-card" style="padding:12px;">
-      <div style="font-size:13px; font-weight:700; margin-bottom:6px; color:var(--accent);">
-        &#128075; Quick One-Time Student Sign-In
+    <!-- Compact One-Time Student Sign-In Card (Guest Only) -->
+    <div class="cp-card cp-card--compact" id="login-card">
+      <div class="cp-row-wrap" style="margin-bottom:10px;">
+        <span class="cp-badge cp-badge--coral">{{ cp_icon('user-check', 13) }} <span>Quick Student Sign-In</span></span>
       </div>
-      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:6px; margin-bottom:6px;">
-        <input type="text" id="login-name" placeholder="Full Name (e.g. Ohad Ben Nun)" />
-        <input type="text" id="login-sid" placeholder="Student ID (e.g. 208123456)" />
-      </div>
-      <div style="display:grid; grid-template-columns: 1fr 1fr auto; gap:6px;">
-        <input type="email" id="login-email" placeholder="Email (e.g. ohad@ariel.ac.il)" />
-        <input type="text" id="login-course" placeholder="Course Code (optional)" />
-        <button class="primary-btn" onclick="signInStudent()">Sign In &amp; Sync</button>
+      <div class="cp-stack-xs">
+        <div class="cp-grid-2-tight">
+          <input type="text" id="login-name" class="cp-input" placeholder="Full Name (e.g. Ohad Ben Nun)" />
+          <input type="text" id="login-sid" class="cp-input" placeholder="Student ID (e.g. 208123456)" />
+        </div>
+        <div class="cp-login-row-2">
+          <input type="email" id="login-email" class="cp-input" placeholder="Email (e.g. ohad@ariel.ac.il)" />
+          <input type="text" id="login-course" class="cp-input" placeholder="Course Code (optional)" />
+          <button type="button" class="cp-btn cp-btn--primary cp-btn--sm" onclick="signInStudent()">Sign In</button>
+        </div>
       </div>
     </div>
     {% endif %}
 
-    <!-- Active Lecture Status Strip + Mode Switcher -->
-    <div class="session-strip">
-      <div style="display:flex; align-items:center; gap:8px; min-width:0;">
-        <span id="active-session-pill" class="pill">—</span>
-        <strong id="active-session-label" style="font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
-          Select a lecture
-        </strong>
-      </div>
-      <div id="live-attendance-box" style="font-size:11px;"></div>
-    </div>
-
-    <div class="mode-tabs">
-      <button id="tab-btn-live" class="mode-tab active" onclick="switchView('view-live', this)">
-        <span id="poll-live-dot" class="live-dot"></span>
-        <span>&#9889; Live Class</span>
-      </button>
-      <button id="tab-btn-classes" class="mode-tab" onclick="switchView('view-classes', this)">
-        <span>&#127891; Courses &amp; Logs</span>
-      </button>
-      <button id="tab-btn-study" class="mode-tab" onclick="switchView('view-study', this)">
-        <span id="study-new-dot" class="live-dot" style="display:none;"></span>
-        <span>&#129302; AI Study Hub</span>
-      </button>
-    </div>
-
-    <!-- MODE 1 (DEFAULT): SLIDO-STYLE UNIFIED LIVE CLASSROOM (POLL STAGE + Q&A STREAM) -->
-    <section id="view-live" class="view-pane active">
-      <!-- Top Stage: Auto-Expanding Live Poll -->
-      <div id="poll-stage-card" class="poll-stage">
-        <div style="display:flex; justify-content:space-between; align-items:center;">
-          <div style="display:flex; align-items:center; gap:8px;">
-            <span style="font-size:14px;">&#128202;</span>
-            <strong style="font-size:13px;" id="poll-header-title">Live Classroom Poll</strong>
+    <!-- VIEW 1 (DEFAULT): LIVE CLASSROOM (COLLAPSIBLE POLL + NATURAL-SCROLL Q&A + STICKY COMPOSER) -->
+    <section id="view-live" class="cp-view-pane view-pane active" style="flex:1;">
+      <div id="poll-stage-card" class="cp-poll-stage poll-stage cp-poll-idle">
+        <div class="cp-row-between">
+          <div class="cp-row-wrap" style="gap:7px;">
+            {{ cp_icon('bar-chart', 15) }}
+            <strong style="font-size:13.5px; color:var(--cp-ink);" id="poll-header-title">Classroom Poll</strong>
           </div>
-          <span id="student-poll-badge" class="pill">Waiting for Lecturer</span>
+          <span id="student-poll-badge" class="cp-badge cp-badge--indigo">Waiting</span>
         </div>
-        <div id="student-poll-box" style="margin-top:6px; font-size:12px; color:var(--muted);">
-          When your lecturer launches a poll, it will pop up right here automatically.
-        </div>
+        <div id="student-poll-box" class="cp-muted" style="margin-top:8px; font-size:12.5px;"></div>
       </div>
 
-      <!-- Main Stage: Timestamped Classroom Q&A & Chat Stream -->
-      <div class="card" style="flex:1;">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-          <h2 style="margin:0; font-size:14px;">&#128172; Live Q&amp;A &amp; Class Feed (<span id="chat-room-code">—</span>)</h2>
-          <span style="font-size:11px; color:var(--muted);">Synced with Lecturer</span>
+      <div class="cp-m-qa-section">
+        <div class="cp-m-section-label">
+          <span class="cp-eyebrow" style="font-size:10.5px;">Live Q&amp;A Stream</span>
+          <span class="cp-code-pill code-pill" id="chat-room-code">&mdash;</span>
         </div>
 
-        <div class="chat-composer">
-          <select id="student-chat-cat">
-            <option value="Question">&#10067; Question</option>
-            <option value="Comment">&#128172; Comment</option>
-            <option value="Suggestion">&#128161; Idea</option>
+        <div id="student-chat-feed" class="cp-stack-xs"></div>
+      </div>
+
+      <div class="cp-m-composer-dock">
+        <div class="cp-m-composer-grid chat-composer">
+          <select id="student-chat-cat" class="cp-select" aria-label="Message category" style="padding:8px 10px; font-size:12px;">
+            <option value="Question">Question</option>
+            <option value="Comment">Comment</option>
+            <option value="Suggestion">Idea</option>
           </select>
-          <input type="text" id="student-chat-body" placeholder="Ask a question (+MM:SS)..." onkeydown="if(event.key==='Enter') sendStudentChat()" />
-          <button class="primary-btn" onclick="sendStudentChat()">Send</button>
+          <input type="text" id="student-chat-body" class="cp-input" placeholder="Ask a question..." onkeydown="if(event.key==='Enter') sendStudentChat()" />
+          <button type="button" class="cp-btn cp-btn--primary cp-btn--sm" style="width:44px; min-width:44px; height:40px; padding:0;" onclick="sendStudentChat()" aria-label="Send message">
+            {{ cp_icon('send', 16) }}
+          </button>
         </div>
-
-        <div id="student-chat-feed" style="max-height:360px; overflow-y:auto;"></div>
       </div>
     </section>
 
-    <!-- MODE 2: MY ENROLLED COURSES, LECTURE SWITCHER & ATTENDANCE LOGS -->
-    <section id="view-classes" class="view-pane">
-      <div class="card" style="padding:12px;">
-        <div style="display:grid; grid-template-columns: 1fr auto; gap:8px; align-items:center;">
-          <input type="text" id="join-code-input" placeholder="Join another course by code (e.g. CS204 or CS101)" />
-          <button class="primary-btn" onclick="joinCourseByCode()">+ Join Course</button>
-        </div>
+    <!-- VIEW 2: MY ENROLLED COURSES & ATTENDANCE LOGS -->
+    <section id="view-classes" class="cp-view-pane view-pane">
+      <div class="cp-input-action" style="grid-template-columns:minmax(0, 1fr) auto;">
+        <input type="text" id="join-code-input" class="cp-input" placeholder="Join course by code (e.g. CS204)" />
+        <button type="button" class="cp-btn cp-btn--primary cp-btn--sm" style="width:auto;" onclick="joinCourseByCode()">
+          {{ cp_icon('plus', 14) }}
+          <span>Join</span>
+        </button>
       </div>
 
-      <div class="card">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-          <h2 style="margin:0;">My Enrolled Courses &amp; Attendance Logs</h2>
-          <span style="font-size:11px; color:var(--muted);">Tap any lecture chip to switch room</span>
-        </div>
-        <div id="courses-list"></div>
-      </div>
+      <div id="courses-list" class="cp-stack-sm"></div>
     </section>
 
-    <!-- MODE 3: AI STUDY HUB (PUBLISHED LECTURE SUMMARIES & HOMEWORK REVIEW) -->
-    <section id="view-study" class="view-pane">
-      <div class="card">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-          <h2 style="margin:0;">&#127908; AI Lecture Summaries (<span id="study-course-code">—</span>)</h2>
-          <button class="upvote-pill" onclick="loadStudyHub()">&#8635; Refresh</button>
+    <!-- VIEW 3: AI STUDY HUB (SEGMENTED SUMMARIES | HOMEWORK) -->
+    <section id="view-study" class="cp-view-pane view-pane">
+      <div class="cp-row-between" style="gap:8px;">
+        <div class="cp-row-wrap" style="gap:6px;">
+          <span class="cp-code-pill code-pill" id="study-course-code">&mdash;</span>
+          <span class="cp-muted" style="font-size:12px; font-weight:600;">Course Resources</span>
         </div>
-        <div id="student-lecture-summaries" style="font-size:12px; color:var(--muted);">
-          Loading course lecture summaries...
+        <button type="button" class="cp-btn cp-btn--white cp-btn--sm" onclick="loadStudyHub()">
+          {{ cp_icon('refresh', 13) }}
+          <span>Refresh</span>
+        </button>
+      </div>
+
+      <div class="cp-m-subtabs" role="tablist" aria-label="Study hub sections">
+        <button type="button" id="study-subbtn-summaries" class="cp-m-subtab active" role="tab" aria-selected="true" onclick="switchStudySubView('summaries')">
+          {{ cp_icon('file-text', 15) }}
+          <span>AI Summaries</span>
+        </button>
+        <button type="button" id="study-subbtn-homework" class="cp-m-subtab" role="tab" aria-selected="false" onclick="switchStudySubView('homework')">
+          {{ cp_icon('award', 15) }}
+          <span>Homework</span>
+        </button>
+      </div>
+
+      <div id="study-pane-summaries" class="cp-m-subpane active">
+        <div id="student-lecture-summaries" class="cp-stack-sm cp-muted" style="font-size:13px;">
+          Loading lecture summaries...
         </div>
       </div>
 
-      <div class="card">
-        <h2 style="margin-bottom:8px;">&#128221; Course Homework &amp; Deep AI Review</h2>
-        <div id="student-assignments-list" style="font-size:12px; color:var(--muted);">
+      <div id="study-pane-homework" class="cp-m-subpane">
+        <div id="student-assignments-list" class="cp-stack-sm cp-muted" style="font-size:13px;">
           Loading course assignments...
         </div>
       </div>
     </section>
-  </div>
+  </main>
+</div>
+{% endblock %}
 
-  <script>
-    let STATE = {{ dashboard | tojson }};
-    let ACTIVE_SESSION = null;
-    let CURRENT_POLL = null;
-    let MY_VOTE = null;
-    let CHAT_MESSAGES = [];
-    const KNOWN_ASSIGNMENT_IDS = new Set();
-    const PENDING_REVIEWS = new Set();
-    const SUBMITTING_ASSIGNMENTS = new Set();
-    const LAST_CLASS_SCORES = {};
-    const CLASS_SCORE_DELTAS = {};
-    let HW_INITIALIZED_COURSE_ID = null;
-    const OPT_COLORS = ["#38bdf8", "#a855f7", "#f59e0b", "#22c55e", "#ec4899", "#14b8a6"];
-    const LETTERS = ["A", "B", "C", "D", "E", "F", "G", "H"];
+{% block scripts %}
+<script>
+  let STATE = {{ dashboard | tojson }};
+  const FROM_QR_ROUTE = {{ (from_qr_route | default(false)) | tojson }};
+  let ACTIVE_SESSION = null;
+  let CURRENT_POLL = null;
+  let MY_VOTE = null;
+  let CHAT_MESSAGES = [];
+  const KNOWN_ASSIGNMENT_IDS = new Set();
+  const PENDING_REVIEWS = new Set();
+  const SUBMITTING_ASSIGNMENTS = new Set();
+  const LAST_CLASS_SCORES = {};
+  const CLASS_SCORE_DELTAS = {};
+  let HW_INITIALIZED_COURSE_ID = null;
+  const OPT_COLORS = ["#E87148", "#5B5FEF", "#16A34A", "#D97706", "#0F766E", "#BE185D"];
+  const LETTERS = ["A", "B", "C", "D", "E", "F", "G", "H"];
 
-    const socket = io({ transports: ["websocket", "polling"] });
-    let activeViewId = "view-live";
+  const VIEW_TITLES = {
+    "view-live": "Live Class",
+    "view-classes": "Courses & Logs",
+    "view-study": "AI Study Hub",
+  };
 
-    if (window.ClassPulseNotify) {
-      window.ClassPulseNotify.init({
-        role: "student",
-        baseTitle: document.title,
-        currentStudentId: STATE.student ? STATE.student.id : null,
-        isChatVisibleFn: (payload) =>
-          activeViewId === "view-live" && (!payload || !ACTIVE_SESSION || payload.session_code === ACTIVE_SESSION.session_code),
-        onOpenMessage: (payload) => {
-          const msgId = payload.message_id || payload.id;
-          const allCourses = STATE.all_courses || [];
-          let matchedCourse = null;
-          let matchedSession = null;
-          for (const c of allCourses) {
-            for (const s of (c.sessions || [])) {
-              if (s.session_code === payload.session_code) {
-                matchedCourse = c;
-                matchedSession = s;
-                break;
-              }
+  const socket = window.cpCreateSocket({ transports: ["websocket", "polling"] });
+  let activeViewId = "view-live";
+
+  function escapeHtml(str) {
+    return String(str == null ? "" : str)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function openStudentDrawer() {
+    const drawer = document.getElementById("student-nav-drawer");
+    const backdrop = document.getElementById("student-drawer-backdrop");
+    const toggleBtn = document.getElementById("student-drawer-toggle");
+    if (drawer) {
+      drawer.classList.add("open");
+      drawer.setAttribute("aria-hidden", "false");
+    }
+    if (backdrop) {
+      backdrop.classList.add("open");
+      backdrop.setAttribute("aria-hidden", "false");
+    }
+    if (toggleBtn) toggleBtn.setAttribute("aria-expanded", "true");
+  }
+
+  function closeStudentDrawer() {
+    const drawer = document.getElementById("student-nav-drawer");
+    const backdrop = document.getElementById("student-drawer-backdrop");
+    const toggleBtn = document.getElementById("student-drawer-toggle");
+    if (drawer) {
+      drawer.classList.remove("open");
+      drawer.setAttribute("aria-hidden", "true");
+    }
+    if (backdrop) {
+      backdrop.classList.remove("open");
+      backdrop.setAttribute("aria-hidden", "true");
+    }
+    if (toggleBtn) toggleBtn.setAttribute("aria-expanded", "false");
+  }
+
+  function toggleStudentDrawer() {
+    const drawer = document.getElementById("student-nav-drawer");
+    if (drawer && drawer.classList.contains("open")) {
+      closeStudentDrawer();
+    } else {
+      openStudentDrawer();
+    }
+  }
+
+  document.addEventListener("keydown", (evt) => {
+    if (evt.key === "Escape") closeStudentDrawer();
+  });
+
+  function switchStudySubView(subId) {
+    const isHw = subId === "homework";
+    document.getElementById("study-subbtn-summaries")?.classList.toggle("active", !isHw);
+    document.getElementById("study-subbtn-homework")?.classList.toggle("active", isHw);
+    document.getElementById("study-subbtn-summaries")?.setAttribute("aria-selected", String(!isHw));
+    document.getElementById("study-subbtn-homework")?.setAttribute("aria-selected", String(isHw));
+    document.getElementById("study-pane-summaries")?.classList.toggle("active", !isHw);
+    document.getElementById("study-pane-homework")?.classList.toggle("active", isHw);
+  }
+
+  if (window.ClassPulseNotify) {
+    window.ClassPulseNotify.init({
+      role: "student",
+      baseTitle: document.title,
+      currentStudentId: STATE.student ? STATE.student.id : null,
+      isChatVisibleFn: (payload) =>
+        activeViewId === "view-live" && (!payload || !ACTIVE_SESSION || payload.session_code === ACTIVE_SESSION.session_code),
+      onOpenMessage: (payload) => {
+        const msgId = payload.message_id || payload.id;
+        const allCourses = STATE.all_courses || [];
+        let matchedCourse = null;
+        let matchedSession = null;
+        for (const c of allCourses) {
+          for (const s of (c.sessions || [])) {
+            if (s.session_code === payload.session_code) {
+              matchedCourse = c;
+              matchedSession = s;
+              break;
             }
-            if (matchedSession) break;
           }
-          if (matchedSession && matchedCourse) {
-            selectSession(matchedSession, matchedCourse);
-            switchView("view-live");
-            setTimeout(() => {
-              if (!window.ClassPulseNotify.highlightMessage(msgId)) {
-                fetchLatestSessionChat().then(() => window.ClassPulseNotify.highlightMessage(msgId));
-              }
-            }, 250);
-          } else {
-            window.location.href = `/student?session=${encodeURIComponent(payload.session_code)}&view=view-live&msg_id=${encodeURIComponent(msgId)}`;
-          }
-        },
-      });
-    }
-
-    function switchView(viewId, btnEl) {
-      activeViewId = viewId;
-      document.querySelectorAll(".view-pane").forEach(el => el.classList.remove("active"));
-      document.querySelectorAll(".mode-tab").forEach(el => el.classList.remove("active"));
-      document.getElementById(viewId).classList.add("active");
-      if (btnEl) {
-        btnEl.classList.add("active");
-      } else {
-        const map = {
-          "view-live": "tab-btn-live",
-          "view-classes": "tab-btn-classes",
-          "view-study": "tab-btn-study",
-        };
-        const fallbackBtn = document.getElementById(map[viewId] || "tab-btn-live");
-        if (fallbackBtn) fallbackBtn.classList.add("active");
-      }
-      if (viewId === "view-live" && window.ClassPulseNotify) window.ClassPulseNotify.clearUnread();
-      if (viewId === "view-study") {
-        const dot = document.getElementById("study-new-dot");
-        if (dot) {
-          dot.classList.remove("hot");
-          dot.style.display = "none";
+          if (matchedSession) break;
         }
-        const banner = document.getElementById("study-toast-banner");
-        if (banner) banner.remove();
-        loadStudyHub(true);
-      }
-    }
+        if (matchedSession && matchedCourse) {
+          selectSession(matchedSession, matchedCourse);
+          switchView("view-live");
+          setTimeout(() => {
+            if (!window.ClassPulseNotify.highlightMessage(msgId)) {
+              fetchLatestSessionChat().then(() => window.ClassPulseNotify.highlightMessage(msgId));
+            }
+          }, 250);
+        } else {
+          window.location.href = `/student?session=${encodeURIComponent(payload.session_code)}&view=view-live&msg_id=${encodeURIComponent(msgId)}`;
+        }
+      },
+    });
+  }
 
-    async function signInStudent() {
-      const full_name = document.getElementById("login-name").value.trim();
-      const student_id_number = (document.getElementById("login-sid")?.value || "").trim();
-      const email = document.getElementById("login-email").value.trim();
-      const course_code = document.getElementById("login-course").value.trim();
-      const res = await fetch("/api/student/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ full_name, student_id_number, email, course_code }),
-      });
-      const data = await res.json();
-      if (!res.ok) return alert(data.error || "Sign-in failed");
-      window.location.reload();
-    }
-
-    async function joinCourseByCode() {
-      const code = document.getElementById("join-code-input").value.trim();
-      if (!code) return;
-      if (!STATE.authenticated) {
-        return alert("Please sign in with your name and email above first.");
-      }
-      const res = await fetch("/api/student/enroll", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ course_code: code }),
-      });
-      const data = await res.json();
-      if (!res.ok) return alert(data.error || "Could not join course");
-      STATE = data.dashboard;
-      document.getElementById("join-code-input").value = "";
-      renderCourses();
-    }
-
-    function selectSession(sessionObj, courseObj) {
-      if (ACTIVE_SESSION && ACTIVE_SESSION.session_code && ACTIVE_SESSION.session_code !== sessionObj.session_code) {
-        socket.emit("leave_session", { session_code: ACTIVE_SESSION.session_code });
-      }
-      CHAT_MESSAGES = [];
-      KNOWN_ASSIGNMENT_IDS.clear();
-      PENDING_REVIEWS.clear();
-      HW_INITIALIZED_COURSE_ID = null;
-      for (const k of Object.keys(LAST_CLASS_SCORES)) delete LAST_CLASS_SCORES[k];
-      for (const k of Object.keys(CLASS_SCORE_DELTAS)) delete CLASS_SCORE_DELTAS[k];
-      ACTIVE_SESSION = {
-        ...sessionObj,
-        course_id: courseObj.id,
-        course_code: courseObj.course_code,
-        course_name: courseObj.name,
+  function switchView(viewId, btnEl) {
+    activeViewId = viewId;
+    document.querySelectorAll(".view-pane").forEach(el => el.classList.remove("active"));
+    document.querySelectorAll(".mode-tab").forEach(el => el.classList.remove("active"));
+    const target = document.getElementById(viewId);
+    if (target) target.classList.add("active");
+    if (btnEl) {
+      btnEl.classList.add("active");
+    } else {
+      const map = {
+        "view-live": "tab-btn-live",
+        "view-classes": "tab-btn-classes",
+        "view-study": "tab-btn-study",
       };
-      document.getElementById("active-session-label").textContent = `${courseObj.course_code}: ${sessionObj.title}`;
-      document.getElementById("active-session-pill").textContent = sessionObj.session_code;
-      document.getElementById("chat-room-code").textContent = sessionObj.session_code;
-      const studyCodeEl = document.getElementById("study-course-code");
-      if (studyCodeEl) studyCodeEl.textContent = courseObj.course_code;
+      const fallbackBtn = document.getElementById(map[viewId] || "tab-btn-live");
+      if (fallbackBtn) fallbackBtn.classList.add("active");
+    }
+    const titleEl = document.getElementById("m-topbar-title");
+    if (titleEl) titleEl.textContent = VIEW_TITLES[viewId] || "Student App";
+    closeStudentDrawer();
 
-      const attBox = document.getElementById("live-attendance-box");
+    if (viewId === "view-live" && window.ClassPulseNotify) window.ClassPulseNotify.clearUnread();
+    if (viewId === "view-study") {
+      const dot = document.getElementById("study-new-dot");
+      if (dot) {
+        dot.classList.remove("hot");
+        dot.style.display = "none";
+      }
+      const banner = document.getElementById("study-toast-banner");
+      if (banner) banner.remove();
+      loadStudyHub(true);
+    }
+  }
+
+  async function signInStudent() {
+    const full_name = document.getElementById("login-name").value.trim();
+    const student_id_number = (document.getElementById("login-sid")?.value || "").trim();
+    const email = document.getElementById("login-email").value.trim();
+    const course_code = document.getElementById("login-course").value.trim();
+    const res = await fetch("/api/student/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ full_name, student_id_number, email, course_code }),
+    });
+    const data = await res.json();
+    if (!res.ok) return alert(data.error || "Sign-in failed");
+    window.location.reload();
+  }
+
+  async function joinCourseByCode() {
+    const code = document.getElementById("join-code-input").value.trim();
+    if (!code) return;
+    if (!STATE.authenticated) {
+      return alert("Please sign in with your name and email first.");
+    }
+    const res = await fetch("/api/student/enroll", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ course_code: code }),
+    });
+    const data = await res.json();
+    if (!res.ok) return alert(data.error || "Could not join course");
+    STATE = data.dashboard;
+    document.getElementById("join-code-input").value = "";
+    renderCourses();
+  }
+
+  function selectSession(sessionObj, courseObj) {
+    if (ACTIVE_SESSION && ACTIVE_SESSION.session_code && ACTIVE_SESSION.session_code !== sessionObj.session_code) {
+      socket.emit("leave_session", { session_code: ACTIVE_SESSION.session_code });
+    }
+    CHAT_MESSAGES = [];
+    KNOWN_ASSIGNMENT_IDS.clear();
+    PENDING_REVIEWS.clear();
+    HW_INITIALIZED_COURSE_ID = null;
+    for (const k of Object.keys(LAST_CLASS_SCORES)) delete LAST_CLASS_SCORES[k];
+    for (const k of Object.keys(CLASS_SCORE_DELTAS)) delete CLASS_SCORE_DELTAS[k];
+    ACTIVE_SESSION = {
+      ...sessionObj,
+      course_id: courseObj.id,
+      course_code: courseObj.course_code,
+      course_name: courseObj.name,
+    };
+    const labelEl = document.getElementById("active-session-label");
+    if (labelEl) labelEl.textContent = `${courseObj.course_code}: ${sessionObj.title}`;
+    const pillEl = document.getElementById("active-session-pill");
+    if (pillEl) pillEl.textContent = sessionObj.session_code;
+    const subEl = document.getElementById("m-topbar-sub");
+    if (subEl) subEl.textContent = `${courseObj.course_code} · ${sessionObj.title}`;
+    const chatCodeEl = document.getElementById("chat-room-code");
+    if (chatCodeEl) chatCodeEl.textContent = sessionObj.session_code;
+    const studyCodeEl = document.getElementById("study-course-code");
+    if (studyCodeEl) studyCodeEl.textContent = courseObj.course_code;
+
+    const attBox = document.getElementById("live-attendance-box");
+    if (attBox) {
       if (sessionObj.checked_in) {
-        attBox.innerHTML = `<span class="pill green">&#10003; Checked In</span>`;
+        attBox.innerHTML = `<span class="cp-badge cp-badge--green">&#10003; Checked In</span>`;
       } else {
-        attBox.innerHTML = `<span class="pill amber">Scan QR to Check In</span>`;
-      }
-
-      socket.emit("join_session", {
-        session_code: sessionObj.session_code,
-        student_id: STATE.student ? STATE.student.id : null,
-        as_student: true,
-      });
-      fetchLatestSessionPolls();
-      fetchLatestSessionChat();
-      loadStudyHub();
-      renderCourses();
-    }
-
-    function renderCourses() {
-      const listEl = document.getElementById("courses-list");
-      const myCourses = STATE.my_courses || [];
-      const courses = myCourses.length > 0 ? myCourses : (STATE.all_courses || []);
-      if (!courses.length) {
-        listEl.innerHTML = `<div style="color:var(--muted); font-size:13px;">No courses yet. Scan a classroom QR code or join above!</div>`;
-        return;
-      }
-
-      listEl.innerHTML = courses.map(c => {
-        const sessionsHtml = (c.sessions || []).map(s => {
-          const isSelected = ACTIVE_SESSION && ACTIVE_SESSION.session_code === s.session_code;
-          return `
-            <span class="session-chip ${isSelected ? 'active' : ''}"
-                  onclick='event.stopPropagation(); selectSession(${JSON.stringify(s)}, ${JSON.stringify({id: c.id, course_code: c.course_code, name: c.name})}); switchView("view-live");'>
-              ${s.checked_in ? '&#10003;' : '&#9679;'} ${s.title} (${s.session_code})
-            </span>
-          `;
-        }).join("");
-
-        const logsHtml = (c.my_attendance_logs || []).map(log => `
-          <div style="display:flex; justify-content:space-between; font-size:11px; color:var(--muted); padding:4px 0; border-top:1px solid #1e293b;">
-            <span>${log.lecture_title} (<code>${log.session_code}</code>)</span>
-            <span style="color:${log.status !== 'ABSENT' ? '#4ade80' : '#f87171'}; font-weight:700;">
-              ${log.status} &bull; ${log.checked_in_at}
-            </span>
-          </div>
-        `).join("");
-
-        return `
-          <div class="course-card ${ACTIVE_SESSION && ACTIVE_SESSION.course_code === c.course_code ? 'selected' : ''}">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
-              <div>
-                <span class="pill">${c.course_code}</span>
-                <strong style="margin-left:6px; font-size:14px;">${c.name}</strong>
-              </div>
-              <span class="pill ${c.is_enrolled ? 'green' : ''}">
-                ${c.is_enrolled ? `${c.attended_count}/${c.total_sessions} (${c.attendance_pct}%)` : 'Course'}
-              </span>
-            </div>
-            <div style="font-size:11px; color:var(--muted); margin-bottom:6px;">
-              ${c.lecturer_name} &bull; ${c.department}
-            </div>
-            <div style="margin-bottom:6px;">${sessionsHtml}</div>
-            ${c.is_enrolled && logsHtml ? `
-              <div style="margin-top:6px; padding-top:6px; border-top:1px dashed var(--border);">
-                <div style="font-size:10px; font-weight:700; color:var(--accent); text-transform:uppercase; margin-bottom:3px;">
-                  My Lecture Attendance Logs
-                </div>
-                ${logsHtml}
-              </div>
-            ` : ''}
-          </div>
-        `;
-      }).join("");
-    }
-
-    function applyIncomingPoll(poll, autoFocus = false) {
-      if (!poll) return;
-      const isNewActive = poll.status === "ACTIVE" && (!CURRENT_POLL || CURRENT_POLL.id !== poll.id || CURRENT_POLL.status !== "ACTIVE");
-      if (poll.my_vote_index !== undefined && poll.my_vote_index !== null) {
-        MY_VOTE = poll.my_vote_index;
-      } else if (CURRENT_POLL && CURRENT_POLL.id !== poll.id) {
-        MY_VOTE = null;
-      }
-      CURRENT_POLL = poll;
-      renderStudentPoll();
-      if (isNewActive && autoFocus) {
-        switchView("view-live");
+        attBox.innerHTML = `<span class="cp-badge cp-badge--amber">Scan QR</span>`;
       }
     }
 
-    function renderStudentPoll() {
-      const stageCard = document.getElementById("poll-stage-card");
-      const box = document.getElementById("student-poll-box");
-      const badge = document.getElementById("student-poll-badge");
-      const dot = document.getElementById("poll-live-dot");
+    socket.emit("join_session", {
+      session_code: sessionObj.session_code,
+      student_id: STATE.student ? STATE.student.id : null,
+      as_student: true,
+    });
+    fetchLatestSessionPolls();
+    fetchLatestSessionChat();
+    loadStudyHub();
+    renderCourses();
+  }
 
-      if (!CURRENT_POLL) {
-        stageCard.classList.remove("active-poll");
-        dot.classList.remove("hot");
-        badge.className = "pill";
-        badge.textContent = "Waiting for Lecturer";
-        box.innerHTML = "When your lecturer launches a poll, it will pop up right here automatically.";
-        return;
-      }
+  function renderCourses() {
+    const listEl = document.getElementById("courses-list");
+    const myCourses = STATE.my_courses || [];
+    const courses = myCourses.length > 0 ? myCourses : (STATE.all_courses || []);
+    if (!courses.length) {
+      listEl.innerHTML = `<div class="cp-card cp-muted" style="font-size:13px; text-align:center;">No courses yet. Scan a classroom QR code or join above!</div>`;
+      return;
+    }
 
-      const isActive = CURRENT_POLL.status === "ACTIVE";
-      const isClosed = CURRENT_POLL.status === "CLOSED";
-      const hasVoted = MY_VOTE !== null && MY_VOTE !== undefined;
-
-      if (isActive) {
-        stageCard.classList.add("active-poll");
-        dot.classList.add("hot");
-        badge.className = "pill green";
-        badge.textContent = hasVoted ? "✓ Vote Recorded • Live" : "🔴 LIVE — Tap to Vote";
-      } else {
-        stageCard.classList.remove("active-poll");
-        dot.classList.remove("hot");
-        badge.className = "pill amber";
-        badge.textContent = "Poll Closed";
-      }
-
-      const optionsHtml = (CURRENT_POLL.options || []).map((opt, idx) => {
-        const isSelected = MY_VOTE === idx;
-        const isCorrect = isClosed && CURRENT_POLL.correct_index === idx;
-        const pct = (CURRENT_POLL.percentages && CURRENT_POLL.percentages[idx]) || 0;
-        const count = (CURRENT_POLL.counts && CURRENT_POLL.counts[idx]) || 0;
-        const showBars = hasVoted || isClosed;
-        const color = OPT_COLORS[idx % OPT_COLORS.length];
-        const letter = LETTERS[idx] || (idx + 1);
-
+    listEl.innerHTML = courses.map(c => {
+      const sessions = c.sessions || [];
+      const primarySession = sessions.find(s => ACTIVE_SESSION && ACTIVE_SESSION.session_code === s.session_code) || sessions[0] || null;
+      const sessionsHtml = sessions.map(s => {
+        const isSelected = ACTIVE_SESSION && ACTIVE_SESSION.session_code === s.session_code;
         return `
           <button type="button"
-                  class="poll-opt ${isSelected ? 'selected' : ''} ${isCorrect ? 'correct' : ''}"
-                  ${(!isActive || hasVoted) ? 'disabled' : ''}
-                  onclick="castStudentVote(${idx})">
-            ${showBars ? `<div class="poll-opt-fill" style="width:${pct}%;"></div>` : ''}
-            <div class="poll-opt-content">
-              <div style="display:flex; align-items:center; gap:9px;">
-                <span class="opt-badge" style="background:${color};">${letter}</span>
-                <span>${opt} ${isSelected ? '&#10003;' : ''} ${isCorrect ? '&#11088;' : ''}</span>
-              </div>
-              ${showBars ? `<span style="font-size:12px; color:#cbd5e1; font-weight:800;">${pct}% <span style="font-weight:400; color:var(--muted);">(${count})</span></span>` : ''}
-            </div>
+                  class="cp-session-chip session-chip ${isSelected ? 'active' : ''}"
+                  onclick='event.stopPropagation(); selectSession(${JSON.stringify(s)}, ${JSON.stringify({id: c.id, course_code: c.course_code, name: c.name})}); switchView("view-live");'>
+            ${s.checked_in ? '&#10003;' : '&#9679;'} ${escapeHtml(s.title)} (${escapeHtml(s.session_code)})
           </button>
         `;
       }).join("");
 
-      box.innerHTML = `
-        <div style="font-weight:800; color:var(--text); margin:8px 0 10px 0; font-size:16px;">
-          ${CURRENT_POLL.question}
-        </div>
-        ${optionsHtml}
-        <div style="display:flex; justify-content:space-between; font-size:11px; color:var(--muted); margin-top:4px;">
-          <span>${hasVoted ? '✓ Your answer is locked in.' : (isActive ? 'Tap an option above to submit your answer.' : 'Final poll results.')}</span>
-          <span>Total class votes: <strong>${CURRENT_POLL.total_votes || 0}</strong></span>
-        </div>
-      `;
-    }
-
-    async function castStudentVote(optionIndex) {
-      if (!CURRENT_POLL || CURRENT_POLL.status !== "ACTIVE") return;
-      const studentId = STATE.student ? STATE.student.id : null;
-      if (!studentId) {
-        return alert("Please sign in with your Name & Email at the top first so your vote is counted!");
-      }
-      MY_VOTE = optionIndex;
-      renderStudentPoll();
-
-      try {
-        const res = await fetch(`/api/polls/${CURRENT_POLL.id}/vote`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ option_index: optionIndex, student_id: studentId }),
-        });
-        if (res.ok) {
-          const updated = await res.json();
-          applyIncomingPoll(updated, false);
-        }
-      } catch (_e) {
-        socket.emit("poll:vote", {
-          poll_id: CURRENT_POLL.id,
-          option_index: optionIndex,
-          student_id: studentId,
-        });
-      }
-    }
-
-    async function fetchLatestSessionPolls() {
-      if (!ACTIVE_SESSION || !ACTIVE_SESSION.id) return;
-      try {
-        const stParam = STATE.student && STATE.student.id ? `?student_id=${STATE.student.id}&_ts=${Date.now()}` : `?_ts=${Date.now()}`;
-        const res = await fetch(`/api/sessions/${ACTIVE_SESSION.id}/polls${stParam}`, { cache: "no-store" });
-        if (!res.ok) return;
-        const data = await res.json();
-        const polls = data.polls || [];
-        const active = polls.find(p => p.status === "ACTIVE");
-        if (active) {
-          applyIncomingPoll(active, true);
-        } else if (polls.length > 0) {
-          const latest = polls[polls.length - 1];
-          if (CURRENT_POLL && CURRENT_POLL.id === latest.id) {
-            applyIncomingPoll(latest, false);
-          }
-        }
-      } catch (_err) {}
-    }
-
-    function renderStudentChat() {
-      const feed = document.getElementById("student-chat-feed");
-      if (!CHAT_MESSAGES.length) {
-        feed.innerHTML = `<div style="color:var(--muted); font-size:12px; text-align:center; padding:18px 0;">No questions yet in this lecture. Ask the first question above!</div>`;
-        return;
-      }
-      const sorted = [...CHAT_MESSAGES].sort((a, b) => (b.is_pinned - a.is_pinned) || (b.id - a.id));
-      feed.innerHTML = sorted.map(m => `
-        <div class="chat-item ${m.is_pinned ? 'pinned' : ''}" data-msg-id="${m.id}">
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:3px;">
-            <div>
-              <span class="pill">[${escapeHtml(m.offset_mmss)}]</span>
-              <strong style="margin-left:5px;">${escapeHtml(m.author_name)}</strong>
-              <span style="font-size:11px; color:var(--muted); margin-left:4px;">${escapeHtml(m.category)}</span>
-              ${m.is_pinned ? '<span style="color:var(--amber); font-size:11px; font-weight:700; margin-left:5px;">&#128204; Pinned</span>' : ''}
-            </div>
-            <button class="upvote-pill" onclick="upvoteStudentChat(${m.id})">
-              &#9650; ${m.upvotes}
-            </button>
-          </div>
-          <div style="color:#e2e8f0; line-height:1.35;">${escapeHtml(m.body)}</div>
+      const logs = c.my_attendance_logs || [];
+      const logsHtml = logs.map(log => `
+        <div class="cp-m-hairline-row">
+          <span style="color:var(--cp-ink); min-width:0; overflow-wrap:anywhere;">${escapeHtml(log.lecture_title)} (<code>${escapeHtml(log.session_code)}</code>)</span>
+          <span class="cp-badge cp-tabular ${log.status !== 'ABSENT' ? 'cp-badge--green' : 'cp-badge--red'}" style="flex-shrink:0;">
+            ${escapeHtml(log.status)} &bull; ${escapeHtml(log.checked_in_at)}
+          </span>
         </div>
       `).join("");
-    }
 
-    async function fetchLatestSessionChat() {
-      if (!ACTIVE_SESSION || !ACTIVE_SESSION.id) return;
-      try {
-        const res = await fetch(`/api/sessions/${ACTIVE_SESSION.id}/chat?_ts=${Date.now()}`, { cache: "no-store" });
-        if (!res.ok) return;
-        const data = await res.json();
-        CHAT_MESSAGES = data.messages || [];
-        renderStudentChat();
-      } catch (_err) {}
-    }
+      const courseSelected = ACTIVE_SESSION && ACTIVE_SESSION.course_code === c.course_code;
 
-    async function sendStudentChat() {
-      if (!ACTIVE_SESSION) return alert("Select a lecture first.");
-      const bodyEl = document.getElementById("student-chat-body");
-      const catEl = document.getElementById("student-chat-cat");
-      const body = bodyEl.value.trim();
-      if (!body) return;
-      bodyEl.value = "";
-      try {
-        const res = await fetch(`/api/sessions/${ACTIVE_SESSION.id}/chat`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            student_id: STATE.student ? STATE.student.id : null,
-            author_name: STATE.student ? STATE.student.full_name : "Student",
-            category: catEl.value,
-            body,
-          }),
-        });
-        const data = await res.json();
-        if (!res.ok) {
-          bodyEl.value = body;
-          return alert(data.error || "Could not send message.");
-        }
-        if (!CHAT_MESSAGES.find(x => x.id === data.id)) CHAT_MESSAGES.push(data);
-        renderStudentChat();
-      } catch (_err) {
-        bodyEl.value = body;
-        alert("Network error while sending message.");
-      }
-    }
-
-    async function upvoteStudentChat(msgId) {
-      await fetch(`/api/chat/${msgId}/upvote`, { method: "POST" });
-    }
-
-    socket.on("connect", () => {
-      socket.emit("join_notifications", {});
-      if (ACTIVE_SESSION) {
-        socket.emit("join_session", {
-          session_code: ACTIVE_SESSION.session_code,
-          student_id: STATE.student ? STATE.student.id : null,
-          as_student: true,
-        });
-      }
-    });
-
-    socket.on("poll:sync", (data) => {
-      const incoming = data ? (data.poll || data.active_poll) : null;
-      if (data && data.my_vote !== undefined && data.my_vote !== null) {
-        MY_VOTE = data.my_vote;
-      }
-      if (incoming) applyIncomingPoll(incoming, incoming.status === "ACTIVE");
-    });
-    socket.on("poll:activated", (poll) => {
-      MY_VOTE = null;
-      applyIncomingPoll(poll, true);
-    });
-    socket.on("poll:opened", (poll) => {
-      MY_VOTE = null;
-      applyIncomingPoll(poll, true);
-    });
-    socket.on("poll:results_update", (poll) => {
-      if (!CURRENT_POLL || CURRENT_POLL.id === poll.id) {
-        applyIncomingPoll({ ...CURRENT_POLL, ...poll }, false);
-      }
-    });
-    socket.on("poll:voted_ack", (poll) => {
-      applyIncomingPoll(poll, false);
-    });
-    socket.on("poll:closed", (poll) => {
-      if (!CURRENT_POLL || CURRENT_POLL.id === poll.id) {
-        applyIncomingPoll({ ...CURRENT_POLL, ...poll }, false);
-      }
-    });
-
-    socket.on("chat:init", (d) => {
-      CHAT_MESSAGES = d.messages || [];
-      renderStudentChat();
-    });
-    socket.on("chat:new", (m) => {
-      if (ACTIVE_SESSION && m.session_code && m.session_code !== ACTIVE_SESSION.session_code) return;
-      if (!CHAT_MESSAGES.find(x => x.id === m.id)) CHAT_MESSAGES.push(m);
-      renderStudentChat();
-    });
-    socket.on("chat:notify", (payload) => {
-      if (window.ClassPulseNotify) {
-        window.ClassPulseNotify.pushChatNotification(payload);
-      }
-    });
-    socket.on("chat:updated", (m) => {
-      const idx = CHAT_MESSAGES.findIndex(x => x.id === m.id);
-      if (idx >= 0) CHAT_MESSAGES[idx] = m;
-      renderStudentChat();
-    });
-
-    function escapeHtml(str) {
-      return String(str || "")
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;");
-    }
-
-    function focusStudentSignIn() {
-      const card = document.getElementById("login-card");
-      if (card) {
-        card.scrollIntoView({ behavior: "smooth", block: "center" });
-      }
-      const nameInput = document.getElementById("login-name");
-      if (nameInput) nameInput.focus();
-    }
-
-    function notifyNewAssignment(title) {
-      if (activeViewId === "view-study") return;
-      const dot = document.getElementById("study-new-dot");
-      if (dot) {
-        dot.style.display = "inline-block";
-        dot.classList.add("hot");
-      }
-      const existing = document.getElementById("study-toast-banner");
-      if (existing) existing.remove();
-      const tabsEl = document.querySelector(".mode-tabs");
-      if (!tabsEl || !tabsEl.parentNode) return;
-      const banner = document.createElement("div");
-      banner.id = "study-toast-banner";
-      banner.style.cssText =
-        "background:rgba(56,189,248,0.16); border:1px solid rgba(56,189,248,0.45); color:#e2e8f0; border-radius:10px; padding:9px 12px; display:flex; justify-content:space-between; align-items:center; gap:8px; cursor:pointer; font-size:12px;";
-      banner.innerHTML = `
-        <span>&#128221; <strong>New Assignment Posted:</strong> ${escapeHtml(title || "Homework")}</span>
-        <span class="pill">Open Study Hub &rarr;</span>
-      `;
-      banner.onclick = () => switchView("view-study");
-      tabsEl.parentNode.insertBefore(banner, tabsEl.nextSibling);
-    }
-
-    async function loadAssignmentsOnly() {
-      if (!ACTIVE_SESSION || !ACTIVE_SESSION.course_id) return;
-      const cid = ACTIVE_SESSION.course_id;
-      const stQuery = STATE.student && STATE.student.id ? `?student_id=${STATE.student.id}&_ts=${Date.now()}` : `?_ts=${Date.now()}`;
-      try {
-        const hwRes = await fetch(`/api/courses/${cid}/assignments${stQuery}`, { cache: "no-store" });
-        if (!hwRes.ok) return;
-        const hwData = await hwRes.json();
-        const assignments = hwData.assignments || [];
-        const isFirstLoad = HW_INITIALIZED_COURSE_ID !== cid;
-        let newlyDiscoveredTitle = null;
-        for (const a of assignments) {
-          if (!KNOWN_ASSIGNMENT_IDS.has(a.id)) {
-            if (!isFirstLoad) newlyDiscoveredTitle = a.title;
-            KNOWN_ASSIGNMENT_IDS.add(a.id);
-          }
-          if (a.my_submission && PENDING_REVIEWS.has(a.id)) {
-            PENDING_REVIEWS.delete(a.id);
-          }
-          const standing = a.my_submission && a.my_submission.class_standing;
-          if (standing && typeof standing.class_score === "number") {
-            const prev = LAST_CLASS_SCORES[a.id];
-            if (typeof prev === "number" && prev !== standing.class_score) {
-              CLASS_SCORE_DELTAS[a.id] = { from: prev, to: standing.class_score };
-            }
-            LAST_CLASS_SCORES[a.id] = standing.class_score;
-          }
-        }
-        HW_INITIALIZED_COURSE_ID = cid;
-        renderStudyAssignments(assignments);
-        if (newlyDiscoveredTitle) {
-          notifyNewAssignment(newlyDiscoveredTitle);
-        }
-      } catch (err) {
-        console.error("loadAssignmentsOnly error:", err);
-      }
-    }
-
-    async function loadStudyHub() {
-      if (!ACTIVE_SESSION || !ACTIVE_SESSION.course_id) return;
-      const cid = ACTIVE_SESSION.course_id;
-      try {
-        const [lecRes] = await Promise.all([
-          fetch(`/api/courses/${cid}/lectures?_ts=${Date.now()}`, { cache: "no-store" }),
-          loadAssignmentsOnly(),
-        ]);
-        if (lecRes.ok) {
-          const lecData = await lecRes.json();
-          renderStudyLectures(lecData.artifacts || []);
-        }
-      } catch (err) {
-        console.error("loadStudyHub error:", err);
-      }
-    }
-
-    function renderStudyLectures(artifacts) {
-      const el = document.getElementById("student-lecture-summaries");
-      if (!el) return;
-      if (!artifacts.length) {
-        el.innerHTML = `<div style="color:var(--muted); padding:8px 0;">No published AI lecture summaries yet for this course.</div>`;
-        return;
-      }
-      el.innerHTML = artifacts.map(a => {
-        const segHtml = (a.corrected_transcript || []).map(seg =>
-          `<div style="font-size:11px; padding:3px 0; border-bottom:1px solid #1e293b;"><span class="pill">[${escapeHtml(seg.offset_mmss)}]</span> <span style="color:#cbd5e1;">${escapeHtml(seg.text)}</span></div>`
-        ).join("");
-        return `
-          <div style="background:#0f172a; border:1px solid var(--border); border-radius:10px; padding:10px; margin-bottom:8px;">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-              <strong style="color:#f8fafc;">${escapeHtml(a.lecture_title || a.session_code)}</strong>
-              <span class="pill green">${escapeHtml(a.session_code)}</span>
-            </div>
-            <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px;">
-              <a class="upvote-pill" style="text-decoration:none; color:#22c55e; border-color:rgba(34,197,94,0.45);" href="/api/lectures/${a.id}/download/summary.md">&#11015; Download Summary (.md)</a>
-              <a class="upvote-pill" style="text-decoration:none;" href="/api/lectures/${a.id}/download/transcript.txt">&#11015; Transcript (.txt)</a>
-            </div>
-            <pre style="white-space:pre-wrap; font-family:inherit; font-size:12px; line-height:1.45; color:#cbd5e1; margin:0 0 6px 0;">${escapeHtml(a.summary_markdown)}</pre>
-            <details>
-              <summary style="cursor:pointer; font-size:11px; color:var(--accent); font-weight:700;">Read Corrected Transcript ([MM:SS])</summary>
-              <div style="margin-top:6px;">${segHtml}</div>
-            </details>
-          </div>
-        `;
-      }).join("");
-    }
-
-    function getAssignmentCardSignature(a) {
-      const stats = a.cohort_stats || {};
-      const sub = a.my_submission;
-      const standingSig = sub && sub.class_standing
-        ? `${sub.class_standing.class_score}:${sub.class_standing.rank}:${sub.class_standing.cohort_size}`
-        : "0";
-      const deltaSig = CLASS_SCORE_DELTAS[a.id] ? `${CLASS_SCORE_DELTAS[a.id].from}->${CLASS_SCORE_DELTAS[a.id].to}` : "";
-      const subSig = sub
-        ? `${sub.version}:${sub.submitted_at || ""}:${(sub.deep_review_md || "").length}:${standingSig}:${deltaSig}`
-        : "none";
-      const pendingSig = PENDING_REVIEWS.has(a.id) ? "pending" : "idle";
-      return `${a.id}|${stats.submission_count || 0}|${stats.mean_overall_score || 0}|${subSig}|${pendingSig}|${STATE.student ? STATE.student.id : "guest"}`;
-    }
-
-    function renderTelemetryPills(telemetry) {
-      if (!telemetry) return "";
-      const labels = [
-        ["line_count", "Lines"],
-        ["structure_count", "Classes/Funcs"],
-        ["assertion_count", "Assertions"],
-        ["doc_signals", "Docs/Comments"],
-      ];
-      const items = labels
-        .filter(([k]) => telemetry[k] !== undefined)
-        .map(([k, lbl]) => {
-          const item = telemetry[k];
-          return `<span class="pill" style="background:rgba(148,163,184,0.12); color:#cbd5e1; border:1px solid rgba(148,163,184,0.25);">${lbl}: <strong>${item.mine}</strong> <span style="color:var(--muted);">(Class Avg ${item.cohort_avg})</span></span>`;
-        });
-      if (!items.length) return "";
-      return `<div style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px;">${items.join("")}</div>`;
-    }
-
-    function renderCategoryBreakdownHtml(categories) {
-      if (!Array.isArray(categories) || !categories.length) return "";
-      const rows = categories.map(c => {
-        const score = Number(c.ai_rubric_score || 0);
-        const avg = Number(c.cohort_mean || 0);
-        const best = Number(c.cohort_best || 0);
-        const clsScore = c.class_score || 10;
-        const barColor = clsScore >= 8 ? "#22c55e" : (clsScore >= 5 ? "#a855f7" : "#f59e0b");
-        return `
-          <div style="background:#0f172a; border:1px solid #1e293b; border-radius:8px; padding:8px 10px;">
-            <div style="display:flex; justify-content:space-between; align-items:center; gap:6px; margin-bottom:4px;">
-              <div>
-                <strong style="font-size:12px; color:#f8fafc;">${escapeHtml(c.label)}</strong>
-                <div style="font-size:10px; color:var(--muted);">${escapeHtml(c.note || c.description || "")}</div>
-              </div>
-              <span class="pill" style="background:rgba(168,85,247,0.18); color:#d8b4fe; border:1px solid rgba(168,85,247,0.4); white-space:nowrap;">
-                ${clsScore}/10 Class (#${c.rank}/${c.cohort_size})
-              </span>
-            </div>
-            <div style="position:relative; height:7px; background:#1e293b; border-radius:999px; overflow:hidden; margin-bottom:4px;">
-              <div style="position:absolute; top:0; bottom:0; width:${Math.min(100, Math.max(0, best))}%; background:rgba(148,163,184,0.22);"></div>
-              <div style="position:absolute; top:0; bottom:0; width:${Math.min(100, Math.max(0, score))}%; background:${barColor}; border-radius:999px;"></div>
-              <div title="Class Average" style="position:absolute; top:0; bottom:0; left:${Math.min(99, Math.max(0, avg))}%; width:2px; background:#f8fafc;"></div>
-            </div>
-            <div style="display:flex; justify-content:space-between; font-size:10px; color:var(--muted);">
-              <span>Your Rubric: <strong style="color:#e2e8f0;">${score}/100</strong></span>
-              <span>Class Avg: <strong>${avg}</strong> &bull; Class Best: <strong>${best}</strong></span>
-            </div>
-          </div>
-        `;
-      }).join("");
       return `
-        <div style="margin-bottom:10px;">
-          <div style="font-size:10px; font-weight:800; color:#cbd5e1; text-transform:uppercase; letter-spacing:0.04em; margin-bottom:6px;">
-            Category Comparison vs. Classmates (Zero Peer PII)
+        <div class="cp-m-course-card course-card ${courseSelected ? 'selected' : ''}">
+          <div class="cp-row-between" style="margin-bottom:4px; align-items:flex-start;">
+            <div style="min-width:0; flex:1;">
+              <div class="cp-row-wrap" style="gap:6px; margin-bottom:4px;">
+                <span class="cp-code-pill code-pill">${escapeHtml(c.course_code)}</span>
+                <span class="cp-muted" style="font-size:11.5px;">${escapeHtml(c.lecturer_name)}</span>
+              </div>
+              <strong style="font-size:15.5px; color:var(--cp-ink); display:block; overflow-wrap:anywhere;">${escapeHtml(c.name)}</strong>
+            </div>
+            <span class="cp-badge cp-tabular ${c.is_enrolled ? 'cp-badge--green' : 'cp-badge--neutral'}" style="flex-shrink:0;">
+              ${c.is_enrolled ? `${Number(c.attended_count || 0)}/${Number(c.total_sessions || 0)} (${Number(c.attendance_pct || 0)}%)` : 'Open'}
+            </span>
           </div>
-          <div style="display:grid; gap:6px;">${rows}</div>
+
+          ${primarySession ? `
+            <button type="button"
+                    class="cp-m-live-room-cta"
+                    style="margin-top:10px;"
+                    onclick='selectSession(${JSON.stringify(primarySession)}, ${JSON.stringify({id: c.id, course_code: c.course_code, name: c.name})}); switchView("view-live");'>
+              <span style="min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+                Open ${escapeHtml(primarySession.title)} (${escapeHtml(primarySession.session_code)})
+              </span>
+              <span>&rarr;</span>
+            </button>
+          ` : ''}
+
+          ${(sessions.length > 1 || (c.is_enrolled && logsHtml)) ? `
+            <details class="cp-m-accordion">
+              <summary>
+                <span>All Lectures &amp; Attendance (${sessions.length})</span>
+                <span class="cp-muted">&#9662;</span>
+              </summary>
+              ${sessions.length ? `<div style="margin-top:8px;">${sessionsHtml}</div>` : ''}
+              ${c.is_enrolled && logsHtml ? `<div style="margin-top:10px;">${logsHtml}</div>` : ''}
+            </details>
+          ` : ''}
         </div>
       `;
+    }).join("");
+  }
+
+  function applyIncomingPoll(poll, autoFocus = false) {
+    if (!poll) return;
+    const isNewActive = poll.status === "ACTIVE" && (!CURRENT_POLL || CURRENT_POLL.id !== poll.id || CURRENT_POLL.status !== "ACTIVE");
+    if (poll.my_vote_index !== undefined && poll.my_vote_index !== null) {
+      MY_VOTE = poll.my_vote_index;
+    } else if (CURRENT_POLL && CURRENT_POLL.id !== poll.id) {
+      MY_VOTE = null;
+    }
+    CURRENT_POLL = poll;
+    renderStudentPoll();
+    if (isNewActive && autoFocus) {
+      switchView("view-live");
+    }
+  }
+
+  function renderStudentPoll() {
+    const stageCard = document.getElementById("poll-stage-card");
+    const box = document.getElementById("student-poll-box");
+    const badge = document.getElementById("student-poll-badge");
+    const dot = document.getElementById("poll-live-dot");
+
+    if (!CURRENT_POLL) {
+      stageCard.classList.remove("active-poll");
+      stageCard.classList.add("cp-poll-idle");
+      if (dot) dot.classList.remove("hot");
+      badge.className = "cp-badge cp-badge--indigo";
+      badge.textContent = "Waiting";
+      box.innerHTML = "";
+      return;
     }
 
-    function renderSimpleReviewHtml(md) {
-      const safe = escapeHtml(md || "No review generated yet.");
-      const formatInline = (s) =>
-        s
-          .replace(/\*\*(.+?)\*\*/g, '<strong style="color:#f8fafc;">$1</strong>')
-          .replace(/`([^`]+)`/g, '<code style="background:#1e293b; color:#bae6fd; padding:1px 5px; border-radius:4px; font-size:11px;">$1</code>');
+    stageCard.classList.remove("cp-poll-idle");
+    const isActive = CURRENT_POLL.status === "ACTIVE";
+    const isClosed = CURRENT_POLL.status === "CLOSED";
+    const hasVoted = MY_VOTE !== null && MY_VOTE !== undefined;
 
-      const lines = safe.split(/\r?\n/);
-      let html = "";
-      let inList = false;
-      for (const rawLine of lines) {
-        const line = rawLine.trim();
-        if (!line) {
-          if (inList) {
-            html += "</ul>";
-            inList = false;
-          }
-          continue;
-        }
-        if (line.startsWith("### ") || line.startsWith("## ")) {
-          if (inList) {
-            html += "</ul>";
-            inList = false;
-          }
-          const headingText = line.replace(/^#{2,3}\s+/, "");
-          html += `<div style="font-size:11px; font-weight:800; color:var(--accent); text-transform:uppercase; letter-spacing:0.04em; margin:8px 0 4px;">${formatInline(headingText)}</div>`;
-        } else if (line.startsWith("- ") || line.startsWith("* ")) {
-          if (!inList) {
-            html += '<ul style="margin:0 0 6px 16px; padding:0;">';
-            inList = true;
-          }
-          html += `<li style="margin:2px 0; color:#e2e8f0;">${formatInline(line.slice(2))}</li>`;
-        } else {
-          if (inList) {
-            html += "</ul>";
-            inList = false;
-          }
-          html += `<p style="margin:3px 0; color:#cbd5e1;">${formatInline(line)}</p>`;
+    if (isActive) {
+      stageCard.classList.add("active-poll");
+      if (dot) dot.classList.add("hot");
+      badge.className = "cp-badge cp-badge--green";
+      badge.textContent = hasVoted ? "✓ Vote Recorded • Live" : "LIVE — Tap to Vote";
+    } else {
+      stageCard.classList.remove("active-poll");
+      if (dot) dot.classList.remove("hot");
+      badge.className = "cp-badge cp-badge--amber";
+      badge.textContent = "Poll Closed";
+    }
+
+    const optionsHtml = (CURRENT_POLL.options || []).map((opt, idx) => {
+      const isSelected = MY_VOTE === idx;
+      const isCorrect = isClosed && CURRENT_POLL.correct_index === idx;
+      const pct = (CURRENT_POLL.percentages && CURRENT_POLL.percentages[idx]) || 0;
+      const count = (CURRENT_POLL.counts && CURRENT_POLL.counts[idx]) || 0;
+      const showBars = hasVoted || isClosed;
+      const color = OPT_COLORS[idx % OPT_COLORS.length];
+      const letter = LETTERS[idx] || (idx + 1);
+
+      return `
+        <button type="button"
+                class="cp-poll-opt poll-opt ${isSelected ? 'selected' : ''} ${isCorrect ? 'correct' : ''}"
+                ${(!isActive || hasVoted) ? 'disabled' : ''}
+                onclick="castStudentVote(${idx})">
+          ${showBars ? `<div class="cp-poll-opt-fill poll-opt-fill" style="width:${pct}%;"></div>` : ''}
+          <div class="cp-poll-opt-content poll-opt-content">
+            <div style="display:flex; align-items:center; gap:9px; min-width:0; flex:1;">
+              <span class="cp-opt-badge opt-badge" style="background:${color};">${escapeHtml(letter)}</span>
+              <span style="overflow-wrap:anywhere;">${escapeHtml(opt)} ${isSelected ? '&#10003;' : ''} ${isCorrect ? '&#9733;' : ''}</span>
+            </div>
+            ${showBars ? `<span class="cp-poll-pct cp-tabular" style="font-size:12px; color:var(--cp-ink); font-weight:800; flex-shrink:0;">${pct}% <span class="cp-muted" style="font-weight:500;">(${count})</span></span>` : ''}
+          </div>
+        </button>
+      `;
+    }).join("");
+
+    box.innerHTML = `
+      <div class="cp-poll-question">
+        ${escapeHtml(CURRENT_POLL.question)}
+      </div>
+      ${optionsHtml}
+      <div class="cp-row-between cp-muted" style="font-size:11.5px; margin-top:6px;">
+        <span>${hasVoted ? '&#10003; Your answer is locked in.' : (isActive ? 'Tap an option above to vote.' : 'Final poll results.')}</span>
+        <span class="cp-tabular">Votes: <strong style="color:var(--cp-ink);">${Number(CURRENT_POLL.total_votes || 0)}</strong></span>
+      </div>
+    `;
+  }
+
+  async function castStudentVote(optionIndex) {
+    if (!CURRENT_POLL || CURRENT_POLL.status !== "ACTIVE") return;
+    const studentId = STATE.student ? STATE.student.id : null;
+    if (!studentId) {
+      return alert("Please sign in with your Name & Email first so your vote is counted!");
+    }
+    MY_VOTE = optionIndex;
+    renderStudentPoll();
+
+    try {
+      const res = await fetch(`/api/polls/${CURRENT_POLL.id}/vote`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ option_index: optionIndex, student_id: studentId }),
+      });
+      if (res.ok) {
+        const updated = await res.json();
+        applyIncomingPoll(updated, false);
+      }
+    } catch (_e) {
+      socket.emit("poll:vote", {
+        poll_id: CURRENT_POLL.id,
+        option_index: optionIndex,
+        student_id: studentId,
+      });
+    }
+  }
+
+  async function fetchLatestSessionPolls() {
+    if (!ACTIVE_SESSION || !ACTIVE_SESSION.id) return;
+    try {
+      const stParam = STATE.student && STATE.student.id ? `?student_id=${STATE.student.id}&_ts=${Date.now()}` : `?_ts=${Date.now()}`;
+      const res = await fetch(`/api/sessions/${ACTIVE_SESSION.id}/polls${stParam}`, { cache: "no-store" });
+      if (!res.ok) return;
+      const data = await res.json();
+      const polls = data.polls || [];
+      const active = polls.find(p => p.status === "ACTIVE");
+      if (active) {
+        applyIncomingPoll(active, true);
+      } else if (polls.length > 0) {
+        const latest = polls[polls.length - 1];
+        if (CURRENT_POLL && CURRENT_POLL.id === latest.id) {
+          applyIncomingPoll(latest, false);
         }
       }
-      if (inList) html += "</ul>";
-      return html;
+    } catch (_err) {}
+  }
+
+  function renderStudentChat() {
+    const feed = document.getElementById("student-chat-feed");
+    if (!CHAT_MESSAGES.length) {
+      feed.innerHTML = `<div class="cp-card cp-muted" style="font-size:13px; text-align:center; padding:20px 16px;">No questions yet. Ask the first question below!</div>`;
+      return;
     }
+    const sorted = [...CHAT_MESSAGES].sort((a, b) => (b.is_pinned - a.is_pinned) || (b.id - a.id));
+    feed.innerHTML = sorted.map(m => `
+      <div class="cp-chat-msg chat-item ${m.is_pinned ? 'pinned' : ''}" data-msg-id="${escapeHtml(m.id)}" style="margin-bottom:0; padding:12px 14px; border-radius:16px;">
+        <div class="cp-row-between" style="margin-bottom:6px; align-items:flex-start; flex-wrap:nowrap; gap:8px;">
+          <div class="cp-row-wrap" style="gap:6px; min-width:0; flex:1;">
+            <span class="cp-ts ts">[${escapeHtml(m.offset_mmss)}]</span>
+            <strong style="font-size:13px;">${escapeHtml(m.author_name)}</strong>
+            <span class="cp-cat-pill cat">${escapeHtml(m.category)}</span>
+            ${m.is_pinned ? '<span class="cp-badge cp-badge--amber">Pinned</span>' : ''}
+          </div>
+          <button type="button" class="cp-upvote-pill upvote-pill cp-tabular" style="flex-shrink:0;" onclick="upvoteStudentChat(${Number(m.id)})">
+            &#9650; ${Number(m.upvotes || 0)}
+          </button>
+        </div>
+        <div style="color:var(--cp-ink); font-size:13.5px; line-height:1.45; overflow-wrap:anywhere;">${escapeHtml(m.body)}</div>
+      </div>
+    `).join("");
+  }
 
-    function buildAssignmentCardElement(a) {
-      const stats = a.cohort_stats || {};
-      const sub = a.my_submission;
-      const myScore = sub
-        ? (sub.ai_rubric_grade !== undefined ? sub.ai_rubric_grade : (sub.metrics ? sub.metrics.overall_score : null))
-        : null;
-      const standing = sub ? sub.class_standing : null;
-      const deltaInfo = CLASS_SCORE_DELTAS[a.id];
-      const isPending = PENDING_REVIEWS.has(a.id);
-      const isSubmitting = SUBMITTING_ASSIGNMENTS.has(a.id);
+  async function fetchLatestSessionChat() {
+    if (!ACTIVE_SESSION || !ACTIVE_SESSION.id) return;
+    try {
+      const res = await fetch(`/api/sessions/${ACTIVE_SESSION.id}/chat?_ts=${Date.now()}`, { cache: "no-store" });
+      if (!res.ok) return;
+      const data = await res.json();
+      CHAT_MESSAGES = data.messages || [];
+      renderStudentChat();
+    } catch (_err) {}
+  }
 
-      const wrapper = document.createElement("div");
-      wrapper.dataset.hwCard = String(a.id);
-      wrapper.dataset.hwSig = getAssignmentCardSignature(a);
-      wrapper.style.cssText = "background:#0f172a; border:1px solid var(--border); border-radius:10px; padding:12px; margin-bottom:10px;";
-      wrapper.innerHTML = `
-        <div style="display:flex; justify-content:space-between; align-items:center; gap:6px; flex-wrap:wrap; margin-bottom:6px;">
-          <strong style="font-size:14px; color:#f8fafc;">${escapeHtml(a.title)}</strong>
-          <div style="display:flex; gap:5px; flex-wrap:wrap;">
-            ${myScore !== null
-              ? `<span class="pill green" title="Fixed criterion score against the rubric">Rubric: ${myScore}/100</span>`
-              : `<span class="pill amber">Class Avg: ${stats.mean_overall_score || 0} (${stats.submission_count || 0} subs)</span>`}
-            ${standing
-              ? `<span class="pill" style="background:rgba(168,85,247,0.18); color:#d8b4fe; border:1px solid rgba(168,85,247,0.4);" title="Dynamic peer score relative ONLY to classmates">Class: ${standing.class_score}/10 (#${standing.rank}/${standing.cohort_size})</span>`
-              : ''}
+  async function sendStudentChat() {
+    if (!ACTIVE_SESSION) return alert("Select a lecture first.");
+    const bodyEl = document.getElementById("student-chat-body");
+    const catEl = document.getElementById("student-chat-cat");
+    const body = bodyEl.value.trim();
+    if (!body) return;
+    bodyEl.value = "";
+    try {
+      const res = await fetch(`/api/sessions/${ACTIVE_SESSION.id}/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          student_id: STATE.student ? STATE.student.id : null,
+          author_name: STATE.student ? STATE.student.full_name : "Student",
+          category: catEl.value,
+          body,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        bodyEl.value = body;
+        return alert(data.error || "Could not send message.");
+      }
+      if (!CHAT_MESSAGES.find(x => x.id === data.id)) CHAT_MESSAGES.push(data);
+      renderStudentChat();
+    } catch (_err) {
+      bodyEl.value = body;
+      alert("Network error while sending message.");
+    }
+  }
+
+  async function upvoteStudentChat(msgId) {
+    await fetch(`/api/chat/${msgId}/upvote`, { method: "POST" });
+  }
+
+  socket.on("connect", () => {
+    socket.emit("join_notifications", {});
+    if (ACTIVE_SESSION) {
+      socket.emit("join_session", {
+        session_code: ACTIVE_SESSION.session_code,
+        student_id: STATE.student ? STATE.student.id : null,
+        as_student: true,
+      });
+    }
+  });
+
+  socket.on("poll:sync", (data) => {
+    const incoming = data ? (data.poll || data.active_poll) : null;
+    if (data && data.my_vote !== undefined && data.my_vote !== null) {
+      MY_VOTE = data.my_vote;
+    }
+    if (incoming) applyIncomingPoll(incoming, incoming.status === "ACTIVE");
+  });
+  socket.on("poll:activated", (poll) => {
+    MY_VOTE = null;
+    applyIncomingPoll(poll, true);
+  });
+  socket.on("poll:opened", (poll) => {
+    MY_VOTE = null;
+    applyIncomingPoll(poll, true);
+  });
+  socket.on("poll:results_update", (poll) => {
+    if (!CURRENT_POLL || CURRENT_POLL.id === poll.id) {
+      applyIncomingPoll({ ...CURRENT_POLL, ...poll }, false);
+    }
+  });
+  socket.on("poll:voted_ack", (poll) => {
+    applyIncomingPoll(poll, false);
+  });
+  socket.on("poll:closed", (poll) => {
+    if (!CURRENT_POLL || CURRENT_POLL.id === poll.id) {
+      applyIncomingPoll({ ...CURRENT_POLL, ...poll }, false);
+    }
+  });
+
+  socket.on("chat:init", (d) => {
+    CHAT_MESSAGES = d.messages || [];
+    renderStudentChat();
+  });
+  socket.on("chat:new", (m) => {
+    if (ACTIVE_SESSION && m.session_code && m.session_code !== ACTIVE_SESSION.session_code) return;
+    if (!CHAT_MESSAGES.find(x => x.id === m.id)) CHAT_MESSAGES.push(m);
+    renderStudentChat();
+  });
+  socket.on("chat:notify", (payload) => {
+    if (window.ClassPulseNotify) {
+      window.ClassPulseNotify.pushChatNotification(payload);
+    }
+  });
+  socket.on("chat:updated", (m) => {
+    const idx = CHAT_MESSAGES.findIndex(x => x.id === m.id);
+    if (idx >= 0) CHAT_MESSAGES[idx] = m;
+    renderStudentChat();
+  });
+
+  function focusStudentSignIn() {
+    const card = document.getElementById("login-card");
+    if (card) {
+      card.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+    const nameInput = document.getElementById("login-name");
+    if (nameInput) nameInput.focus();
+  }
+
+  function notifyNewAssignment(title) {
+    if (activeViewId === "view-study") return;
+    const dot = document.getElementById("study-new-dot");
+    if (dot) {
+      dot.style.display = "inline-block";
+      dot.classList.add("hot");
+    }
+    const existing = document.getElementById("study-toast-banner");
+    if (existing) existing.remove();
+    const container = document.getElementById("student-main-content");
+    if (!container) return;
+    const banner = document.createElement("div");
+    banner.id = "study-toast-banner";
+    banner.className = "cp-alert cp-alert--info cp-row-between";
+    banner.style.cssText = "cursor:pointer; margin-bottom:0;";
+    banner.innerHTML = `
+      <span><strong>New Homework:</strong> ${escapeHtml(title || "Assignment")}</span>
+      <span class="cp-badge cp-badge--indigo">Open &rarr;</span>
+    `;
+    banner.onclick = () => {
+      switchView("view-study");
+      switchStudySubView("homework");
+    };
+    container.insertBefore(banner, container.firstChild);
+  }
+
+  async function loadAssignmentsOnly() {
+    if (!ACTIVE_SESSION || !ACTIVE_SESSION.course_id) return;
+    const cid = ACTIVE_SESSION.course_id;
+    const stQuery = STATE.student && STATE.student.id ? `?student_id=${STATE.student.id}&_ts=${Date.now()}` : `?_ts=${Date.now()}`;
+    try {
+      const hwRes = await fetch(`/api/courses/${cid}/assignments${stQuery}`, { cache: "no-store" });
+      if (!hwRes.ok) return;
+      const hwData = await hwRes.json();
+      const assignments = hwData.assignments || [];
+      const isFirstLoad = HW_INITIALIZED_COURSE_ID !== cid;
+      let newlyDiscoveredTitle = null;
+      for (const a of assignments) {
+        if (!KNOWN_ASSIGNMENT_IDS.has(a.id)) {
+          if (!isFirstLoad) newlyDiscoveredTitle = a.title;
+          KNOWN_ASSIGNMENT_IDS.add(a.id);
+        }
+        if (a.my_submission && PENDING_REVIEWS.has(a.id)) {
+          PENDING_REVIEWS.delete(a.id);
+        }
+        const standing = a.my_submission && a.my_submission.class_standing;
+        if (standing && typeof standing.class_score === "number") {
+          const prev = LAST_CLASS_SCORES[a.id];
+          if (typeof prev === "number" && prev !== standing.class_score) {
+            CLASS_SCORE_DELTAS[a.id] = { from: prev, to: standing.class_score };
+          }
+          LAST_CLASS_SCORES[a.id] = standing.class_score;
+        }
+      }
+      HW_INITIALIZED_COURSE_ID = cid;
+      renderStudyAssignments(assignments);
+      if (newlyDiscoveredTitle) {
+        notifyNewAssignment(newlyDiscoveredTitle);
+      }
+    } catch (err) {
+      console.error("loadAssignmentsOnly error:", err);
+    }
+  }
+
+  async function loadStudyHub() {
+    if (!ACTIVE_SESSION || !ACTIVE_SESSION.course_id) return;
+    const cid = ACTIVE_SESSION.course_id;
+    try {
+      const [lecRes] = await Promise.all([
+        fetch(`/api/courses/${cid}/lectures?_ts=${Date.now()}`, { cache: "no-store" }),
+        loadAssignmentsOnly(),
+      ]);
+      if (lecRes.ok) {
+        const lecData = await lecRes.json();
+        renderStudyLectures(lecData.artifacts || []);
+      }
+    } catch (err) {
+      console.error("loadStudyHub error:", err);
+    }
+  }
+
+  function renderStudyLectures(artifacts) {
+    const el = document.getElementById("student-lecture-summaries");
+    if (!el) return;
+    if (!artifacts.length) {
+      el.innerHTML = `<div class="cp-card cp-muted" style="text-align:center; padding:18px;">No published AI lecture summaries yet for this course.</div>`;
+      return;
+    }
+    el.innerHTML = artifacts.map((a, idx) => {
+      const segHtml = (a.corrected_transcript || []).map(seg =>
+        `<div class="cp-m-hairline-row" style="justify-content:flex-start;"><span class="cp-ts ts">[${escapeHtml(seg.offset_mmss)}]</span> <span style="color:var(--cp-ink); overflow-wrap:anywhere;">${escapeHtml(seg.text)}</span></div>`
+      ).join("");
+      return `
+        <div class="cp-card" style="padding:16px;">
+          <div class="cp-row-between" style="margin-bottom:8px;">
+            <strong style="font-size:15px; color:var(--cp-ink); overflow-wrap:anywhere;">${escapeHtml(a.lecture_title || a.session_code)}</strong>
+            <span class="cp-badge cp-badge--green">${escapeHtml(a.session_code)}</span>
+          </div>
+          <div class="cp-row-wrap" style="margin-bottom:10px; gap:8px;">
+            <a class="cp-btn cp-btn--green cp-btn--sm" href="/api/lectures/${Number(a.id)}/download/summary.md">Summary (.md)</a>
+            <a class="cp-btn cp-btn--secondary cp-btn--sm" href="/api/lectures/${Number(a.id)}/download/transcript.txt">Transcript (.txt)</a>
+          </div>
+          <details class="cp-m-accordion" ${idx === 0 ? 'open' : ''}>
+            <summary>
+              <span>AI Summary</span>
+              <span class="cp-muted">&#9662;</span>
+            </summary>
+            <div class="cp-review-md" style="margin:8px 0 0 0; background:var(--cp-well);">${renderSimpleReviewHtml(a.summary_markdown)}</div>
+          </details>
+          <details class="cp-m-accordion">
+            <summary>
+              <span>Corrected Transcript ([MM:SS])</span>
+              <span class="cp-muted">&#9662;</span>
+            </summary>
+            <div style="margin-top:6px;">${segHtml}</div>
+          </details>
+        </div>
+      `;
+    }).join("");
+  }
+
+  function getAssignmentCardSignature(a) {
+    const stats = a.cohort_stats || {};
+    const sub = a.my_submission;
+    const standingSig = sub && sub.class_standing
+      ? `${sub.class_standing.class_score}:${sub.class_standing.rank}:${sub.class_standing.cohort_size}`
+      : "0";
+    const deltaSig = CLASS_SCORE_DELTAS[a.id] ? `${CLASS_SCORE_DELTAS[a.id].from}->${CLASS_SCORE_DELTAS[a.id].to}` : "";
+    const subSig = sub
+      ? `${sub.version}:${sub.submitted_at || ""}:${(sub.deep_review_md || "").length}:${standingSig}:${deltaSig}`
+      : "none";
+    const pendingSig = PENDING_REVIEWS.has(a.id) ? "pending" : "idle";
+    return `${a.id}|${stats.submission_count || 0}|${stats.mean_overall_score || 0}|${subSig}|${pendingSig}|${STATE.student ? STATE.student.id : "guest"}`;
+  }
+
+  function renderTelemetryPills(telemetry) {
+    if (!telemetry) return "";
+    const labels = [
+      ["line_count", "Lines"],
+      ["structure_count", "Classes/Funcs"],
+      ["assertion_count", "Assertions"],
+      ["doc_signals", "Docs/Comments"],
+    ];
+    const items = labels
+      .filter(([k]) => telemetry[k] !== undefined)
+      .map(([k, lbl]) => {
+        const item = telemetry[k];
+        return `<span class="cp-telemetry-pill cp-tabular">${escapeHtml(lbl)}: <strong style="color:var(--cp-ink);">${escapeHtml(item.mine)}</strong> <span class="cp-muted">(Avg ${escapeHtml(item.cohort_avg)})</span></span>`;
+      });
+    if (!items.length) return "";
+    return `<div class="cp-row-wrap" style="gap:6px; margin-bottom:10px;">${items.join("")}</div>`;
+  }
+
+  function renderCategoryBreakdownHtml(categories) {
+    if (!Array.isArray(categories) || !categories.length) return "";
+    const rows = categories.map(c => {
+      const score = Number(c.ai_rubric_score || 0);
+      const avg = Number(c.cohort_mean || 0);
+      const best = Number(c.cohort_best || 0);
+      const clsScore = c.class_score || 10;
+      const barColor = clsScore >= 8 ? "var(--cp-green)" : (clsScore >= 5 ? "var(--cp-indigo)" : "var(--cp-amber)");
+      return `
+        <div class="cp-well cp-cat-bar" style="padding:10px 12px; margin-bottom:0;">
+          <div class="cp-row-between" style="gap:6px; margin-bottom:6px;">
+            <strong style="font-size:12px; color:var(--cp-ink);">${escapeHtml(c.label)}</strong>
+            <span class="cp-badge cp-badge--purple cp-tabular">
+              ${escapeHtml(clsScore)}/10 (#${escapeHtml(c.rank)}/${escapeHtml(c.cohort_size)})
+            </span>
+          </div>
+          <div class="cp-cat-bar-track">
+            <div style="position:absolute; top:0; bottom:0; left:0; width:${Math.min(100, Math.max(0, best))}%; background:rgba(91,95,239,0.14); border-radius:999px;"></div>
+            <div class="cp-cat-bar-fill" style="position:relative; width:${Math.min(100, Math.max(0, score))}%; background:${barColor};"></div>
+            <div class="cp-cat-bar-avg" title="Class Average" style="left:${Math.min(99, Math.max(0, avg))}%;"></div>
+          </div>
+          <div class="cp-row-between cp-muted cp-tabular" style="font-size:10.5px; margin-top:5px;">
+            <span>Rubric: <strong style="color:var(--cp-ink);">${score}/100</strong></span>
+            <span>Avg: <strong>${avg}</strong> &bull; Best: <strong>${best}</strong></span>
           </div>
         </div>
-        <div style="font-size:11px; color:var(--muted); margin-bottom:8px;">${escapeHtml(a.rubric_text)}</div>
+      `;
+    }).join("");
+    return `<div class="cp-stack-xs" style="margin-bottom:10px;">${rows}</div>`;
+  }
 
-        ${sub ? `
-          <div style="background:#151f32; border:1px solid rgba(56,189,248,0.3); border-radius:9px; padding:10px; margin-bottom:8px;">
-            <div style="font-size:11px; font-weight:700; color:var(--accent); margin-bottom:8px;">MY HOMEWORK EVALUATION (v${sub.version})</div>
+  function renderSimpleReviewHtml(md) {
+    const safe = escapeHtml(md || "No review generated yet.");
+    const formatInline = (s) =>
+      s
+        .replace(/&amp;bull;/g, "&bull;")
+        .replace(/\*\*(.+?)\*\*/g, '<strong style="color:var(--cp-ink);">$1</strong>')
+        .replace(/`([^`]+)`/g, '<code style="background:var(--cp-surface-solid); color:var(--cp-indigo-ink); border:1px solid var(--cp-border); padding:1px 5px; border-radius:5px; font-size:11px;">$1</code>');
 
-            <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:10px;">
-              <div style="background:rgba(34,197,94,0.08); border:1px solid rgba(34,197,94,0.35); border-radius:8px; padding:8px 10px;">
-                <div style="font-size:10px; font-weight:800; color:#4ade80; text-transform:uppercase;">AI Rubric Grade</div>
-                <div style="font-size:20px; font-weight:800; color:#f8fafc; margin:2px 0;">${myScore}<span style="font-size:12px; color:var(--muted);">/100</span></div>
-                <div style="font-size:10px; color:#cbd5e1; line-height:1.3;">Fixed quality grade against the rubric (does not change when classmates submit).</div>
-              </div>
-              <div style="background:rgba(168,85,247,0.1); border:1px solid rgba(168,85,247,0.4); border-radius:8px; padding:8px 10px;">
-                <div style="font-size:10px; font-weight:800; color:#d8b4fe; text-transform:uppercase;">Class Standing Score</div>
-                <div style="font-size:20px; font-weight:800; color:#f8fafc; margin:2px 0;">${standing ? standing.class_score : 10}<span style="font-size:12px; color:var(--muted);">/10</span></div>
-                <div style="font-size:10px; color:#cbd5e1; line-height:1.3;">
-                  Peer rank <strong>#${standing ? standing.rank : 1} of ${standing ? standing.cohort_size : 1}</strong> — based ONLY on classmates (updates dynamically).
-                </div>
-              </div>
-            </div>
+    const lines = safe.split(/\r?\n/);
+    let html = "";
+    let inList = false;
+    for (const rawLine of lines) {
+      const line = rawLine.trim();
+      if (!line) {
+        if (inList) {
+          html += "</ul>";
+          inList = false;
+        }
+        continue;
+      }
+      if (line.startsWith("### ") || line.startsWith("## ")) {
+        if (inList) {
+          html += "</ul>";
+          inList = false;
+        }
+        const headingText = line.replace(/^#{2,3}\s+/, "");
+        html += `<div class="cp-eyebrow" style="font-size:11px; color:var(--cp-indigo-ink); margin:8px 0 4px;">${formatInline(headingText)}</div>`;
+      } else if (line.startsWith("- ") || line.startsWith("* ")) {
+        if (!inList) {
+          html += '<ul style="margin:0 0 6px 16px; padding:0;">';
+          inList = true;
+        }
+        html += `<li style="margin:2px 0; color:var(--cp-ink);">${formatInline(line.slice(2))}</li>`;
+      } else {
+        if (inList) {
+          html += "</ul>";
+          inList = false;
+        }
+        html += `<p style="margin:3px 0; color:var(--cp-ink-secondary);">${formatInline(line)}</p>`;
+      }
+    }
+    if (inList) html += "</ul>";
+    return html;
+  }
 
-            ${deltaInfo ? `
-              <div style="background:rgba(56,189,248,0.12); border:1px solid rgba(56,189,248,0.35); border-radius:7px; padding:6px 8px; margin-bottom:8px; font-size:11px; color:#bae6fd;">
-                <strong>Live Cohort Update:</strong> New peer submission adjusted your Class Standing (<strong>${deltaInfo.from}/10 &rarr; ${deltaInfo.to}/10</strong>), while your AI Rubric Grade stayed <strong>${myScore}/100</strong>.
-              </div>
-            ` : ''}
+  function buildAssignmentCardElement(a) {
+    const stats = a.cohort_stats || {};
+    const sub = a.my_submission;
+    const myScore = sub
+      ? (sub.ai_rubric_grade !== undefined ? sub.ai_rubric_grade : (sub.metrics ? sub.metrics.overall_score : null))
+      : null;
+    const standing = sub ? sub.class_standing : null;
+    const deltaInfo = CLASS_SCORE_DELTAS[a.id];
+    const isPending = PENDING_REVIEWS.has(a.id);
+    const isSubmitting = SUBMITTING_ASSIGNMENTS.has(a.id);
 
+    const wrapper = document.createElement("div");
+    wrapper.className = "cp-card";
+    wrapper.style.padding = "16px";
+    wrapper.dataset.hwCard = String(a.id);
+    wrapper.dataset.hwSig = getAssignmentCardSignature(a);
+    wrapper.innerHTML = `
+      <div class="cp-row-between" style="margin-bottom:6px;">
+        <strong style="font-size:15px; color:var(--cp-ink); overflow-wrap:anywhere;">${escapeHtml(a.title)}</strong>
+        ${myScore !== null
+          ? `<span class="cp-badge cp-badge--green cp-tabular">v${Number(sub.version || 1)} &bull; ${escapeHtml(myScore)}/100</span>`
+          : `<span class="cp-badge cp-badge--amber cp-tabular">Class Avg: ${escapeHtml(stats.mean_overall_score || 0)}</span>`}
+      </div>
+      <div class="cp-muted" style="font-size:12px; margin-bottom:10px; line-height:1.4;">${escapeHtml(a.rubric_text)}</div>
+
+      ${sub ? `
+        <div class="cp-grid-2-tight" style="margin-bottom:8px;">
+          <div class="cp-metric-tile cp-metric-tile--green">
+            <div class="cp-eyebrow" style="font-size:10px; color:var(--cp-green-ink);">AI Rubric</div>
+            <div class="cp-hw-kpi-val">${escapeHtml(myScore)}<span class="cp-muted" style="font-size:12px;">/100</span></div>
+            <div class="cp-muted" style="font-size:10.5px;">Fixed rubric grade</div>
+          </div>
+          <div class="cp-metric-tile cp-metric-tile--purple">
+            <div class="cp-eyebrow" style="font-size:10px; color:var(--cp-purple-ink);">Class Standing</div>
+            <div class="cp-hw-kpi-val">${standing ? escapeHtml(standing.class_score) : 10}<span class="cp-muted" style="font-size:12px;">/10</span></div>
+            <div class="cp-muted" style="font-size:10.5px;">Rank #${standing ? escapeHtml(standing.rank) : 1} of ${standing ? escapeHtml(standing.cohort_size) : 1}</div>
+          </div>
+        </div>
+
+        ${deltaInfo ? `
+          <div class="cp-alert cp-alert--info" style="padding:8px 10px; font-size:11.5px; margin-bottom:8px;">
+            Class Standing updated: <strong>${escapeHtml(deltaInfo.from)}/10 &rarr; ${escapeHtml(deltaInfo.to)}/10</strong>
+          </div>
+        ` : ''}
+
+        <details class="cp-m-accordion">
+          <summary>
+            <span>Score Breakdown &amp; Metrics</span>
+            <span class="cp-muted">&#9662;</span>
+          </summary>
+          <div style="margin-top:8px;">
             ${renderCategoryBreakdownHtml(sub.category_breakdown)}
             ${renderTelemetryPills(sub.telemetry_comparison)}
-
-            <div style="background:#0f172a; border:1px solid #1e293b; border-radius:8px; padding:10px 12px; font-size:12px; line-height:1.48; color:#e2e8f0;">
-              ${renderSimpleReviewHtml(sub.deep_review_md)}
-            </div>
           </div>
-        ` : ''}
+        </details>
 
-        ${!STATE.student ? `
-          <div style="background:rgba(245,158,11,0.12); border:1px solid rgba(245,158,11,0.35); border-radius:8px; padding:8px 10px; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center; gap:8px;">
-            <span style="font-size:11px; color:#fde68a;">Sign in above with your Name &amp; Email to submit homework.</span>
-            <button type="button" class="upvote-pill" onclick="focusStudentSignIn()">Sign In Above</button>
-          </div>
-        ` : ''}
-
-        <details ${sub ? '' : 'open'}>
-          <summary style="cursor:pointer; font-size:12px; color:var(--accent); font-weight:700; margin-bottom:6px;">
-            ${sub ? 'Resubmit Improved Version' : 'Submit Solution for Instant AI Review'}
+        <details class="cp-m-accordion">
+          <summary>
+            <span>AI Code Review</span>
+            <span class="cp-muted">&#9662;</span>
           </summary>
-          <textarea id="hw-code-${a.id}" rows="4" placeholder="Paste your code/solution or notes..." style="width:100%; background:#151f32; color:#f8fafc; border:1px solid var(--border); border-radius:8px; padding:8px; font-family:monospace; font-size:12px; margin-bottom:6px;"></textarea>
-          <div style="display:grid; grid-template-columns: 1fr auto; gap:6px; margin-bottom:6px;">
-            <input type="text" id="hw-git-${a.id}" placeholder="Or GitHub URL (optional)" />
-            <button id="hw-btn-${a.id}" type="button" class="primary-btn" onclick="submitStudentHomework(${a.id})" ${isSubmitting ? 'disabled' : ''}>
+          <div class="cp-review-md" style="margin-top:8px; background:var(--cp-well);">
+            ${renderSimpleReviewHtml(sub.deep_review_md)}
+          </div>
+        </details>
+      ` : ''}
+
+      ${!STATE.student ? `
+        <div class="cp-alert cp-alert--warn cp-row-between" style="padding:8px 10px; margin:8px 0;">
+          <span style="font-size:11.5px;">Sign in to submit homework.</span>
+          <button type="button" class="cp-btn cp-btn--white cp-btn--sm" onclick="focusStudentSignIn()">Sign In</button>
+        </div>
+      ` : ''}
+
+      <details class="cp-m-accordion" ${sub ? '' : 'open'} style="${sub ? '' : 'border-top:none; padding-top:0; margin-top:4px;'}">
+        <summary>
+          <span>${sub ? 'Resubmit Improved Version' : 'Submit Solution'}</span>
+          <span class="cp-muted">&#9662;</span>
+        </summary>
+        <div style="margin-top:8px;">
+          <textarea id="hw-code-${Number(a.id)}" class="cp-textarea" rows="4" placeholder="Paste your code/solution or notes..." style="font-family:var(--cp-font-mono); font-size:12px; margin-bottom:8px;"></textarea>
+          <div class="cp-input-action" style="margin-bottom:8px;">
+            <input type="text" id="hw-git-${Number(a.id)}" class="cp-input" placeholder="Or GitHub URL (optional)" />
+            <button id="hw-btn-${Number(a.id)}" type="button" class="cp-btn cp-btn--primary cp-btn--sm" onclick="submitStudentHomework(${Number(a.id)})" ${isSubmitting ? 'disabled' : ''}>
               ${isSubmitting ? 'Submitting...' : 'Submit &amp; Review'}
             </button>
           </div>
-          <input type="file" id="hw-file-${a.id}" style="font-size:11px; color:var(--muted);" />
-          <div id="hw-status-${a.id}" style="margin-top:6px; font-size:11px; min-height:14px; color:${isPending ? 'var(--accent)' : 'var(--muted)'};">
-            ${isPending ? '&#9203; Submitted! AI grading &amp; cohort comparison in progress...' : ''}
+          <input type="file" id="hw-file-${Number(a.id)}" class="cp-file-input" />
+          <div id="hw-status-${Number(a.id)}" style="margin-top:6px; font-size:11.5px; font-weight:600; min-height:14px; color:${isPending ? 'var(--cp-indigo-ink)' : 'var(--cp-ink-muted)'};">
+            ${isPending ? 'Submitted! AI grading &amp; cohort comparison in progress...' : ''}
           </div>
-        </details>
-      `;
-      return wrapper;
+        </div>
+      </details>
+    `;
+    return wrapper;
+  }
+
+  function setHomeworkStatus(assignId, message, kind = "info") {
+    const el = document.getElementById(`hw-status-${assignId}`);
+    if (!el) return;
+    const colorMap = {
+      info: "var(--cp-ink-muted)",
+      pending: "var(--cp-indigo-ink)",
+      success: "var(--cp-green-ink)",
+      error: "var(--cp-red-ink)",
+    };
+    el.style.color = colorMap[kind] || "var(--cp-ink-muted)";
+    el.textContent = message || "";
+  }
+
+  function renderStudyAssignments(assignments) {
+    const el = document.getElementById("student-assignments-list");
+    if (!el) return;
+    if (!assignments.length) {
+      el.innerHTML = `<div class="cp-card cp-muted" style="text-align:center; padding:18px;">No assignments posted yet for this course.</div>`;
+      return;
     }
 
-    function setHomeworkStatus(assignId, message, kind = "info") {
-      const el = document.getElementById(`hw-status-${assignId}`);
-      if (!el) return;
-      const colorMap = {
-        info: "#94a3b8",
-        pending: "#38bdf8",
-        success: "#4ade80",
-        error: "#f87171",
-      };
-      el.style.color = colorMap[kind] || "#94a3b8";
-      el.textContent = message || "";
+    const emptyStateOnly = el.children.length === 1 && !el.firstElementChild.dataset.hwCard;
+    if (emptyStateOnly) el.innerHTML = "";
+
+    const existingMap = new Map();
+    for (const child of Array.from(el.children)) {
+      if (child.dataset && child.dataset.hwCard) {
+        existingMap.set(Number(child.dataset.hwCard), child);
+      } else {
+        child.remove();
+      }
     }
 
-    function renderStudyAssignments(assignments) {
-      const el = document.getElementById("student-assignments-list");
-      if (!el) return;
-      if (!assignments.length) {
-        el.innerHTML = `<div style="color:var(--muted); padding:8px 0;">No assignments posted yet for this course.</div>`;
+    const nextIds = new Set(assignments.map(a => Number(a.id)));
+    for (const [id, node] of existingMap.entries()) {
+      if (!nextIds.has(id)) {
+        node.remove();
+        existingMap.delete(id);
+      }
+    }
+
+    assignments.forEach((a, idx) => {
+      const id = Number(a.id);
+      const existingNode = existingMap.get(id);
+      const newSig = getAssignmentCardSignature(a);
+      let targetNode = existingNode;
+
+      if (!existingNode || existingNode.dataset.hwSig !== newSig) {
+        const prevCode = existingNode?.querySelector(`#hw-code-${id}`)?.value || "";
+        const prevGit = existingNode?.querySelector(`#hw-git-${id}`)?.value || "";
+        const prevDetailsOpen = existingNode?.querySelector("details:last-of-type")?.open;
+        targetNode = buildAssignmentCardElement(a);
+        if (prevCode) targetNode.querySelector(`#hw-code-${id}`).value = prevCode;
+        if (prevGit) targetNode.querySelector(`#hw-git-${id}`).value = prevGit;
+        if (typeof prevDetailsOpen === "boolean") {
+          const lastDetails = targetNode.querySelector("details:last-of-type");
+          if (lastDetails) lastDetails.open = prevDetailsOpen;
+        }
+        if (existingNode) {
+          el.replaceChild(targetNode, existingNode);
+        }
+      }
+
+      const currentAtIdx = el.children[idx];
+      if (currentAtIdx !== targetNode) {
+        el.insertBefore(targetNode, currentAtIdx || null);
+      }
+    });
+  }
+
+  async function submitStudentHomework(assignId) {
+    if (!STATE.student) {
+      setHomeworkStatus(assignId, "Sign in with your Name & Email first.", "error");
+      focusStudentSignIn();
+      return;
+    }
+    if (SUBMITTING_ASSIGNMENTS.has(assignId)) return;
+
+    const codeEl = document.getElementById(`hw-code-${assignId}`);
+    const gitEl = document.getElementById(`hw-git-${assignId}`);
+    const fileEl = document.getElementById(`hw-file-${assignId}`);
+    const btnEl = document.getElementById(`hw-btn-${assignId}`);
+
+    const code = codeEl ? codeEl.value.trim() : "";
+    const git = gitEl ? gitEl.value.trim() : "";
+    const hasFile = Boolean(fileEl && fileEl.files && fileEl.files.length > 0);
+
+    if (!code && !git && !hasFile) {
+      setHomeworkStatus(
+        assignId,
+        "Please paste code/text, attach a file, or enter a GitHub URL before submitting.",
+        "error"
+      );
+      return;
+    }
+
+    SUBMITTING_ASSIGNMENTS.add(assignId);
+    if (btnEl) {
+      btnEl.disabled = true;
+      btnEl.textContent = "Submitting...";
+    }
+    setHomeworkStatus(assignId, "Uploading submission...", "pending");
+
+    try {
+      let res;
+      if (hasFile) {
+        const fd = new FormData();
+        fd.append("file", fileEl.files[0]);
+        fd.append("student_id", STATE.student.id);
+        fd.append("generate_review", "true");
+        fd.append("async", "true");
+        if (code) fd.append("content_text", code);
+        if (git) fd.append("github_url", git);
+        res = await fetch(`/api/assignments/${assignId}/submissions?async=1`, {
+          method: "POST",
+          body: fd,
+        });
+      } else {
+        res = await fetch(`/api/assignments/${assignId}/submissions?async=1`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            student_id: STATE.student.id,
+            content_text: code,
+            github_url: git,
+            generate_review: true,
+            async: true,
+          }),
+        });
+      }
+
+      const rawText = await res.text();
+      let data = {};
+      try {
+        data = rawText ? JSON.parse(rawText) : {};
+      } catch (_parseErr) {
+        data = { error: `Server returned HTTP ${res.status}` };
+      }
+
+      if (!res.ok) {
+        setHomeworkStatus(assignId, data.error || `Homework submission failed (HTTP ${res.status}).`, "error");
         return;
       }
 
-      const emptyStateOnly = el.children.length === 1 && !el.firstElementChild.dataset.hwCard;
-      if (emptyStateOnly) el.innerHTML = "";
+      if (codeEl) codeEl.value = "";
+      if (gitEl) gitEl.value = "";
+      if (fileEl) fileEl.value = "";
 
-      const existingMap = new Map();
-      for (const child of Array.from(el.children)) {
-        if (child.dataset && child.dataset.hwCard) {
-          existingMap.set(Number(child.dataset.hwCard), child);
-        } else {
-          child.remove();
-        }
-      }
-
-      const nextIds = new Set(assignments.map(a => Number(a.id)));
-      for (const [id, node] of existingMap.entries()) {
-        if (!nextIds.has(id)) {
-          node.remove();
-          existingMap.delete(id);
-        }
-      }
-
-      assignments.forEach((a, idx) => {
-        const id = Number(a.id);
-        const existingNode = existingMap.get(id);
-        const newSig = getAssignmentCardSignature(a);
-        let targetNode = existingNode;
-
-        if (!existingNode || existingNode.dataset.hwSig !== newSig) {
-          const prevCode = existingNode?.querySelector(`#hw-code-${id}`)?.value || "";
-          const prevGit = existingNode?.querySelector(`#hw-git-${id}`)?.value || "";
-          const prevDetailsOpen = existingNode?.querySelector("details")?.open;
-          targetNode = buildAssignmentCardElement(a);
-          if (prevCode) targetNode.querySelector(`#hw-code-${id}`).value = prevCode;
-          if (prevGit) targetNode.querySelector(`#hw-git-${id}`).value = prevGit;
-          if (typeof prevDetailsOpen === "boolean") {
-            targetNode.querySelector("details").open = prevDetailsOpen;
-          }
-          if (existingNode) {
-            el.replaceChild(targetNode, existingNode);
-          }
-        }
-
-        const currentAtIdx = el.children[idx];
-        if (currentAtIdx !== targetNode) {
-          el.insertBefore(targetNode, currentAtIdx || null);
-        }
-      });
-    }
-
-    async function submitStudentHomework(assignId) {
-      if (!STATE.student) {
-        setHomeworkStatus(assignId, "Sign in with your Name & Email above first.", "error");
-        focusStudentSignIn();
-        return;
-      }
-      if (SUBMITTING_ASSIGNMENTS.has(assignId)) return;
-
-      const codeEl = document.getElementById(`hw-code-${assignId}`);
-      const gitEl = document.getElementById(`hw-git-${assignId}`);
-      const fileEl = document.getElementById(`hw-file-${assignId}`);
-      const btnEl = document.getElementById(`hw-btn-${assignId}`);
-
-      const code = codeEl ? codeEl.value.trim() : "";
-      const git = gitEl ? gitEl.value.trim() : "";
-      const hasFile = Boolean(fileEl && fileEl.files && fileEl.files.length > 0);
-
-      if (!code && !git && !hasFile) {
+      if (res.status === 202 || data.status === "PENDING") {
+        PENDING_REVIEWS.add(assignId);
         setHomeworkStatus(
           assignId,
-          "Please paste code/text, attach a file, or enter a GitHub URL before submitting.",
-          "error"
+          "Submitted! AI grading & cohort comparison in progress...",
+          "pending"
         );
-        return;
+        setTimeout(loadAssignmentsOnly, 2000);
+      } else {
+        PENDING_REVIEWS.delete(assignId);
+        setHomeworkStatus(assignId, "Review complete!", "success");
+        await loadAssignmentsOnly();
       }
-
-      SUBMITTING_ASSIGNMENTS.add(assignId);
-      if (btnEl) {
-        btnEl.disabled = true;
-        btnEl.textContent = "Submitting...";
+    } catch (err) {
+      setHomeworkStatus(
+        assignId,
+        `Network error while submitting: ${err && err.message ? err.message : "Request failed"}`,
+        "error"
+      );
+    } finally {
+      SUBMITTING_ASSIGNMENTS.delete(assignId);
+      const latestBtn = document.getElementById(`hw-btn-${assignId}`);
+      if (latestBtn) {
+        latestBtn.disabled = false;
+        latestBtn.textContent = "Submit & Review";
       }
-      setHomeworkStatus(assignId, "Uploading submission...", "pending");
+    }
+  }
 
-      try {
-        let res;
-        if (hasFile) {
-          const fd = new FormData();
-          fd.append("file", fileEl.files[0]);
-          fd.append("student_id", STATE.student.id);
-          fd.append("generate_review", "true");
-          fd.append("async", "true");
-          if (code) fd.append("content_text", code);
-          if (git) fd.append("github_url", git);
-          res = await fetch(`/api/assignments/${assignId}/submissions?async=1`, {
-            method: "POST",
-            body: fd,
-          });
-        } else {
-          res = await fetch(`/api/assignments/${assignId}/submissions?async=1`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              student_id: STATE.student.id,
-              content_text: code,
-              github_url: git,
-              generate_review: true,
-              async: true,
-            }),
-          });
-        }
+  socket.on("lecture:summary_ready", () => loadStudyHub());
+  socket.on("assignment:created", (payload) => {
+    if (!ACTIVE_SESSION || Number(payload?.course_id) !== Number(ACTIVE_SESSION.course_id)) return;
+    const isNew = payload?.id && !KNOWN_ASSIGNMENT_IDS.has(payload.id);
+    if (payload?.id) KNOWN_ASSIGNMENT_IDS.add(payload.id);
+    loadAssignmentsOnly();
+    if (isNew || activeViewId !== "view-study") {
+      notifyNewAssignment(payload?.title || "New Homework");
+    }
+  });
+  socket.on("assignment:review_ready", (payload) => {
+    if (!payload) return;
+    if (STATE.student && Number(payload.student_id) !== Number(STATE.student.id)) return;
+    const aid = Number(payload.assignment_id);
+    PENDING_REVIEWS.delete(aid);
+    loadAssignmentsOnly();
+  });
+  socket.on("assignment:review_error", (payload) => {
+    if (!payload) return;
+    if (STATE.student && Number(payload.student_id) !== Number(STATE.student.id)) return;
+    const aid = Number(payload.assignment_id);
+    PENDING_REVIEWS.delete(aid);
+    setHomeworkStatus(aid, `AI review failed: ${payload.error || "Unknown error"}`, "error");
+  });
+  socket.on("assignment:cohort_updated", (payload) => {
+    if (!ACTIVE_SESSION || Number(payload?.course_id) !== Number(ACTIVE_SESSION.course_id)) return;
+    loadAssignmentsOnly();
+  });
 
-        const rawText = await res.text();
-        let data = {};
-        try {
-          data = rawText ? JSON.parse(rawText) : {};
-        } catch (_parseErr) {
-          data = { error: `Server returned HTTP ${res.status}` };
-        }
+  (function initStudentApp() {
+    renderCourses();
+    const targetCode = {{ initial_session_code | tojson }};
+    if (FROM_QR_ROUTE && window.history && window.history.replaceState) {
+      const nextUrl = targetCode ? `/student?session=${encodeURIComponent(targetCode)}` : "/student";
+      window.history.replaceState(null, "", nextUrl);
+    }
+    const myCourses = STATE.my_courses || [];
+    const searchPool = myCourses.length > 0 ? myCourses : (STATE.all_courses || []);
+    const allCourses = STATE.all_courses || [];
 
-        if (!res.ok) {
-          setHomeworkStatus(assignId, data.error || `Homework submission failed (HTTP ${res.status}).`, "error");
+    for (const c of allCourses) {
+      for (const s of (c.sessions || [])) {
+        if (targetCode && s.session_code === targetCode) {
+          selectSession(s, c);
           return;
         }
-
-        if (codeEl) codeEl.value = "";
-        if (gitEl) gitEl.value = "";
-        if (fileEl) fileEl.value = "";
-
-        if (res.status === 202 || data.status === "PENDING") {
-          PENDING_REVIEWS.add(assignId);
-          setHomeworkStatus(
-            assignId,
-            "Submitted! AI grading & cohort comparison in progress...",
-            "pending"
-          );
-          setTimeout(loadAssignmentsOnly, 2000);
-        } else {
-          PENDING_REVIEWS.delete(assignId);
-          setHomeworkStatus(assignId, "Review complete!", "success");
-          await loadAssignmentsOnly();
-        }
-      } catch (err) {
-        setHomeworkStatus(
-          assignId,
-          `Network error while submitting: ${err && err.message ? err.message : "Request failed"}`,
-          "error"
-        );
-      } finally {
-        SUBMITTING_ASSIGNMENTS.delete(assignId);
-        const latestBtn = document.getElementById(`hw-btn-${assignId}`);
-        if (latestBtn) {
-          latestBtn.disabled = false;
-          latestBtn.textContent = "Submit & Review";
-        }
       }
     }
+    if (searchPool.length && searchPool[0].sessions && searchPool[0].sessions.length) {
+      selectSession(searchPool[0].sessions[0], searchPool[0]);
+    }
+  })();
 
-    socket.on("lecture:summary_ready", () => loadStudyHub());
-    socket.on("assignment:created", (payload) => {
-      if (!ACTIVE_SESSION || Number(payload?.course_id) !== Number(ACTIVE_SESSION.course_id)) return;
-      const isNew = payload?.id && !KNOWN_ASSIGNMENT_IDS.has(payload.id);
-      if (payload?.id) KNOWN_ASSIGNMENT_IDS.add(payload.id);
-      loadAssignmentsOnly();
-      if (isNew || activeViewId !== "view-study") {
-        notifyNewAssignment(payload?.title || "New Homework");
-      }
-    });
-    socket.on("assignment:review_ready", (payload) => {
-      if (!payload) return;
-      if (STATE.student && Number(payload.student_id) !== Number(STATE.student.id)) return;
-      const aid = Number(payload.assignment_id);
-      PENDING_REVIEWS.delete(aid);
-      loadAssignmentsOnly();
-    });
-    socket.on("assignment:review_error", (payload) => {
-      if (!payload) return;
-      if (STATE.student && Number(payload.student_id) !== Number(STATE.student.id)) return;
-      const aid = Number(payload.assignment_id);
-      PENDING_REVIEWS.delete(aid);
-      setHomeworkStatus(aid, `AI review failed: ${payload.error || "Unknown error"}`, "error");
-    });
-    socket.on("assignment:cohort_updated", (payload) => {
-      if (!ACTIVE_SESSION || Number(payload?.course_id) !== Number(ACTIVE_SESSION.course_id)) return;
-      loadAssignmentsOnly();
-    });
-
-    // Initialize default selected session + resilient 2.5s poll sync
-    (function initStudentApp() {
-      renderCourses();
-      const targetCode = "{{ initial_session_code }}";
-      const myCourses = STATE.my_courses || [];
-      const searchPool = myCourses.length > 0 ? myCourses : (STATE.all_courses || []);
-      const allCourses = STATE.all_courses || [];
-
-      for (const c of allCourses) {
-        for (const s of (c.sessions || [])) {
-          if (targetCode && s.session_code === targetCode) {
-            selectSession(s, c);
-            return;
-          }
+  (function handleStudentDeepLink() {
+    const params = new URLSearchParams(window.location.search);
+    const targetView = params.get("view");
+    const targetMsgId = params.get("msg_id");
+    if (targetView) switchView(targetView);
+    if (targetMsgId && window.ClassPulseNotify) {
+      setTimeout(() => {
+        if (!window.ClassPulseNotify.highlightMessage(targetMsgId)) {
+          fetchLatestSessionChat().then(() => window.ClassPulseNotify.highlightMessage(targetMsgId));
         }
-      }
-      if (searchPool.length && searchPool[0].sessions && searchPool[0].sessions.length) {
-        selectSession(searchPool[0].sessions[0], searchPool[0]);
-      }
-    })();
+      }, 350);
+    }
+  })();
 
-    (function handleStudentDeepLink() {
-      const params = new URLSearchParams(window.location.search);
-      const targetView = params.get("view");
-      const targetMsgId = params.get("msg_id");
-      if (targetView) switchView(targetView);
-      if (targetMsgId && window.ClassPulseNotify) {
-        setTimeout(() => {
-          if (!window.ClassPulseNotify.highlightMessage(targetMsgId)) {
-            fetchLatestSessionChat().then(() => window.ClassPulseNotify.highlightMessage(targetMsgId));
-          }
-        }, 350);
-      }
-    })();
-
-    let hwPollCounter = 0;
-    setInterval(() => {
-      fetchLatestSessionPolls();
-      hwPollCounter += 1;
-      if (PENDING_REVIEWS.size > 0 || hwPollCounter % 4 === 0) {
-        loadAssignmentsOnly();
-      }
-    }, 2500);
-  </script>
-</body>
-</html>
+  let hwPollCounter = 0;
+  setInterval(() => {
+    fetchLatestSessionPolls();
+    hwPollCounter += 1;
+    if (PENDING_REVIEWS.size > 0 || hwPollCounter % 4 === 0) {
+      loadAssignmentsOnly();
+    }
+  }, 2500);
+</script>
+{% endblock %}
