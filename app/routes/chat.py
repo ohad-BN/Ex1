@@ -5,12 +5,32 @@ from typing import Optional
 from flask import Blueprint, Response, current_app, jsonify, redirect, render_template, request, url_for
 
 from app import socketio
-from app.models import ChatMessage, ClassSession, Student
-from app.routes.guards import require_session_access
+from app.models import ChatMessage, ClassSession, Course, Student
+from app.routes.guards import get_current_lecturer, is_lecturer_authorized_for_course, require_session_access
 from app.services.chat_service import ChatError, ChatService
 from app.services.qr_service import DeviceBindingManager
 
 chat_bp = Blueprint("chat", __name__)
+
+
+def _emit_chat_new_and_notify(
+    svc: ChatService,
+    session: ClassSession,
+    serialized: dict,
+    sender_lecturer_id: Optional[int] = None,
+) -> None:
+    """Broadcast chat:new to the lecture room and chat:notify to lecturer & course notification rooms."""
+    notify_payload = {
+        **serialized,
+        "message_id": serialized["id"],
+        "sender_lecturer_id": sender_lecturer_id,
+        "sender_student_id": serialized.get("student_id"),
+    }
+    socketio.emit("chat:new", serialized, to=f"session_{session.session_code}")
+    for lec_id in svc.get_course_lecturer_recipient_ids(session.id):
+        socketio.emit("chat:notify", notify_payload, to=f"lecturer_notify_{lec_id}")
+    if session.course_id is not None:
+        socketio.emit("chat:notify", notify_payload, to=f"course_notify_{session.course_id}")
 
 
 def _get_chat_service() -> ChatService:
@@ -40,15 +60,36 @@ def post_chat_message(session_id: int):
     svc = _get_chat_service()
     data = request.get_json(silent=True) or request.form.to_dict()
 
-    student = _resolve_student_from_cookie()
-    if student is None and data.get("student_id"):
-        student = db.get(Student, int(data["student_id"]))
+    session = db.get(ClassSession, session_id)
+    if session is None:
+        return jsonify({"error": "Session not found."}), 404
 
-    author_name = (
-        student.full_name
-        if student is not None
-        else str(data.get("author_name", "Student")).strip()
-    )
+    lecturer = get_current_lecturer()
+    course = db.get(Course, session.course_id) if session.course_id else None
+    as_lecturer = str(data.get("as_lecturer", "")).lower() in ("1", "true", "yes")
+    sender_lecturer_id: Optional[int] = None
+    student: Optional[Student] = None
+
+    if lecturer is not None and (
+        as_lecturer
+        or (
+            _resolve_student_from_cookie() is None
+            and data.get("student_id") is None
+            and (course is None or course.lecturer_id is None or is_lecturer_authorized_for_course(db, course, lecturer.id))
+        )
+    ):
+        author_name = lecturer.full_name
+        sender_lecturer_id = lecturer.id
+    else:
+        student = _resolve_student_from_cookie()
+        if student is None and data.get("student_id"):
+            student = db.get(Student, int(data["student_id"]))
+        author_name = (
+            student.full_name
+            if student is not None
+            else str(data.get("author_name", "Student")).strip()
+        )
+
     category = str(data.get("category", "Question")).strip()
     body = str(data.get("body", "")).strip()
 
@@ -64,9 +105,11 @@ def post_chat_message(session_id: int):
         return jsonify({"error": exc.message}), exc.status_code
 
     serialized = svc.serialize_message(msg)
-    session = db.get(ClassSession, session_id)
-    if session is not None:
-        socketio.emit("chat:new", serialized, to=f"session_{session.session_code}")
+    if sender_lecturer_id is not None:
+        serialized["sender_role"] = "lecturer"
+    _emit_chat_new_and_notify(
+        svc, session, serialized, sender_lecturer_id=sender_lecturer_id
+    )
 
     return jsonify(serialized), 201
 

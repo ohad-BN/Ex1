@@ -76,7 +76,24 @@ def handle_socket_chat_send(data: dict[str, Any] | None) -> None:
         return
 
     serialized = svc.serialize_message(msg)
+    sender_lec_id = None
+    if lecturer is not None and (
+        course is None or course.lecturer_id is None or is_lecturer_authorized_for_course(db, course, lecturer.id)
+    ):
+        serialized["sender_role"] = "lecturer"
+        sender_lec_id = lecturer.id
+
+    notify_payload = {
+        **serialized,
+        "message_id": serialized["id"],
+        "sender_lecturer_id": sender_lec_id,
+        "sender_student_id": serialized.get("student_id"),
+    }
     socketio.emit("chat:new", serialized, to=f"session_{session.session_code}")
+    for lec_id in svc.get_course_lecturer_recipient_ids(session.id):
+        socketio.emit("chat:notify", notify_payload, to=f"lecturer_notify_{lec_id}")
+    if session.course_id is not None:
+        socketio.emit("chat:notify", notify_payload, to=f"course_notify_{session.course_id}")
 
 
 @socketio.on("chat:upvote")

@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
   <title>ClassPulse — Student Classroom App</title>
   <script src="/static/js/csrf.js"></script>
+  <script src="/static/js/notifications.js"></script>
   <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
   <style>
     :root {
@@ -396,6 +397,7 @@
         <span>&#127891; Courses &amp; Logs</span>
       </button>
       <button id="tab-btn-study" class="mode-tab" onclick="switchView('view-study', this)">
+        <span id="study-new-dot" class="live-dot" style="display:none;"></span>
         <span>&#129302; AI Study Hub</span>
       </button>
     </div>
@@ -482,12 +484,57 @@
     let CURRENT_POLL = null;
     let MY_VOTE = null;
     let CHAT_MESSAGES = [];
+    const KNOWN_ASSIGNMENT_IDS = new Set();
+    const PENDING_REVIEWS = new Set();
+    const SUBMITTING_ASSIGNMENTS = new Set();
+    const LAST_CLASS_SCORES = {};
+    const CLASS_SCORE_DELTAS = {};
+    let HW_INITIALIZED_COURSE_ID = null;
     const OPT_COLORS = ["#38bdf8", "#a855f7", "#f59e0b", "#22c55e", "#ec4899", "#14b8a6"];
     const LETTERS = ["A", "B", "C", "D", "E", "F", "G", "H"];
 
     const socket = io({ transports: ["websocket", "polling"] });
+    let activeViewId = "view-live";
+
+    if (window.ClassPulseNotify) {
+      window.ClassPulseNotify.init({
+        role: "student",
+        baseTitle: document.title,
+        currentStudentId: STATE.student ? STATE.student.id : null,
+        isChatVisibleFn: (payload) =>
+          activeViewId === "view-live" && (!payload || !ACTIVE_SESSION || payload.session_code === ACTIVE_SESSION.session_code),
+        onOpenMessage: (payload) => {
+          const msgId = payload.message_id || payload.id;
+          const allCourses = STATE.all_courses || [];
+          let matchedCourse = null;
+          let matchedSession = null;
+          for (const c of allCourses) {
+            for (const s of (c.sessions || [])) {
+              if (s.session_code === payload.session_code) {
+                matchedCourse = c;
+                matchedSession = s;
+                break;
+              }
+            }
+            if (matchedSession) break;
+          }
+          if (matchedSession && matchedCourse) {
+            selectSession(matchedSession, matchedCourse);
+            switchView("view-live");
+            setTimeout(() => {
+              if (!window.ClassPulseNotify.highlightMessage(msgId)) {
+                fetchLatestSessionChat().then(() => window.ClassPulseNotify.highlightMessage(msgId));
+              }
+            }, 250);
+          } else {
+            window.location.href = `/student?session=${encodeURIComponent(payload.session_code)}&view=view-live&msg_id=${encodeURIComponent(msgId)}`;
+          }
+        },
+      });
+    }
 
     function switchView(viewId, btnEl) {
+      activeViewId = viewId;
       document.querySelectorAll(".view-pane").forEach(el => el.classList.remove("active"));
       document.querySelectorAll(".mode-tab").forEach(el => el.classList.remove("active"));
       document.getElementById(viewId).classList.add("active");
@@ -502,7 +549,17 @@
         const fallbackBtn = document.getElementById(map[viewId] || "tab-btn-live");
         if (fallbackBtn) fallbackBtn.classList.add("active");
       }
-      if (viewId === "view-study") loadStudyHub();
+      if (viewId === "view-live" && window.ClassPulseNotify) window.ClassPulseNotify.clearUnread();
+      if (viewId === "view-study") {
+        const dot = document.getElementById("study-new-dot");
+        if (dot) {
+          dot.classList.remove("hot");
+          dot.style.display = "none";
+        }
+        const banner = document.getElementById("study-toast-banner");
+        if (banner) banner.remove();
+        loadStudyHub(true);
+      }
     }
 
     async function signInStudent() {
@@ -539,6 +596,15 @@
     }
 
     function selectSession(sessionObj, courseObj) {
+      if (ACTIVE_SESSION && ACTIVE_SESSION.session_code && ACTIVE_SESSION.session_code !== sessionObj.session_code) {
+        socket.emit("leave_session", { session_code: ACTIVE_SESSION.session_code });
+      }
+      CHAT_MESSAGES = [];
+      KNOWN_ASSIGNMENT_IDS.clear();
+      PENDING_REVIEWS.clear();
+      HW_INITIALIZED_COURSE_ID = null;
+      for (const k of Object.keys(LAST_CLASS_SCORES)) delete LAST_CLASS_SCORES[k];
+      for (const k of Object.keys(CLASS_SCORE_DELTAS)) delete CLASS_SCORE_DELTAS[k];
       ACTIVE_SESSION = {
         ...sessionObj,
         course_id: courseObj.id,
@@ -561,8 +627,10 @@
       socket.emit("join_session", {
         session_code: sessionObj.session_code,
         student_id: STATE.student ? STATE.student.id : null,
+        as_student: true,
       });
       fetchLatestSessionPolls();
+      fetchLatestSessionChat();
       loadStudyHub();
       renderCourses();
     }
@@ -764,21 +832,32 @@
       }
       const sorted = [...CHAT_MESSAGES].sort((a, b) => (b.is_pinned - a.is_pinned) || (b.id - a.id));
       feed.innerHTML = sorted.map(m => `
-        <div class="chat-item ${m.is_pinned ? 'pinned' : ''}">
+        <div class="chat-item ${m.is_pinned ? 'pinned' : ''}" data-msg-id="${m.id}">
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:3px;">
             <div>
-              <span class="pill">[${m.offset_mmss}]</span>
-              <strong style="margin-left:5px;">${m.author_name}</strong>
-              <span style="font-size:11px; color:var(--muted); margin-left:4px;">${m.category}</span>
+              <span class="pill">[${escapeHtml(m.offset_mmss)}]</span>
+              <strong style="margin-left:5px;">${escapeHtml(m.author_name)}</strong>
+              <span style="font-size:11px; color:var(--muted); margin-left:4px;">${escapeHtml(m.category)}</span>
               ${m.is_pinned ? '<span style="color:var(--amber); font-size:11px; font-weight:700; margin-left:5px;">&#128204; Pinned</span>' : ''}
             </div>
             <button class="upvote-pill" onclick="upvoteStudentChat(${m.id})">
               &#9650; ${m.upvotes}
             </button>
           </div>
-          <div style="color:#e2e8f0; line-height:1.35;">${m.body}</div>
+          <div style="color:#e2e8f0; line-height:1.35;">${escapeHtml(m.body)}</div>
         </div>
       `).join("");
+    }
+
+    async function fetchLatestSessionChat() {
+      if (!ACTIVE_SESSION || !ACTIVE_SESSION.id) return;
+      try {
+        const res = await fetch(`/api/sessions/${ACTIVE_SESSION.id}/chat?_ts=${Date.now()}`, { cache: "no-store" });
+        if (!res.ok) return;
+        const data = await res.json();
+        CHAT_MESSAGES = data.messages || [];
+        renderStudentChat();
+      } catch (_err) {}
     }
 
     async function sendStudentChat() {
@@ -788,16 +867,28 @@
       const body = bodyEl.value.trim();
       if (!body) return;
       bodyEl.value = "";
-      await fetch(`/api/sessions/${ACTIVE_SESSION.id}/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          student_id: STATE.student ? STATE.student.id : null,
-          author_name: STATE.student ? STATE.student.full_name : "Student",
-          category: catEl.value,
-          body,
-        }),
-      });
+      try {
+        const res = await fetch(`/api/sessions/${ACTIVE_SESSION.id}/chat`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            student_id: STATE.student ? STATE.student.id : null,
+            author_name: STATE.student ? STATE.student.full_name : "Student",
+            category: catEl.value,
+            body,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          bodyEl.value = body;
+          return alert(data.error || "Could not send message.");
+        }
+        if (!CHAT_MESSAGES.find(x => x.id === data.id)) CHAT_MESSAGES.push(data);
+        renderStudentChat();
+      } catch (_err) {
+        bodyEl.value = body;
+        alert("Network error while sending message.");
+      }
     }
 
     async function upvoteStudentChat(msgId) {
@@ -805,10 +896,12 @@
     }
 
     socket.on("connect", () => {
+      socket.emit("join_notifications", {});
       if (ACTIVE_SESSION) {
         socket.emit("join_session", {
           session_code: ACTIVE_SESSION.session_code,
           student_id: STATE.student ? STATE.student.id : null,
+          as_student: true,
         });
       }
     });
@@ -847,8 +940,14 @@
       renderStudentChat();
     });
     socket.on("chat:new", (m) => {
+      if (ACTIVE_SESSION && m.session_code && m.session_code !== ACTIVE_SESSION.session_code) return;
       if (!CHAT_MESSAGES.find(x => x.id === m.id)) CHAT_MESSAGES.push(m);
       renderStudentChat();
+    });
+    socket.on("chat:notify", (payload) => {
+      if (window.ClassPulseNotify) {
+        window.ClassPulseNotify.pushChatNotification(payload);
+      }
     });
     socket.on("chat:updated", (m) => {
       const idx = CHAT_MESSAGES.findIndex(x => x.id === m.id);
@@ -863,22 +962,87 @@
         .replace(/>/g, "&gt;");
     }
 
-    async function loadStudyHub() {
+    function focusStudentSignIn() {
+      const card = document.getElementById("login-card");
+      if (card) {
+        card.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+      const nameInput = document.getElementById("login-name");
+      if (nameInput) nameInput.focus();
+    }
+
+    function notifyNewAssignment(title) {
+      if (activeViewId === "view-study") return;
+      const dot = document.getElementById("study-new-dot");
+      if (dot) {
+        dot.style.display = "inline-block";
+        dot.classList.add("hot");
+      }
+      const existing = document.getElementById("study-toast-banner");
+      if (existing) existing.remove();
+      const tabsEl = document.querySelector(".mode-tabs");
+      if (!tabsEl || !tabsEl.parentNode) return;
+      const banner = document.createElement("div");
+      banner.id = "study-toast-banner";
+      banner.style.cssText =
+        "background:rgba(56,189,248,0.16); border:1px solid rgba(56,189,248,0.45); color:#e2e8f0; border-radius:10px; padding:9px 12px; display:flex; justify-content:space-between; align-items:center; gap:8px; cursor:pointer; font-size:12px;";
+      banner.innerHTML = `
+        <span>&#128221; <strong>New Assignment Posted:</strong> ${escapeHtml(title || "Homework")}</span>
+        <span class="pill">Open Study Hub &rarr;</span>
+      `;
+      banner.onclick = () => switchView("view-study");
+      tabsEl.parentNode.insertBefore(banner, tabsEl.nextSibling);
+    }
+
+    async function loadAssignmentsOnly() {
       if (!ACTIVE_SESSION || !ACTIVE_SESSION.course_id) return;
       const cid = ACTIVE_SESSION.course_id;
       const stQuery = STATE.student && STATE.student.id ? `?student_id=${STATE.student.id}&_ts=${Date.now()}` : `?_ts=${Date.now()}`;
       try {
-        const [lecRes, hwRes] = await Promise.all([
+        const hwRes = await fetch(`/api/courses/${cid}/assignments${stQuery}`, { cache: "no-store" });
+        if (!hwRes.ok) return;
+        const hwData = await hwRes.json();
+        const assignments = hwData.assignments || [];
+        const isFirstLoad = HW_INITIALIZED_COURSE_ID !== cid;
+        let newlyDiscoveredTitle = null;
+        for (const a of assignments) {
+          if (!KNOWN_ASSIGNMENT_IDS.has(a.id)) {
+            if (!isFirstLoad) newlyDiscoveredTitle = a.title;
+            KNOWN_ASSIGNMENT_IDS.add(a.id);
+          }
+          if (a.my_submission && PENDING_REVIEWS.has(a.id)) {
+            PENDING_REVIEWS.delete(a.id);
+          }
+          const standing = a.my_submission && a.my_submission.class_standing;
+          if (standing && typeof standing.class_score === "number") {
+            const prev = LAST_CLASS_SCORES[a.id];
+            if (typeof prev === "number" && prev !== standing.class_score) {
+              CLASS_SCORE_DELTAS[a.id] = { from: prev, to: standing.class_score };
+            }
+            LAST_CLASS_SCORES[a.id] = standing.class_score;
+          }
+        }
+        HW_INITIALIZED_COURSE_ID = cid;
+        renderStudyAssignments(assignments);
+        if (newlyDiscoveredTitle) {
+          notifyNewAssignment(newlyDiscoveredTitle);
+        }
+      } catch (err) {
+        console.error("loadAssignmentsOnly error:", err);
+      }
+    }
+
+    async function loadStudyHub() {
+      if (!ACTIVE_SESSION || !ACTIVE_SESSION.course_id) return;
+      const cid = ACTIVE_SESSION.course_id;
+      try {
+        const [lecRes] = await Promise.all([
           fetch(`/api/courses/${cid}/lectures?_ts=${Date.now()}`, { cache: "no-store" }),
-          fetch(`/api/courses/${cid}/assignments${stQuery}`, { cache: "no-store" }),
+          loadAssignmentsOnly(),
         ]);
         if (lecRes.ok) {
           const lecData = await lecRes.json();
           renderStudyLectures(lecData.artifacts || []);
-        }
-        if (hwRes.ok) {
-          const hwData = await hwRes.json();
-          renderStudyAssignments(hwData.assignments || []);
         }
       } catch (err) {
         console.error("loadStudyHub error:", err);
@@ -916,6 +1080,226 @@
       }).join("");
     }
 
+    function getAssignmentCardSignature(a) {
+      const stats = a.cohort_stats || {};
+      const sub = a.my_submission;
+      const standingSig = sub && sub.class_standing
+        ? `${sub.class_standing.class_score}:${sub.class_standing.rank}:${sub.class_standing.cohort_size}`
+        : "0";
+      const deltaSig = CLASS_SCORE_DELTAS[a.id] ? `${CLASS_SCORE_DELTAS[a.id].from}->${CLASS_SCORE_DELTAS[a.id].to}` : "";
+      const subSig = sub
+        ? `${sub.version}:${sub.submitted_at || ""}:${(sub.deep_review_md || "").length}:${standingSig}:${deltaSig}`
+        : "none";
+      const pendingSig = PENDING_REVIEWS.has(a.id) ? "pending" : "idle";
+      return `${a.id}|${stats.submission_count || 0}|${stats.mean_overall_score || 0}|${subSig}|${pendingSig}|${STATE.student ? STATE.student.id : "guest"}`;
+    }
+
+    function renderTelemetryPills(telemetry) {
+      if (!telemetry) return "";
+      const labels = [
+        ["line_count", "Lines"],
+        ["structure_count", "Classes/Funcs"],
+        ["assertion_count", "Assertions"],
+        ["doc_signals", "Docs/Comments"],
+      ];
+      const items = labels
+        .filter(([k]) => telemetry[k] !== undefined)
+        .map(([k, lbl]) => {
+          const item = telemetry[k];
+          return `<span class="pill" style="background:rgba(148,163,184,0.12); color:#cbd5e1; border:1px solid rgba(148,163,184,0.25);">${lbl}: <strong>${item.mine}</strong> <span style="color:var(--muted);">(Class Avg ${item.cohort_avg})</span></span>`;
+        });
+      if (!items.length) return "";
+      return `<div style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px;">${items.join("")}</div>`;
+    }
+
+    function renderCategoryBreakdownHtml(categories) {
+      if (!Array.isArray(categories) || !categories.length) return "";
+      const rows = categories.map(c => {
+        const score = Number(c.ai_rubric_score || 0);
+        const avg = Number(c.cohort_mean || 0);
+        const best = Number(c.cohort_best || 0);
+        const clsScore = c.class_score || 10;
+        const barColor = clsScore >= 8 ? "#22c55e" : (clsScore >= 5 ? "#a855f7" : "#f59e0b");
+        return `
+          <div style="background:#0f172a; border:1px solid #1e293b; border-radius:8px; padding:8px 10px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:6px; margin-bottom:4px;">
+              <div>
+                <strong style="font-size:12px; color:#f8fafc;">${escapeHtml(c.label)}</strong>
+                <div style="font-size:10px; color:var(--muted);">${escapeHtml(c.note || c.description || "")}</div>
+              </div>
+              <span class="pill" style="background:rgba(168,85,247,0.18); color:#d8b4fe; border:1px solid rgba(168,85,247,0.4); white-space:nowrap;">
+                ${clsScore}/10 Class (#${c.rank}/${c.cohort_size})
+              </span>
+            </div>
+            <div style="position:relative; height:7px; background:#1e293b; border-radius:999px; overflow:hidden; margin-bottom:4px;">
+              <div style="position:absolute; top:0; bottom:0; width:${Math.min(100, Math.max(0, best))}%; background:rgba(148,163,184,0.22);"></div>
+              <div style="position:absolute; top:0; bottom:0; width:${Math.min(100, Math.max(0, score))}%; background:${barColor}; border-radius:999px;"></div>
+              <div title="Class Average" style="position:absolute; top:0; bottom:0; left:${Math.min(99, Math.max(0, avg))}%; width:2px; background:#f8fafc;"></div>
+            </div>
+            <div style="display:flex; justify-content:space-between; font-size:10px; color:var(--muted);">
+              <span>Your Rubric: <strong style="color:#e2e8f0;">${score}/100</strong></span>
+              <span>Class Avg: <strong>${avg}</strong> &bull; Class Best: <strong>${best}</strong></span>
+            </div>
+          </div>
+        `;
+      }).join("");
+      return `
+        <div style="margin-bottom:10px;">
+          <div style="font-size:10px; font-weight:800; color:#cbd5e1; text-transform:uppercase; letter-spacing:0.04em; margin-bottom:6px;">
+            Category Comparison vs. Classmates (Zero Peer PII)
+          </div>
+          <div style="display:grid; gap:6px;">${rows}</div>
+        </div>
+      `;
+    }
+
+    function renderSimpleReviewHtml(md) {
+      const safe = escapeHtml(md || "No review generated yet.");
+      const formatInline = (s) =>
+        s
+          .replace(/\*\*(.+?)\*\*/g, '<strong style="color:#f8fafc;">$1</strong>')
+          .replace(/`([^`]+)`/g, '<code style="background:#1e293b; color:#bae6fd; padding:1px 5px; border-radius:4px; font-size:11px;">$1</code>');
+
+      const lines = safe.split(/\r?\n/);
+      let html = "";
+      let inList = false;
+      for (const rawLine of lines) {
+        const line = rawLine.trim();
+        if (!line) {
+          if (inList) {
+            html += "</ul>";
+            inList = false;
+          }
+          continue;
+        }
+        if (line.startsWith("### ") || line.startsWith("## ")) {
+          if (inList) {
+            html += "</ul>";
+            inList = false;
+          }
+          const headingText = line.replace(/^#{2,3}\s+/, "");
+          html += `<div style="font-size:11px; font-weight:800; color:var(--accent); text-transform:uppercase; letter-spacing:0.04em; margin:8px 0 4px;">${formatInline(headingText)}</div>`;
+        } else if (line.startsWith("- ") || line.startsWith("* ")) {
+          if (!inList) {
+            html += '<ul style="margin:0 0 6px 16px; padding:0;">';
+            inList = true;
+          }
+          html += `<li style="margin:2px 0; color:#e2e8f0;">${formatInline(line.slice(2))}</li>`;
+        } else {
+          if (inList) {
+            html += "</ul>";
+            inList = false;
+          }
+          html += `<p style="margin:3px 0; color:#cbd5e1;">${formatInline(line)}</p>`;
+        }
+      }
+      if (inList) html += "</ul>";
+      return html;
+    }
+
+    function buildAssignmentCardElement(a) {
+      const stats = a.cohort_stats || {};
+      const sub = a.my_submission;
+      const myScore = sub
+        ? (sub.ai_rubric_grade !== undefined ? sub.ai_rubric_grade : (sub.metrics ? sub.metrics.overall_score : null))
+        : null;
+      const standing = sub ? sub.class_standing : null;
+      const deltaInfo = CLASS_SCORE_DELTAS[a.id];
+      const isPending = PENDING_REVIEWS.has(a.id);
+      const isSubmitting = SUBMITTING_ASSIGNMENTS.has(a.id);
+
+      const wrapper = document.createElement("div");
+      wrapper.dataset.hwCard = String(a.id);
+      wrapper.dataset.hwSig = getAssignmentCardSignature(a);
+      wrapper.style.cssText = "background:#0f172a; border:1px solid var(--border); border-radius:10px; padding:12px; margin-bottom:10px;";
+      wrapper.innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:6px; flex-wrap:wrap; margin-bottom:6px;">
+          <strong style="font-size:14px; color:#f8fafc;">${escapeHtml(a.title)}</strong>
+          <div style="display:flex; gap:5px; flex-wrap:wrap;">
+            ${myScore !== null
+              ? `<span class="pill green" title="Fixed criterion score against the rubric">Rubric: ${myScore}/100</span>`
+              : `<span class="pill amber">Class Avg: ${stats.mean_overall_score || 0} (${stats.submission_count || 0} subs)</span>`}
+            ${standing
+              ? `<span class="pill" style="background:rgba(168,85,247,0.18); color:#d8b4fe; border:1px solid rgba(168,85,247,0.4);" title="Dynamic peer score relative ONLY to classmates">Class: ${standing.class_score}/10 (#${standing.rank}/${standing.cohort_size})</span>`
+              : ''}
+          </div>
+        </div>
+        <div style="font-size:11px; color:var(--muted); margin-bottom:8px;">${escapeHtml(a.rubric_text)}</div>
+
+        ${sub ? `
+          <div style="background:#151f32; border:1px solid rgba(56,189,248,0.3); border-radius:9px; padding:10px; margin-bottom:8px;">
+            <div style="font-size:11px; font-weight:700; color:var(--accent); margin-bottom:8px;">MY HOMEWORK EVALUATION (v${sub.version})</div>
+
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:10px;">
+              <div style="background:rgba(34,197,94,0.08); border:1px solid rgba(34,197,94,0.35); border-radius:8px; padding:8px 10px;">
+                <div style="font-size:10px; font-weight:800; color:#4ade80; text-transform:uppercase;">AI Rubric Grade</div>
+                <div style="font-size:20px; font-weight:800; color:#f8fafc; margin:2px 0;">${myScore}<span style="font-size:12px; color:var(--muted);">/100</span></div>
+                <div style="font-size:10px; color:#cbd5e1; line-height:1.3;">Fixed quality grade against the rubric (does not change when classmates submit).</div>
+              </div>
+              <div style="background:rgba(168,85,247,0.1); border:1px solid rgba(168,85,247,0.4); border-radius:8px; padding:8px 10px;">
+                <div style="font-size:10px; font-weight:800; color:#d8b4fe; text-transform:uppercase;">Class Standing Score</div>
+                <div style="font-size:20px; font-weight:800; color:#f8fafc; margin:2px 0;">${standing ? standing.class_score : 10}<span style="font-size:12px; color:var(--muted);">/10</span></div>
+                <div style="font-size:10px; color:#cbd5e1; line-height:1.3;">
+                  Peer rank <strong>#${standing ? standing.rank : 1} of ${standing ? standing.cohort_size : 1}</strong> — based ONLY on classmates (updates dynamically).
+                </div>
+              </div>
+            </div>
+
+            ${deltaInfo ? `
+              <div style="background:rgba(56,189,248,0.12); border:1px solid rgba(56,189,248,0.35); border-radius:7px; padding:6px 8px; margin-bottom:8px; font-size:11px; color:#bae6fd;">
+                <strong>Live Cohort Update:</strong> New peer submission adjusted your Class Standing (<strong>${deltaInfo.from}/10 &rarr; ${deltaInfo.to}/10</strong>), while your AI Rubric Grade stayed <strong>${myScore}/100</strong>.
+              </div>
+            ` : ''}
+
+            ${renderCategoryBreakdownHtml(sub.category_breakdown)}
+            ${renderTelemetryPills(sub.telemetry_comparison)}
+
+            <div style="background:#0f172a; border:1px solid #1e293b; border-radius:8px; padding:10px 12px; font-size:12px; line-height:1.48; color:#e2e8f0;">
+              ${renderSimpleReviewHtml(sub.deep_review_md)}
+            </div>
+          </div>
+        ` : ''}
+
+        ${!STATE.student ? `
+          <div style="background:rgba(245,158,11,0.12); border:1px solid rgba(245,158,11,0.35); border-radius:8px; padding:8px 10px; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center; gap:8px;">
+            <span style="font-size:11px; color:#fde68a;">Sign in above with your Name &amp; Email to submit homework.</span>
+            <button type="button" class="upvote-pill" onclick="focusStudentSignIn()">Sign In Above</button>
+          </div>
+        ` : ''}
+
+        <details ${sub ? '' : 'open'}>
+          <summary style="cursor:pointer; font-size:12px; color:var(--accent); font-weight:700; margin-bottom:6px;">
+            ${sub ? 'Resubmit Improved Version' : 'Submit Solution for Instant AI Review'}
+          </summary>
+          <textarea id="hw-code-${a.id}" rows="4" placeholder="Paste your code/solution or notes..." style="width:100%; background:#151f32; color:#f8fafc; border:1px solid var(--border); border-radius:8px; padding:8px; font-family:monospace; font-size:12px; margin-bottom:6px;"></textarea>
+          <div style="display:grid; grid-template-columns: 1fr auto; gap:6px; margin-bottom:6px;">
+            <input type="text" id="hw-git-${a.id}" placeholder="Or GitHub URL (optional)" />
+            <button id="hw-btn-${a.id}" type="button" class="primary-btn" onclick="submitStudentHomework(${a.id})" ${isSubmitting ? 'disabled' : ''}>
+              ${isSubmitting ? 'Submitting...' : 'Submit &amp; Review'}
+            </button>
+          </div>
+          <input type="file" id="hw-file-${a.id}" style="font-size:11px; color:var(--muted);" />
+          <div id="hw-status-${a.id}" style="margin-top:6px; font-size:11px; min-height:14px; color:${isPending ? 'var(--accent)' : 'var(--muted)'};">
+            ${isPending ? '&#9203; Submitted! AI grading &amp; cohort comparison in progress...' : ''}
+          </div>
+        </details>
+      `;
+      return wrapper;
+    }
+
+    function setHomeworkStatus(assignId, message, kind = "info") {
+      const el = document.getElementById(`hw-status-${assignId}`);
+      if (!el) return;
+      const colorMap = {
+        info: "#94a3b8",
+        pending: "#38bdf8",
+        success: "#4ade80",
+        error: "#f87171",
+      };
+      el.style.color = colorMap[kind] || "#94a3b8";
+      el.textContent = message || "";
+    }
+
     function renderStudyAssignments(assignments) {
       const el = document.getElementById("student-assignments-list");
       if (!el) return;
@@ -923,73 +1307,190 @@
         el.innerHTML = `<div style="color:var(--muted); padding:8px 0;">No assignments posted yet for this course.</div>`;
         return;
       }
-      el.innerHTML = assignments.map(a => {
-        const stats = a.cohort_stats || {};
-        const sub = a.my_submission;
-        const myScore = sub && sub.metrics ? sub.metrics.overall_score : null;
-        const myPct = sub && sub.cohort_snapshot ? sub.cohort_snapshot.student_percentile : null;
-        return `
-          <div style="background:#0f172a; border:1px solid var(--border); border-radius:10px; padding:12px; margin-bottom:10px;">
-            <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:6px;">
-              <strong style="font-size:14px; color:#f8fafc;">${escapeHtml(a.title)}</strong>
-              ${myScore !== null
-                ? `<span class="pill green">Score: ${myScore}/100 &bull; ${myPct}th pct</span>`
-                : `<span class="pill amber">Cohort Avg: ${stats.mean_overall_score || 0} (${stats.submission_count || 0} subs)</span>`}
-            </div>
-            <div style="font-size:11px; color:var(--muted); margin-bottom:8px;">${escapeHtml(a.rubric_text)}</div>
 
-            ${sub ? `
-              <div style="background:#151f32; border:1px solid rgba(56,189,248,0.3); border-radius:9px; padding:10px; margin-bottom:8px;">
-                <div style="font-size:11px; font-weight:700; color:var(--accent); margin-bottom:4px;">MY COMPARATIVE AI REVIEW (v${sub.version})</div>
-                <pre style="white-space:pre-wrap; font-family:inherit; font-size:12px; line-height:1.45; color:#e2e8f0; margin:0;">${escapeHtml(sub.deep_review_md)}</pre>
-              </div>
-            ` : ''}
+      const emptyStateOnly = el.children.length === 1 && !el.firstElementChild.dataset.hwCard;
+      if (emptyStateOnly) el.innerHTML = "";
 
-            <details ${sub ? '' : 'open'}>
-              <summary style="cursor:pointer; font-size:12px; color:var(--accent); font-weight:700; margin-bottom:6px;">
-                ${sub ? 'Resubmit Improved Version' : 'Submit Solution for Instant AI Review'}
-              </summary>
-              <textarea id="hw-code-${a.id}" rows="4" placeholder="Paste your code/solution or notes..." style="width:100%; background:#151f32; color:#f8fafc; border:1px solid var(--border); border-radius:8px; padding:8px; font-family:monospace; font-size:12px; margin-bottom:6px;"></textarea>
-              <div style="display:grid; grid-template-columns: 1fr auto; gap:6px; margin-bottom:6px;">
-                <input type="text" id="hw-git-${a.id}" placeholder="Or GitHub URL (optional)" />
-                <button class="primary-btn" onclick="submitStudentHomework(${a.id})">Submit &amp; Review</button>
-              </div>
-              <input type="file" id="hw-file-${a.id}" style="font-size:11px; color:var(--muted);" />
-            </details>
-          </div>
-        `;
-      }).join("");
+      const existingMap = new Map();
+      for (const child of Array.from(el.children)) {
+        if (child.dataset && child.dataset.hwCard) {
+          existingMap.set(Number(child.dataset.hwCard), child);
+        } else {
+          child.remove();
+        }
+      }
+
+      const nextIds = new Set(assignments.map(a => Number(a.id)));
+      for (const [id, node] of existingMap.entries()) {
+        if (!nextIds.has(id)) {
+          node.remove();
+          existingMap.delete(id);
+        }
+      }
+
+      assignments.forEach((a, idx) => {
+        const id = Number(a.id);
+        const existingNode = existingMap.get(id);
+        const newSig = getAssignmentCardSignature(a);
+        let targetNode = existingNode;
+
+        if (!existingNode || existingNode.dataset.hwSig !== newSig) {
+          const prevCode = existingNode?.querySelector(`#hw-code-${id}`)?.value || "";
+          const prevGit = existingNode?.querySelector(`#hw-git-${id}`)?.value || "";
+          const prevDetailsOpen = existingNode?.querySelector("details")?.open;
+          targetNode = buildAssignmentCardElement(a);
+          if (prevCode) targetNode.querySelector(`#hw-code-${id}`).value = prevCode;
+          if (prevGit) targetNode.querySelector(`#hw-git-${id}`).value = prevGit;
+          if (typeof prevDetailsOpen === "boolean") {
+            targetNode.querySelector("details").open = prevDetailsOpen;
+          }
+          if (existingNode) {
+            el.replaceChild(targetNode, existingNode);
+          }
+        }
+
+        const currentAtIdx = el.children[idx];
+        if (currentAtIdx !== targetNode) {
+          el.insertBefore(targetNode, currentAtIdx || null);
+        }
+      });
     }
 
     async function submitStudentHomework(assignId) {
-      if (!STATE.student) return alert("Sign in with Name & Email above first.");
-      const code = document.getElementById(`hw-code-${assignId}`).value.trim();
-      const git = document.getElementById(`hw-git-${assignId}`).value.trim();
-      const fileEl = document.getElementById(`hw-file-${assignId}`);
-      let res;
-      if (fileEl && fileEl.files.length > 0) {
-        const fd = new FormData();
-        fd.append("file", fileEl.files[0]);
-        fd.append("student_id", STATE.student.id);
-        res = await fetch(`/api/assignments/${assignId}/submissions`, { method: "POST", body: fd });
-      } else {
-        res = await fetch(`/api/assignments/${assignId}/submissions`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            student_id: STATE.student.id,
-            content_text: code,
-            github_url: git,
-            generate_review: true,
-          }),
-        });
+      if (!STATE.student) {
+        setHomeworkStatus(assignId, "Sign in with your Name & Email above first.", "error");
+        focusStudentSignIn();
+        return;
       }
-      const data = await res.json();
-      if (!res.ok) return alert(data.error || "Homework submission failed");
-      loadStudyHub();
+      if (SUBMITTING_ASSIGNMENTS.has(assignId)) return;
+
+      const codeEl = document.getElementById(`hw-code-${assignId}`);
+      const gitEl = document.getElementById(`hw-git-${assignId}`);
+      const fileEl = document.getElementById(`hw-file-${assignId}`);
+      const btnEl = document.getElementById(`hw-btn-${assignId}`);
+
+      const code = codeEl ? codeEl.value.trim() : "";
+      const git = gitEl ? gitEl.value.trim() : "";
+      const hasFile = Boolean(fileEl && fileEl.files && fileEl.files.length > 0);
+
+      if (!code && !git && !hasFile) {
+        setHomeworkStatus(
+          assignId,
+          "Please paste code/text, attach a file, or enter a GitHub URL before submitting.",
+          "error"
+        );
+        return;
+      }
+
+      SUBMITTING_ASSIGNMENTS.add(assignId);
+      if (btnEl) {
+        btnEl.disabled = true;
+        btnEl.textContent = "Submitting...";
+      }
+      setHomeworkStatus(assignId, "Uploading submission...", "pending");
+
+      try {
+        let res;
+        if (hasFile) {
+          const fd = new FormData();
+          fd.append("file", fileEl.files[0]);
+          fd.append("student_id", STATE.student.id);
+          fd.append("generate_review", "true");
+          fd.append("async", "true");
+          if (code) fd.append("content_text", code);
+          if (git) fd.append("github_url", git);
+          res = await fetch(`/api/assignments/${assignId}/submissions?async=1`, {
+            method: "POST",
+            body: fd,
+          });
+        } else {
+          res = await fetch(`/api/assignments/${assignId}/submissions?async=1`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              student_id: STATE.student.id,
+              content_text: code,
+              github_url: git,
+              generate_review: true,
+              async: true,
+            }),
+          });
+        }
+
+        const rawText = await res.text();
+        let data = {};
+        try {
+          data = rawText ? JSON.parse(rawText) : {};
+        } catch (_parseErr) {
+          data = { error: `Server returned HTTP ${res.status}` };
+        }
+
+        if (!res.ok) {
+          setHomeworkStatus(assignId, data.error || `Homework submission failed (HTTP ${res.status}).`, "error");
+          return;
+        }
+
+        if (codeEl) codeEl.value = "";
+        if (gitEl) gitEl.value = "";
+        if (fileEl) fileEl.value = "";
+
+        if (res.status === 202 || data.status === "PENDING") {
+          PENDING_REVIEWS.add(assignId);
+          setHomeworkStatus(
+            assignId,
+            "Submitted! AI grading & cohort comparison in progress...",
+            "pending"
+          );
+          setTimeout(loadAssignmentsOnly, 2000);
+        } else {
+          PENDING_REVIEWS.delete(assignId);
+          setHomeworkStatus(assignId, "Review complete!", "success");
+          await loadAssignmentsOnly();
+        }
+      } catch (err) {
+        setHomeworkStatus(
+          assignId,
+          `Network error while submitting: ${err && err.message ? err.message : "Request failed"}`,
+          "error"
+        );
+      } finally {
+        SUBMITTING_ASSIGNMENTS.delete(assignId);
+        const latestBtn = document.getElementById(`hw-btn-${assignId}`);
+        if (latestBtn) {
+          latestBtn.disabled = false;
+          latestBtn.textContent = "Submit & Review";
+        }
+      }
     }
 
     socket.on("lecture:summary_ready", () => loadStudyHub());
+    socket.on("assignment:created", (payload) => {
+      if (!ACTIVE_SESSION || Number(payload?.course_id) !== Number(ACTIVE_SESSION.course_id)) return;
+      const isNew = payload?.id && !KNOWN_ASSIGNMENT_IDS.has(payload.id);
+      if (payload?.id) KNOWN_ASSIGNMENT_IDS.add(payload.id);
+      loadAssignmentsOnly();
+      if (isNew || activeViewId !== "view-study") {
+        notifyNewAssignment(payload?.title || "New Homework");
+      }
+    });
+    socket.on("assignment:review_ready", (payload) => {
+      if (!payload) return;
+      if (STATE.student && Number(payload.student_id) !== Number(STATE.student.id)) return;
+      const aid = Number(payload.assignment_id);
+      PENDING_REVIEWS.delete(aid);
+      loadAssignmentsOnly();
+    });
+    socket.on("assignment:review_error", (payload) => {
+      if (!payload) return;
+      if (STATE.student && Number(payload.student_id) !== Number(STATE.student.id)) return;
+      const aid = Number(payload.assignment_id);
+      PENDING_REVIEWS.delete(aid);
+      setHomeworkStatus(aid, `AI review failed: ${payload.error || "Unknown error"}`, "error");
+    });
+    socket.on("assignment:cohort_updated", (payload) => {
+      if (!ACTIVE_SESSION || Number(payload?.course_id) !== Number(ACTIVE_SESSION.course_id)) return;
+      loadAssignmentsOnly();
+    });
 
     // Initialize default selected session + resilient 2.5s poll sync
     (function initStudentApp() {
@@ -1012,7 +1513,28 @@
       }
     })();
 
-    setInterval(fetchLatestSessionPolls, 2500);
+    (function handleStudentDeepLink() {
+      const params = new URLSearchParams(window.location.search);
+      const targetView = params.get("view");
+      const targetMsgId = params.get("msg_id");
+      if (targetView) switchView(targetView);
+      if (targetMsgId && window.ClassPulseNotify) {
+        setTimeout(() => {
+          if (!window.ClassPulseNotify.highlightMessage(targetMsgId)) {
+            fetchLatestSessionChat().then(() => window.ClassPulseNotify.highlightMessage(targetMsgId));
+          }
+        }, 350);
+      }
+    })();
+
+    let hwPollCounter = 0;
+    setInterval(() => {
+      fetchLatestSessionPolls();
+      hwPollCounter += 1;
+      if (PENDING_REVIEWS.size > 0 || hwPollCounter % 4 === 0) {
+        loadAssignmentsOnly();
+      }
+    }, 2500);
   </script>
 </body>
 </html>

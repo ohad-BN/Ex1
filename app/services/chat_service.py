@@ -5,7 +5,7 @@ from typing import Any, Optional
 
 from sqlalchemy.orm import Session
 
-from app.models import ChatMessage, ClassSession
+from app.models import ChatMessage, ClassSession, Course, CourseStaff
 
 VALID_CATEGORIES = ("Question", "Comment", "Suggestion")
 
@@ -36,11 +36,22 @@ class ChatService:
         self.db = db
 
     def serialize_message(self, msg: ChatMessage) -> dict[str, Any]:
+        session = self.db.get(ClassSession, msg.session_id)
+        course = (
+            self.db.get(Course, session.course_id)
+            if session is not None and session.course_id is not None
+            else None
+        )
         return {
             "id": msg.id,
             "session_id": msg.session_id,
+            "session_code": session.session_code if session else "",
+            "lecture_title": session.title if session else "",
+            "course_id": course.id if course else None,
+            "course_code": course.course_code if course else "",
             "student_id": msg.student_id,
             "author_name": msg.author_name,
+            "sender_role": "student" if msg.student_id is not None else "lecturer",
             "category": msg.category,
             "body": msg.body,
             "offset_seconds": msg.offset_seconds,
@@ -49,6 +60,23 @@ class ChatService:
             "is_pinned": msg.is_pinned,
             "created_at": msg.created_at.strftime("%H:%M:%S UTC"),
         }
+
+    def get_course_lecturer_recipient_ids(self, session_id: int) -> list[int]:
+        """Return primary owner + CourseStaff lecturer IDs for cross-lecture chat notifications."""
+        session = self.db.get(ClassSession, session_id)
+        if session is None or session.course_id is None:
+            return []
+        course = self.db.get(Course, session.course_id)
+        if course is None:
+            return []
+        ids: list[int] = []
+        if course.lecturer_id is not None:
+            ids.append(course.lecturer_id)
+        staff_rows = self.db.query(CourseStaff).filter_by(course_id=course.id).all()
+        for row in staff_rows:
+            if row.lecturer_id not in ids:
+                ids.append(row.lecturer_id)
+        return ids
 
     def post_message(
         self,

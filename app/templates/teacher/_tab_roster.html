@@ -1,15 +1,20 @@
-    <!-- TAB 4: Course Overview, Staff/TAs & Multi-Lecture Roster -->
+    <!-- TAB 6: Course Attendance Monitor, Staff/TAs & Roster File Import -->
     <section id="tab-course-roster" class="tab-pane">
       <div class="grid-2">
         <div style="display:flex; flex-direction:column; gap:18px;">
           <div class="card">
-            <h2>Enroll Students into {{ selected_course.course_code }}</h2>
+            <h2>Import Roster into {{ selected_course.course_code }}</h2>
             <p style="font-size:12px; color:var(--muted); margin-top:0;">
-              Student Join Code: <span class="code-pill">{{ selected_course.join_code or selected_course.course_code }}</span> &bull; Accepts CSV rows (<code>Student ID, Full Name, Email</code> or <code>Full Name, Email</code>).
+              Student Join Code: <span class="code-pill">{{ selected_course.join_code or selected_course.course_code }}</span> &bull; Upload a <code>.csv</code> or Excel (<code>.xlsx</code> / <code>.xlsm</code>) file containing columns for <code>Full Name</code> and <code>Email</code> (and optional <code>Student ID</code>).
             </p>
-            <textarea id="roster-csv-text" rows="5" placeholder="208123456, Ohad Ben Nun, ohad@ariel.ac.il&#10;208654321, Alice Cohen, alice@ariel.ac.il"></textarea>
-            <div style="margin-top:10px; display:flex; justify-content:space-between; align-items:center;">
-              <button onclick="importCourseRoster()">Import Course Roster CSV</button>
+            <div style="background:#0f172a; border:1px dashed var(--border); border-radius:10px; padding:14px; display:flex; flex-direction:column; gap:10px;">
+              <input type="file" id="roster-file-input" accept=".csv,.xlsx,.xlsm" style="font-size:12px; color:var(--text);" />
+              <div style="font-size:11px; color:var(--muted);">
+                Example columns: <code>208123456, Ohad Ben Nun, ohad@ariel.ac.il</code>
+              </div>
+            </div>
+            <div style="margin-top:10px; display:flex; justify-content:space-between; align-items:center; gap:8px;">
+              <button type="button" onclick="importCourseRoster()">Import CSV / Excel File</button>
               <span id="roster-import-msg" style="font-size:12px; color:var(--green);"></span>
             </div>
           </div>
@@ -42,7 +47,7 @@
 
         <div class="card">
           <h2>
-            <span>Enrolled Students &amp; Cumulative Course Attendance</span>
+            <span>Course Attendance Monitor &mdash; Enrolled Students</span>
             <span class="code-pill">{{ selected_course.students|length }} Students</span>
           </h2>
           <div style="max-height:420px; overflow-y:auto;">
@@ -54,7 +59,7 @@
                   <th>Email</th>
                   <th>Lectures Attended</th>
                   <th>Course Attendance %</th>
-                  <th>Device</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody id="course-students-tbody">
@@ -70,17 +75,13 @@
                     </span>
                   </td>
                   <td>
-                    {% if st.device_bound %}
-                    <button type="button" class="btn-secondary btn-sm" onclick="resetStudentDevice({{ st.student_id }})">Reset Device</button>
-                    {% else %}
-                    <span style="font-size:11px; color:var(--muted);">Unbound</span>
-                    {% endif %}
+                    <button type="button" class="btn-secondary btn-sm" style="color:#f87171; border-color:rgba(248,113,113,0.35);" onclick='removeStudentFromCourse({{ st.student_id }}, {{ st.full_name | tojson }})'>Remove Student</button>
                   </td>
                 </tr>
                 {% else %}
                 <tr>
                   <td colspan="6" style="text-align:center; color:var(--muted);">
-                    No students enrolled yet. Import a CSV or have students scan the lecture QR!
+                    No students enrolled yet. Import a CSV/Excel file or have students scan the lecture QR!
                   </td>
                 </tr>
                 {% endfor %}

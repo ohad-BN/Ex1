@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import io
 from pathlib import Path
 
+from openpyxl import Workbook
 import pytest
 
 from app import create_app
@@ -203,3 +205,73 @@ def test_lecturer_signin_and_class_lecture_creation_workflow(school_app) -> None
     logs_by_code = {log["session_code"]: log for log in oop_course["my_attendance_logs"]}
     assert logs_by_code["OOP26L2"]["status"] == "PRESENT"
     assert logs_by_code["OOP26L2"]["checked_in_at"] != "Not checked in"
+
+
+def test_course_attendance_monitor_tab_excel_import_and_remove_student(school_app) -> None:
+    """Verify Tab 6 Course Attendance Monitor order/rename, Excel+CSV upload, and Remove Student."""
+    client = school_app.test_client()
+    assert (
+        client.post(
+            "/api/auth/lecturer/register",
+            json={
+                "full_name": "Prof. Monitor",
+                "username": "prof.monitor",
+                "email": "monitor@ariel.ac.il",
+                "password": "Password1!",
+            },
+        ).status_code
+        == 201
+    )
+    course = client.post(
+        "/api/courses",
+        json={"course_code": "MON101", "name": "Attendance Monitor Course"},
+    ).get_json()
+    cid = course["id"]
+
+    # 1. Excel (.xlsx) roster import parses integer Student ID, Full Name, Email cleanly
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["Student ID", "Full Name", "Email"])
+    ws.append([212926638, "Ohad Ben Nun", "ohad_mon@ariel.ac.il"])
+    ws.append([214773301, "Enav Levi", "enav_mon@ariel.ac.il"])
+    xls_buf = io.BytesIO()
+    wb.save(xls_buf)
+    xls_buf.seek(0)
+
+    up_xls = client.post(
+        f"/api/courses/{cid}/roster",
+        data={"file": (xls_buf, "students.xlsx")},
+        content_type="multipart/form-data",
+    )
+    assert up_xls.status_code == 200
+    assert up_xls.get_json()["imported"] == 2
+
+    # 2. CSV (.csv) roster file import also works seamlessly
+    up_csv = client.post(
+        f"/api/courses/{cid}/roster",
+        data={"file": (io.BytesIO(b"209999111, Dana Mizrahi, dana_mon@ariel.ac.il\n"), "extra.csv")},
+        content_type="multipart/form-data",
+    )
+    assert up_csv.status_code == 200
+    assert up_csv.get_json()["imported"] == 1
+    students = up_csv.get_json()["course"]["students"]
+    assert len(students) == 3
+
+    # 3. Verify Portal HTML has 4. AI -> 5. Homework -> 6. Course Attendance Monitor & Remove Student button
+    portal_html = client.get(f"/teacher?course_id={cid}").data.decode("utf-8")
+    p4 = portal_html.index("4. AI Lecture Summarizer")
+    p5 = portal_html.index("5. Homework Cohort Analytics")
+    p6 = portal_html.index("6. Course Attendance Monitor")
+    assert p4 < p5 < p6
+    assert "Course Overview &amp; Roster" not in portal_html
+    assert 'id="roster-file-input"' in portal_html
+    assert "Remove Student" in portal_html
+    assert "Reset Device" not in portal_html
+
+    # 4. Remove Student removes enrollment and clears them from Course Attendance Monitor
+    enav = next(s for s in students if s["email"] == "enav_mon@ariel.ac.il")
+    del_resp = client.delete(f"/api/courses/{cid}/students/{enav['student_id']}")
+    assert del_resp.status_code == 200
+    remaining_emails = {s["email"] for s in del_resp.get_json()["course"]["students"]}
+    assert "enav_mon@ariel.ac.il" not in remaining_emails
+    assert remaining_emails == {"ohad_mon@ariel.ac.il", "dana_mon@ariel.ac.il"}

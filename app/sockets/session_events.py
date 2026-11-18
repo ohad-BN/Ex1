@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from flask import current_app, request
-from flask_socketio import emit, join_room
+from flask_socketio import emit, join_room, leave_room
 
 from app import socketio
 from app.models import AttendanceRecord, ClassSession, Course, CourseEnrollment
@@ -11,6 +11,51 @@ from app.routes.guards import get_current_lecturer, is_lecturer_authorized_for_c
 from app.services.chat_service import ChatService
 from app.services.poll_service import PollService
 from app.services.qr_service import DeviceBindingManager, resolve_effective_base_url
+
+
+def register_session_events(sio) -> None:
+    sio.on_event("connect", handle_socket_connect)
+    sio.on_event("join_notifications", handle_join_notifications)
+    sio.on_event("join_session", handle_join_session)
+    sio.on_event("leave_session", handle_leave_session)
+    sio.on_event("qr:request_refresh", handle_qr_refresh)
+
+
+def _subscribe_user_notification_rooms() -> None:
+    """Join personal lecturer or enrolled-course Socket.IO notification rooms based on cookies."""
+    db = current_app.extensions["db_session"]
+    device_mgr: DeviceBindingManager = current_app.extensions["device_mgr"]
+
+    lecturer = get_current_lecturer()
+    if lecturer is not None:
+        join_room(f"lecturer_notify_{lecturer.id}")
+
+    parsed_student = device_mgr.parse_device_cookie(
+        request.cookies.get(DeviceBindingManager.COOKIE_NAME)
+    )
+    if parsed_student is not None:
+        sid = parsed_student[1]
+        enrs = db.query(CourseEnrollment).filter_by(student_id=sid).all()
+        for enr in enrs:
+            join_room(f"course_notify_{enr.course_id}")
+
+
+@socketio.on("connect")
+def handle_socket_connect() -> None:
+    _subscribe_user_notification_rooms()
+
+
+@socketio.on("join_notifications")
+def handle_join_notifications(_data: dict[str, Any] | None = None) -> None:
+    _subscribe_user_notification_rooms()
+
+
+@socketio.on("leave_session")
+def handle_leave_session(data: dict[str, Any] | None) -> None:
+    payload = data or {}
+    session_code = str(payload.get("session_code", "")).strip().upper()
+    if session_code:
+        leave_room(f"session_{session_code}")
 
 
 def _is_socket_authorized_for_session(
@@ -33,8 +78,9 @@ def _is_socket_authorized_for_session(
     if course is None or course.lecturer_id is None:
         return True, cookie_student_id or payload.get("student_id")
 
-    # Deny any lecturer trying to spy on another lecturer's course room
-    if lecturer is not None:
+    # Deny another lecturer snooping when acting as lecturer (allow if also enrolled/open preview on student view)
+    as_student_preview = bool(payload.get("as_student"))
+    if lecturer is not None and not as_student_preview:
         if not is_lecturer_authorized_for_course(db, course, lecturer.id):
             return False, None
         return True, cookie_student_id
@@ -44,7 +90,10 @@ def _is_socket_authorized_for_session(
     if ptok and device_mgr.verify_projector_token(ptok, session.session_code):
         return True, cookie_student_id
 
-    # Allow authenticated student enrolled or checked into this course/session
+    # Allow enrolled/checked-in student OR student browsing an open active session
+    if session.attendance_open:
+        return True, cookie_student_id or payload.get("student_id")
+
     if cookie_student_id is not None:
         enrolled = (
             db.query(CourseEnrollment)
@@ -60,11 +109,6 @@ def _is_socket_authorized_for_session(
             return True, cookie_student_id
 
     return False, None
-
-
-def register_session_events(sio) -> None:
-    sio.on_event("join_session", handle_join_session)
-    sio.on_event("qr:request_refresh", handle_qr_refresh)
 
 
 @socketio.on("join_session")
@@ -89,6 +133,9 @@ def handle_join_session(data: dict[str, Any] | None) -> None:
 
     room = f"session_{session_code}"
     join_room(room)
+    if session.course_id is not None:
+        join_room(f"course_notify_{session.course_id}")
+    _subscribe_user_notification_rooms()
 
     base_url = resolve_effective_base_url(cfg.PUBLIC_BASE_URL, request.host_url)
     qr_payload = qr_service.build_qr_payload(base_url, session_code)

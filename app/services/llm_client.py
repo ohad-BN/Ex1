@@ -45,17 +45,19 @@ class GeminiStudioClient:
     """Thread-safe Google AI Studio client with RPM pacing, 429/503 backoff, and local fallback."""
 
     FALLBACK_MODELS: tuple[str, ...] = (
-        "gemini-3.8-flash",
+        "gemini-2.5-flash-lite",
+        "gemini-3.1-flash-lite",
+        "gemini-3.5-flash-lite",
+        "gemini-3.6-flash",
         "gemini-3.7-flash",
-        "gemini-3.5-flash",
     )
 
     def __init__(
         self,
         api_key: str = "",
-        fast_model: str = "gemini-3.8-flash",
-        pro_model: str = "gemini-3.8-flash",
-        min_interval_sec: float = 4.5,
+        fast_model: str = "gemini-2.5-flash-lite",
+        pro_model: str = "gemini-2.5-flash-lite",
+        min_interval_sec: float = 1.5,
         backoff_base_sec: float = 2.0,
         max_retries: int = 3,
         fallback_on_error: bool = True,
@@ -85,7 +87,10 @@ class GeminiStudioClient:
             return self._client_instance
         from google import genai  # local import so app boots cleanly offline
 
-        self._client_instance = genai.Client(api_key=self.api_key)
+        self._client_instance = genai.Client(
+            api_key=self.api_key,
+            http_options={"api_version": "v1beta"},
+        )
         return self._client_instance
 
     def _wait_for_pacing_slot(self) -> None:
@@ -144,8 +149,14 @@ class GeminiStudioClient:
                 return res
             except Exception as exc:
                 last_exc = exc
-                if _is_model_not_found_error(exc) and idx < len(candidates) - 1:
-                    logger.warning("Gemini model %s returned 404; trying next fallback.", candidate)
+                if (
+                    _is_model_not_found_error(exc) or _is_transient_rate_or_server_error(exc)
+                ) and idx < len(candidates) - 1:
+                    logger.warning(
+                        "Gemini model %s unavailable/rate-limited (%s); switching to next fallback.",
+                        candidate,
+                        type(exc).__name__,
+                    )
                     continue
                 raise
         if last_exc is not None:
@@ -326,6 +337,7 @@ class GeminiStudioClient:
             test_score = 89.0 if has_tests else 55.0
             clean_score = 86.0 if (has_docstrings and not hardcoded_path) else 66.0
             arch_score = 87.0 if (has_oop and has_error_handling) else 68.0
+            details_score = round((clean_score * 0.6 + (90.0 if len(prompt) > 350 else 68.0) * 0.4), 1)
             overall = round((oop_score + test_score + clean_score + arch_score) / 4.0, 1)
 
             strengths: list[str] = []
@@ -358,6 +370,44 @@ class GeminiStudioClient:
                 strengths.append("Readable baseline structure and clear naming conventions.")
 
             coverage = round(min(98.0, 58.0 + (12.0 if has_oop else 0.0) + (15.0 if has_tests else 0.0) + (10.0 if has_error_handling else 0.0)), 1)
+            categories_payload = [
+                {
+                    "category": "Materials & Details",
+                    "score": details_score,
+                    "note": (
+                        "Good documentation and specification detail coverage."
+                        if has_docstrings and not hardcoded_path
+                        else "Add docstrings/comments and remove hardcoded assumptions."
+                    ),
+                },
+                {
+                    "category": "Execution Style",
+                    "score": clean_score,
+                    "note": (
+                        "Clean naming and readable structural organization."
+                        if not hardcoded_path
+                        else "Clean up machine-specific literals and improve formatting consistency."
+                    ),
+                },
+                {
+                    "category": "Technical Logic & Architecture",
+                    "score": arch_score,
+                    "note": (
+                        "Cohesive OOP abstractions with explicit error handling."
+                        if has_oop and has_error_handling
+                        else "Strengthen class encapsulation and explicit try/except guards."
+                    ),
+                },
+                {
+                    "category": "Testing & Verification",
+                    "score": test_score,
+                    "note": (
+                        "Automated assertions/tests validate core functionality."
+                        if has_tests
+                        else "Add unit tests and edge-case assertions."
+                    ),
+                },
+            ]
             payload = {
                 "overall_score": overall,
                 "topic_scores": {
@@ -366,6 +416,9 @@ class GeminiStudioClient:
                     "Code Quality & Error Handling": clean_score,
                     "Architecture Modularity": arch_score,
                 },
+                "categories": categories_payload,
+                "category_scores": {c["category"]: c["score"] for c in categories_payload},
+                "category_notes": {c["category"]: c["note"] for c in categories_payload},
                 "requirements_coverage_pct": coverage,
                 "strengths": strengths,
                 "weaknesses": weaknesses or ["Minor opportunities to improve edge-case documentation."],

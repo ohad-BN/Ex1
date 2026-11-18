@@ -7,13 +7,15 @@ from pathlib import Path
 
 import pytest
 
-from app import create_app
+from app import create_app, socketio
 from app.config import Config
-from app.models import ClassStatsAggregate, Course, Student
+from app.models import ClassSession, ClassStatsAggregate, Course, HomeworkSubmission, Student
 from app.services.face_counter import BoundingBox, FaceDetector
 from app.services.homework_pipeline import (
     CohortAggregator,
     HomeworkMetrics,
+    HomeworkMetricsResponse,
+    HomeworkPipelineError,
     HomeworkReviewService,
     SubmissionExtractor,
 )
@@ -174,3 +176,233 @@ def test_homework_rest_workflow_and_zero_pii_prompt_guarantee(hw_app) -> None:
     seed_resp = client.post(f"/api/courses/{course.id}/assignments/seed-sample")
     assert seed_resp.status_code == 201
     assert seed_resp.get_json()["cohort_stats"]["submission_count"] == 3
+
+
+def _contains_schema_key(node: object, target_key: str) -> bool:
+    if isinstance(node, dict):
+        if target_key in node:
+            return True
+        return any(_contains_schema_key(v, target_key) for v in node.values())
+    if isinstance(node, list):
+        return any(_contains_schema_key(item, target_key) for item in node)
+    return False
+
+
+def test_homework_metrics_response_schema_has_no_additional_properties() -> None:
+    """Gemini Developer API rejects schemas with additionalProperties keys from dict fields."""
+    assert _contains_schema_key(HomeworkMetrics.model_json_schema(), "additionalProperties") is True
+    assert _contains_schema_key(HomeworkMetricsResponse.model_json_schema(), "additionalProperties") is False
+
+    from_list = HomeworkMetricsResponse.model_validate(
+        {
+            "overall_score": 91.5,
+            "topic_scores": [{"topic": "OOP", "score": 94.0}, {"topic": "Tests", "score": 89.0}],
+            "requirements_coverage_pct": 95.0,
+            "strengths": ["Clear encapsulation"],
+            "weaknesses": [],
+            "error_tags": [],
+            "style_summary": "Solid",
+        }
+    ).to_metrics()
+    assert isinstance(from_list, HomeworkMetrics)
+    assert from_list.topic_scores == {"OOP": 94.0, "Tests": 89.0}
+
+    from_dict = HomeworkMetricsResponse.model_validate(
+        {
+            "overall_score": 82.0,
+            "topic_scores": {"OOP": 82.0},
+            "requirements_coverage_pct": 80.0,
+        }
+    ).to_metrics()
+    assert from_dict.topic_scores == {"OOP": 82.0}
+
+
+def test_assignment_created_socketio_broadcast_and_async_submission(hw_app, tmp_path: Path) -> None:
+    """Verify real-time assignment:created emits and non-blocking ?async=1 homework review."""
+    client = hw_app.test_client()
+    db = hw_app.extensions["db_session"]
+
+    course = Course(course_code="RT301", name="Realtime OOP", department="CS")
+    db.add(course)
+    db.flush()
+    sess = ClassSession(course_id=course.id, session_code="RT301-S1", title="Lecture 1")
+    student = Student(full_name="Dana Student", email="dana_rt@ariel.ac.il", primary_device_id="rt-1")
+    db.add_all([sess, student])
+    db.commit()
+
+    sock = socketio.test_client(hw_app, flask_test_client=client)
+    assert sock.is_connected()
+    sock.emit("join_session", {"session_code": "RT301-S1", "student_id": student.id, "as_student": True})
+    sock.get_received()  # flush initial join_session events
+
+    # 1. Creating an assignment emits assignment:created immediately without private submissions
+    create_resp = client.post(
+        f"/api/courses/{course.id}/assignments",
+        json={
+            "title": "HW3 — Async Events",
+            "rubric_text": "Implement non-blocking observer broadcasts.",
+            "topics": ["Observer", "Async"],
+        },
+    )
+    assert create_resp.status_code == 201
+    aid = create_resp.get_json()["id"]
+
+    received = sock.get_received()
+    created_events = [evt for evt in received if evt["name"] == "assignment:created"]
+    assert len(created_events) == 1
+    assert created_events[0]["args"][0]["title"] == "HW3 — Async Events"
+    assert "submissions" not in created_events[0]["args"][0]
+
+    # 2. Seeding sample emits once, and repeating seed-sample does not emit duplicate toast
+    seed_resp = client.post(f"/api/courses/{course.id}/assignments/seed-sample")
+    assert seed_resp.status_code == 201
+    seed_events = [e for e in sock.get_received() if e["name"] == "assignment:created"]
+    assert len(seed_events) == 1
+
+    seed_again = client.post(f"/api/courses/{course.id}/assignments/seed-sample")
+    assert seed_again.status_code == 201
+    dup_events = [e for e in sock.get_received() if e["name"] == "assignment:created"]
+    assert len(dup_events) == 0
+
+    # 3. Validation errors: unauthenticated (401) and empty upload (400)
+    no_auth = client.post(f"/api/assignments/{aid}/submissions", json={"content_text": "class A: pass"})
+    assert no_auth.status_code == 401
+
+    empty_file = tmp_path / "empty.txt"
+    empty_file.write_text("", encoding="utf-8")
+    with pytest.raises(HomeworkPipelineError):
+        SubmissionExtractor().extract(file_path=empty_file)
+
+    # 4. Async file submission returns 202 immediately, finishes in background, and emits assignment:review_ready
+    sub_resp = client.post(
+        f"/api/assignments/{aid}/submissions?async=1",
+        data={
+            "student_id": str(student.id),
+            "content_text": "Includes Observer unit tests.",
+            "file": (io.BytesIO(b"class Observer:\n    def update(self):\n        return True\n"), "solution.py"),
+        },
+        content_type="multipart/form-data",
+    )
+    assert sub_resp.status_code == 202
+    assert sub_resp.get_json()["status"] == "PENDING"
+
+    # Wait for background worker completion via task_manager and verify DB + Socket.IO notification
+    hw_app.extensions["task_manager"].shutdown(wait=True)
+    review_events = [e for e in sock.get_received() if e["name"] == "assignment:review_ready"]
+    assert len(review_events) == 1
+    assert review_events[0]["args"][0]["assignment_id"] == aid
+    assert review_events[0]["args"][0]["student_id"] == student.id
+    assert "Comparative Performance Summary" in review_events[0]["args"][0]["submission"]["deep_review_md"]
+
+    sub_row = db.query(HomeworkSubmission).filter_by(assignment_id=aid, student_id=student.id).one()
+    assert sub_row.source_type == "file"
+    assert "Comparative Performance Summary" in sub_row.deep_review_md
+    sock.disconnect()
+
+
+def test_dynamic_class_relative_score_and_category_breakdown(hw_app) -> None:
+    """Verify dynamic 1-10 Class Standing (Ohad 10/10 -> Enav 10/10 & Ohad 7/10) + categories."""
+    # 1. Pure formula unit verification matching the exact user progression
+    ohad_only = CohortAggregator.compute_relative_class_score([78.0], 78.0)
+    assert ohad_only["class_score"] == 10
+    assert ohad_only["rank"] == 1
+
+    enav_n2 = CohortAggregator.compute_relative_class_score([78.0, 92.0], 92.0)
+    ohad_n2 = CohortAggregator.compute_relative_class_score([78.0, 92.0], 78.0)
+    assert enav_n2["class_score"] == 10
+    assert enav_n2["rank"] == 1
+    assert ohad_n2["class_score"] == 7
+    assert ohad_n2["rank"] == 2
+
+    # Ties get identical score & rank
+    tie_a = CohortAggregator.compute_relative_class_score([60.0, 85.0, 85.0], 85.0)
+    tie_b = CohortAggregator.compute_relative_class_score([60.0, 85.0, 85.0], 85.0)
+    assert tie_a["class_score"] == 10 and tie_a["rank"] == 1
+    assert tie_a == tie_b
+
+    # 2. End-to-end API + Socket.IO assignment:cohort_updated verification
+    client = hw_app.test_client()
+    db = hw_app.extensions["db_session"]
+    course = Course(course_code="CLS10", name="Dual Score Design", department="CS")
+    db.add(course)
+    db.flush()
+    sess = ClassSession(course_id=course.id, session_code="CLS10-L1", title="Lecture 1")
+    ohad = Student(full_name="Ohad", email="ohad_cls@ariel.ac.il", primary_device_id="cls-ohad")
+    enav = Student(full_name="Enav", email="enav_cls@ariel.ac.il", primary_device_id="cls-enav")
+    db.add_all([sess, ohad, enav])
+    db.commit()
+
+    aid = client.post(
+        f"/api/courses/{course.id}/assignments",
+        json={
+            "title": "HW4 — Class Comparison",
+            "rubric_text": "Grade materials, style, architecture, and tests.",
+            "topics": ["Materials", "Style"],
+        },
+    ).get_json()["id"]
+
+    sock = socketio.test_client(hw_app, flask_test_client=client)
+    sock.emit("join_session", {"session_code": "CLS10-L1", "student_id": ohad.id, "as_student": True})
+    sock.get_received()
+
+    # Step A: Ohad submits basic script first -> gets 10/10 Class Score
+    r_ohad = client.post(
+        f"/api/assignments/{aid}/submissions",
+        json={"student_id": ohad.id, "content_text": "def solve(x):\n    return x + 1\n"},
+    )
+    assert r_ohad.status_code == 201
+    ohad_sub = r_ohad.get_json()
+    ohad_rubric_grade = ohad_sub["ai_rubric_grade"]
+    assert ohad_sub["class_standing"]["class_score"] == 10
+    assert ohad_sub["class_standing"]["cohort_size"] == 1
+    cat_labels = [c["label"] for c in ohad_sub["category_breakdown"]]
+    assert cat_labels == [
+        "Materials & Details",
+        "Execution Style",
+        "Technical Logic & Architecture",
+        "Testing & Verification",
+    ]
+    assert "line_count" in ohad_sub["telemetry_comparison"]
+
+    # Step B: Enav submits rich OOP + docstring + try/except + pytest -> Enav 10/10 & Socket emits cohort_updated
+    enav_code = (
+        'class SolutionManager:\n    """Well-documented OOP solution."""\n'
+        '    def run(self, items):\n        try:\n            return len(items) > 0\n'
+        '        except Exception:\n            return False\n\n'
+        'def test_solution():\n    assert SolutionManager().run([1]) is True\n'
+    )
+    r_enav = client.post(
+        f"/api/assignments/{aid}/submissions",
+        json={"student_id": enav.id, "content_text": enav_code},
+    )
+    assert r_enav.status_code == 201
+    enav_sub = r_enav.get_json()
+    assert enav_sub["class_standing"]["class_score"] == 10
+    assert enav_sub["class_standing"]["rank"] == 1
+    assert enav_sub["ai_rubric_grade"] > ohad_rubric_grade
+
+    cohort_events = [e for e in sock.get_received() if e["name"] == "assignment:cohort_updated"]
+    assert len(cohort_events) >= 1
+    assert "Enav" not in json.dumps(cohort_events[-1])
+
+    # Step C: Ohad's AI Rubric Grade is UNCHANGED, while his dynamic Class Standing dropped below 10!
+    ohad_refetched = client.get(f"/api/assignments/{aid}?student_id={ohad.id}").get_json()["my_submission"]
+    assert ohad_refetched["ai_rubric_grade"] == ohad_rubric_grade
+    assert ohad_refetched["class_standing"]["class_score"] < 10
+    assert ohad_refetched["class_standing"]["rank"] == 2
+    assert ohad_refetched["class_standing"]["cohort_size"] == 2
+
+    # Step D: Ohad resubmits improved solution -> category distributions stay balanced at count=2
+    r_ohad_v2 = client.post(
+        f"/api/assignments/{aid}/submissions",
+        json={"student_id": ohad.id, "content_text": enav_code},
+    )
+    assert r_ohad_v2.status_code == 201
+    v2 = r_ohad_v2.get_json()
+    assert v2["version"] == 2
+    assert v2["class_standing"]["cohort_size"] == 2
+    assert v2["class_standing"]["class_score"] == 10
+    stats_row = db.get(ClassStatsAggregate, aid)
+    cat_lists = json.loads(stats_row.category_scores_json)
+    assert len(cat_lists["Materials & Details"]) == 2
+    sock.disconnect()

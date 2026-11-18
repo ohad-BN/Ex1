@@ -27,7 +27,7 @@ from app.schemas import (
 )
 from app.services.attendance_service import AttendanceService
 from app.services.course_service import CourseError, CourseService
-from app.services.identity_helpers import resolve_or_upsert_student
+from app.services.identity_helpers import parse_roster_upload, resolve_or_upsert_student
 from app.services.qr_service import DeviceBindingManager, resolve_effective_base_url
 from app.services.rate_limiter import SlidingWindowRateLimiter
 
@@ -550,15 +550,30 @@ def api_import_course_roster(course_id: int):
         return err
 
     svc = _get_course_service()
-    csv_text = ""
-    if "file" in request.files:
-        csv_text = request.files["file"].read().decode("utf-8-sig", errors="replace")
-    else:
-        payload = request.get_json(silent=True) or {}
-        csv_text = str(payload.get("csv_text", ""))
+    if "file" in request.files and request.files["file"].filename:
+        fs = request.files["file"]
+        raw_bytes = fs.read()
+        if not raw_bytes:
+            return jsonify({"error": "Uploaded roster file is empty."}), 400
+        try:
+            rows = parse_roster_upload(fs.filename or "", raw_bytes)
+        except Exception as exc:
+            return jsonify({"error": f"Could not read roster file: {exc}"}), 400
+        if not rows:
+            return jsonify(
+                {"error": "No valid rows found. Include columns for Full Name and Email (and optional Student ID)."}
+            ), 400
+        try:
+            imported = svc.import_course_roster_rows(course_id, rows)
+            overview = svc.get_course_overview(course_id)
+        except CourseError as exc:
+            return jsonify({"error": exc.message}), exc.status_code
+        return jsonify({"imported": imported, "course": overview})
 
+    payload = request.get_json(silent=True) or {}
+    csv_text = str(payload.get("csv_text", ""))
     if not csv_text.strip():
-        return jsonify({"error": "CSV content is empty."}), 400
+        return jsonify({"error": "Provide a CSV/Excel file or csv_text content."}), 400
 
     try:
         imported = svc.import_course_roster_csv(course_id, csv_text)
@@ -567,6 +582,26 @@ def api_import_course_roster(course_id: int):
         return jsonify({"error": exc.message}), exc.status_code
 
     return jsonify({"imported": imported, "course": overview})
+
+
+@courses_bp.delete("/api/courses/<int:course_id>/students/<int:student_id>")
+def api_remove_course_student(course_id: int, student_id: int):
+    _course, lecturer, err = require_course_access(course_id)
+    if err is not None:
+        return err
+    assert lecturer is not None
+    svc = _get_course_service()
+    try:
+        st = svc.remove_student_from_course(
+            course_id=course_id,
+            student_id=student_id,
+            lecturer_id=lecturer.id,
+            ip_address=get_client_ip(),
+        )
+        overview = svc.get_course_overview(course_id)
+    except CourseError as exc:
+        return jsonify({"error": exc.message}), exc.status_code
+    return jsonify({"status": "removed", "student_id": st.id, "course": overview})
 
 
 @courses_bp.post("/api/courses/<int:course_id>/students/<int:student_id>/reset-device")

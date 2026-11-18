@@ -90,8 +90,28 @@ def test_gemini_client_pacing_and_429_exponential_backoff() -> None:
         fallback_on_error=False,
         client_override=SimpleNamespace(models=DeprecatedModelFake()),
     )
-    assert client_404.generate_text("hello") == "OK via gemini-3.8-flash"
-    assert client_404.fast_model == "gemini-3.8-flash"
+    assert client_404.generate_text("hello") == "OK via gemini-2.5-flash-lite"
+    assert client_404.fast_model == "gemini-2.5-flash-lite"
+
+    class QuotaExhaustedFake:
+        def generate_content(self, **kwargs):
+            if kwargs.get("model") == "gemini-2.5-flash-lite":
+                raise RuntimeError("HTTP 429 RESOURCE_EXHAUSTED")
+            return SimpleNamespace(text=f"Recovered via {kwargs.get('model')}")
+
+    client_429 = GeminiStudioClient(
+        api_key="test-key",
+        fast_model="gemini-2.5-flash-lite",
+        min_interval_sec=0.0,
+        backoff_base_sec=0.0,
+        max_retries=1,
+        fallback_on_error=False,
+        client_override=SimpleNamespace(models=QuotaExhaustedFake()),
+        clock_fn=clock.time,
+        sleep_fn=clock.sleep,
+    )
+    assert client_429.generate_text("hello") == "Recovered via gemini-3.1-flash-lite"
+    assert client_429.fast_model == "gemini-3.1-flash-lite"
 
 
 def test_lecture_2pass_correction_chat_crosslink_and_course_endpoint(lecture_app) -> None:

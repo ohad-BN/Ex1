@@ -533,6 +533,8 @@ class ClassStatsAggregate(Base):
     mean_overall_score: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
     topic_sums_json: Mapped[str] = mapped_column(Text, default="{}", nullable=False)
     scores_list_json: Mapped[str] = mapped_column(Text, default="[]", nullable=False)
+    category_scores_json: Mapped[str] = mapped_column(Text, default="{}", nullable=False)
+    telemetry_sums_json: Mapped[str] = mapped_column(Text, default="{}", nullable=False)
     error_tag_counts_json: Mapped[str] = mapped_column(
         Text, default="{}", nullable=False
     )
@@ -577,6 +579,8 @@ def _migrate_sqlite_columns(engine: Engine) -> None:
         ("students", "device_bound_at", "DATETIME"),
         ("roster_entries", "student_id_number", "VARCHAR(32)"),
         ("courses", "join_code", "VARCHAR(24)"),
+        ("class_stats_aggregates", "category_scores_json", "TEXT NOT NULL DEFAULT '{}'"),
+        ("class_stats_aggregates", "telemetry_sums_json", "TEXT NOT NULL DEFAULT '{}'"),
     )
 
     with engine.begin() as conn:
@@ -601,6 +605,33 @@ def _migrate_sqlite_columns(engine: Engine) -> None:
         conn.exec_driver_sql(
             "CREATE UNIQUE INDEX IF NOT EXISTS ix_courses_join_code ON courses(join_code);"
         )
+
+        # Drop legacy pre-removal Zoom columns (e.g. chat_messages.synced_to_zoom NOT NULL) so inserts never fail
+        legacy_drops: tuple[tuple[str, str], ...] = (
+            ("chat_messages", "synced_to_zoom"),
+            ("class_sessions", "zoom_meeting_id"),
+            ("class_sessions", "zoom_auto_sync"),
+            ("class_sessions", "zoom_join_url"),
+            ("lecture_artifacts", "zoom_recording_url"),
+        )
+        for tbl, legacy_col in legacy_drops:
+            rows = conn.exec_driver_sql(f"PRAGMA table_info({tbl});").fetchall()
+            col_names = {r[1] for r in rows} if rows else set()
+            if legacy_col not in col_names:
+                continue
+            try:
+                conn.exec_driver_sql(f"ALTER TABLE {tbl} DROP COLUMN {legacy_col};")
+            except Exception:
+                # Fallback if legacy index exists on column
+                idx_rows = conn.exec_driver_sql(f"PRAGMA index_list({tbl});").fetchall()
+                for idx_r in idx_rows:
+                    idx_name = idx_r[1]
+                    if "zoom" in idx_name.lower():
+                        conn.exec_driver_sql(f"DROP INDEX IF EXISTS {idx_name};")
+                try:
+                    conn.exec_driver_sql(f"ALTER TABLE {tbl} DROP COLUMN {legacy_col};")
+                except Exception:
+                    pass
 
 
 def init_db_engine(database_url: str) -> tuple[Engine, scoped_session[Session]]:

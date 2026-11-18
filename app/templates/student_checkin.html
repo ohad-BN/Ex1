@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
   <title>ClassPulse — Student Live Hub</title>
   <script src="/static/js/csrf.js"></script>
+  <script src="/static/js/notifications.js"></script>
   <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
   <style>
     :root {
@@ -276,9 +277,27 @@
         let activePoll = null;
         let chatMessages = [];
 
+        if (window.ClassPulseNotify) {
+          window.ClassPulseNotify.init({
+            role: "student",
+            baseTitle: document.title,
+            currentStudentId: STUDENT_ID,
+            isChatVisibleFn: () => true,
+            onOpenMessage: (payload) => {
+              const msgId = payload.message_id || payload.id;
+              if (payload.session_code === SESSION_CODE) {
+                window.ClassPulseNotify.highlightMessage(msgId);
+              } else {
+                window.location.href = `/student?session=${encodeURIComponent(payload.session_code)}&view=view-live&msg_id=${encodeURIComponent(msgId)}`;
+              }
+            },
+          });
+        }
+
         const socket = io({ transports: ["websocket", "polling"] });
         socket.on("connect", () => {
-          socket.emit("join_session", { session_code: SESSION_CODE, student_id: STUDENT_ID });
+          socket.emit("join_session", { session_code: SESSION_CODE, student_id: STUDENT_ID, as_student: true });
+          socket.emit("join_notifications", {});
         });
 
         socket.on("poll:sync", (data) => {
@@ -413,6 +432,11 @@
             renderStudentChat();
           }
         });
+        socket.on("chat:notify", (payload) => {
+          if (window.ClassPulseNotify) {
+            window.ClassPulseNotify.pushChatNotification(payload);
+          }
+        });
         socket.on("chat:updated", (msg) => {
           const idx = chatMessages.findIndex((x) => x.id === msg.id);
           if (idx >= 0) chatMessages[idx] = msg;
@@ -426,7 +450,7 @@
             return;
           }
           feed.innerHTML = chatMessages.slice().reverse().map((m) => `
-            <div class="msg-item">
+            <div class="msg-item" data-msg-id="${m.id}">
               <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:3px;">
                 <div>
                   <span style="color:var(--accent); font-family:monospace; font-weight:700;">[${m.offset_mmss}]</span>
@@ -446,16 +470,30 @@
           const body = bodyEl.value.trim();
           if (!body) return;
           bodyEl.value = "";
-          await fetch(`/api/sessions/${SESSION_ID}/chat`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              student_id: STUDENT_ID,
-              author_name: STUDENT_NAME,
-              category: catEl.value,
-              body: body,
-            }),
-          });
+          try {
+            const res = await fetch(`/api/sessions/${SESSION_ID}/chat`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                student_id: STUDENT_ID,
+                author_name: STUDENT_NAME,
+                category: catEl.value,
+                body: body,
+              }),
+            });
+            const data = await res.json();
+            if (!res.ok) {
+              bodyEl.value = body;
+              return alert(data.error || "Could not send message.");
+            }
+            if (!chatMessages.find((x) => x.id === data.id)) {
+              chatMessages.push(data);
+            }
+            renderStudentChat();
+          } catch (_err) {
+            bodyEl.value = body;
+            alert("Network error while sending message.");
+          }
         }
 
         async function upvoteChat(msgId) {

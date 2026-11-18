@@ -4,11 +4,17 @@ from pathlib import Path
 from typing import Any, Optional
 
 from flask import Blueprint, current_app, jsonify, request
+from sqlalchemy.orm import sessionmaker
 from werkzeug.utils import secure_filename
 
+from app import socketio
 from app.models import Assignment, ClassStatsAggregate, Student
 from app.routes.guards import require_course_access
-from app.services.homework_pipeline import HomeworkPipelineError, HomeworkReviewService
+from app.services.homework_pipeline import (
+    CohortAggregator,
+    HomeworkPipelineError,
+    HomeworkReviewService,
+)
 from app.services.qr_service import DeviceBindingManager
 
 homework_bp = Blueprint("homework", __name__)
@@ -27,8 +33,20 @@ def _resolve_student_id(payload: dict[str, Any]) -> Optional[int]:
     if parsed is not None:
         return parsed[1]
     if payload.get("student_id") is not None and str(payload.get("student_id")).strip() != "":
-        return int(payload["student_id"])
+        try:
+            return int(payload["student_id"])
+        except (TypeError, ValueError):
+            return None
     return request.args.get("student_id", type=int)
+
+
+def _emit_to_course_rooms(
+    _db: Any, course_id: Optional[int], event: str, payload: dict[str, Any]
+) -> None:
+    """Broadcast homework updates to the course notification room (joined on connect & join_session)."""
+    if course_id is None:
+        return
+    socketio.emit(event, payload, to=f"course_notify_{course_id}")
 
 
 @homework_bp.get("/api/courses/<int:course_id>/assignments")
@@ -71,6 +89,12 @@ def create_course_assignment(course_id: int):
     except HomeworkPipelineError as exc:
         return jsonify({"error": exc.message}), exc.status_code
 
+    _emit_to_course_rooms(
+        svc.db,
+        course_id,
+        "assignment:created",
+        svc.serialize_assignment(assignment, include_submissions=False),
+    )
     return jsonify(svc.serialize_assignment(assignment, include_submissions=True)), 201
 
 
@@ -81,10 +105,20 @@ def seed_sample_assignment(course_id: int):
         return err
 
     svc = _get_hw_service()
+    existing_ids = {
+        row[0] for row in svc.db.query(Assignment.id).filter_by(course_id=course_id).all()
+    }
     try:
         assignment = svc.seed_sample_course_assignment(course_id)
     except HomeworkPipelineError as exc:
         return jsonify({"error": exc.message}), exc.status_code
+    if assignment.id not in existing_ids:
+        _emit_to_course_rooms(
+            svc.db,
+            course_id,
+            "assignment:created",
+            svc.serialize_assignment(assignment, include_submissions=False),
+        )
     return jsonify(svc.serialize_assignment(assignment, include_submissions=True)), 201
 
 
@@ -134,6 +168,99 @@ def submit_assignment_homework(assignment_id: int):
     content_text = payload.get("content_text") or payload.get("code_text")
     github_url = payload.get("github_url")
     gen_review = str(payload.get("generate_review", "true")).lower() in ("1", "true", "yes")
+    async_mode = str(request.args.get("async") or payload.get("async") or "").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+    if async_mode and "task_manager" in current_app.extensions:
+        assignment = db.get(Assignment, assignment_id)
+        if assignment is None:
+            return jsonify({"error": "Assignment not found."}), 404
+        if db.get(Student, student_id) is None:
+            return jsonify({"error": "Student not found."}), 404
+        try:
+            svc.extractor.extract(
+                content_text=content_text,
+                file_path=saved_file,
+                github_url=github_url,
+            )
+        except HomeworkPipelineError as exc:
+            return jsonify({"error": exc.message}), exc.status_code
+
+        engine = current_app.extensions["db_engine"]
+        llm_client = current_app.extensions.get("llm_client")
+        factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+        course_id = assignment.course_id
+
+        def _worker() -> dict[str, Any]:
+            with factory() as bg_db:
+                bg_svc = HomeworkReviewService(db=bg_db, llm_client=llm_client)
+                try:
+                    sub = bg_svc.submit_homework(
+                        assignment_id=assignment_id,
+                        student_id=student_id,
+                        content_text=content_text,
+                        file_path=saved_file,
+                        github_url=github_url,
+                        generate_review=gen_review,
+                    )
+                    bg_stats = bg_db.get(ClassStatsAggregate, assignment_id)
+                    serialized_sub = bg_svc.serialize_submission(sub, stats=bg_stats)
+                    _emit_to_course_rooms(
+                        bg_db,
+                        course_id,
+                        "assignment:review_ready",
+                        {
+                            "assignment_id": assignment_id,
+                            "course_id": course_id,
+                            "student_id": student_id,
+                            "submission": serialized_sub,
+                        },
+                    )
+                    if bg_stats is not None:
+                        _emit_to_course_rooms(
+                            bg_db,
+                            course_id,
+                            "assignment:cohort_updated",
+                            {
+                                "assignment_id": assignment_id,
+                                "course_id": course_id,
+                                "cohort_stats": CohortAggregator.build_anonymized_cohort_snapshot(
+                                    bg_stats
+                                ),
+                            },
+                        )
+                    return serialized_sub
+                except Exception as exc:  # noqa: BLE001
+                    _emit_to_course_rooms(
+                        bg_db,
+                        course_id,
+                        "assignment:review_error",
+                        {
+                            "assignment_id": assignment_id,
+                            "course_id": course_id,
+                            "student_id": student_id,
+                            "error": str(exc),
+                        },
+                    )
+                    raise
+
+        job_id = current_app.extensions["task_manager"].submit(
+            f"homework-submit-{assignment_id}-student-{student_id}", _worker
+        )
+        return (
+            jsonify(
+                {
+                    "status": "PENDING",
+                    "assignment_id": assignment_id,
+                    "student_id": student_id,
+                    "job_id": job_id,
+                }
+            ),
+            202,
+        )
 
     try:
         sub = svc.submit_homework(
@@ -148,6 +275,18 @@ def submit_assignment_homework(assignment_id: int):
         return jsonify({"error": exc.message}), exc.status_code
 
     stats = db.get(ClassStatsAggregate, assignment_id)
+    assignment = db.get(Assignment, assignment_id)
+    if stats is not None and assignment is not None:
+        _emit_to_course_rooms(
+            db,
+            assignment.course_id,
+            "assignment:cohort_updated",
+            {
+                "assignment_id": assignment_id,
+                "course_id": assignment.course_id,
+                "cohort_stats": CohortAggregator.build_anonymized_cohort_snapshot(stats),
+            },
+        )
     return jsonify(svc.serialize_submission(sub, stats=stats)), 201
 
 

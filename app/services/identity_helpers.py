@@ -4,7 +4,7 @@ import csv
 from datetime import datetime, timezone
 import io
 import re
-from typing import Optional
+from typing import Any, Iterable, Optional
 
 from sqlalchemy.orm import Session
 
@@ -128,13 +128,23 @@ def resolve_or_upsert_student(
     return student, None
 
 
-def parse_roster_csv_rows(csv_content: str) -> list[tuple[Optional[str], str, str]]:
-    """Parse 2- or 3-column CSV roster rows into [(student_id_number, full_name, email), ...]."""
-    reader = csv.reader(io.StringIO((csv_content or "").strip()))
+def _parse_roster_table_rows(
+    raw_rows: Iterable[Iterable[Any]],
+) -> list[tuple[Optional[str], str, str]]:
+    """Parse 2- or 3-column tabular roster rows into [(student_id_number, full_name, email), ...]."""
     parsed: list[tuple[Optional[str], str, str]] = []
-    for raw_row in reader:
-        cols = [c.strip().lstrip("\ufeff") for c in raw_row]
-        cols = [c for c in cols if c]
+    for raw_row in raw_rows:
+        cols: list[str] = []
+        for cell in raw_row:
+            if cell is None:
+                continue
+            if isinstance(cell, float) and cell.is_integer():
+                text = str(int(cell))
+            else:
+                text = str(cell)
+            text = text.strip().lstrip("\ufeff")
+            if text:
+                cols.append(text)
         if len(cols) < 2:
             continue
         email_idx = next((i for i, c in enumerate(cols) if EMAIL_RE.match(c)), None)
@@ -167,6 +177,37 @@ def parse_roster_csv_rows(csv_content: str) -> list[tuple[Optional[str], str, st
             continue
         parsed.append((sid_val, name_val, email_val))
     return parsed
+
+
+def parse_roster_csv_rows(csv_content: str) -> list[tuple[Optional[str], str, str]]:
+    """Parse 2- or 3-column CSV roster rows into [(student_id_number, full_name, email), ...]."""
+    reader = csv.reader(io.StringIO((csv_content or "").strip()))
+    return _parse_roster_table_rows(reader)
+
+
+def parse_roster_excel_rows(raw_bytes: bytes) -> list[tuple[Optional[str], str, str]]:
+    """Parse 2- or 3-column Excel (.xlsx/.xlsm) roster rows via openpyxl."""
+    from openpyxl import load_workbook
+
+    wb = load_workbook(io.BytesIO(raw_bytes), read_only=True, data_only=True)
+    try:
+        ws = wb.active
+        if ws is None:
+            return []
+        return _parse_roster_table_rows(ws.iter_rows(values_only=True))
+    finally:
+        wb.close()
+
+
+def parse_roster_upload(
+    filename: str, raw_bytes: bytes
+) -> list[tuple[Optional[str], str, str]]:
+    """Parse either an uploaded Excel (.xlsx/.xlsm) or CSV roster file into normalized rows."""
+    lower_name = (filename or "").lower()
+    if lower_name.endswith((".xlsx", ".xlsm")) or raw_bytes[:2] == b"PK":
+        return parse_roster_excel_rows(raw_bytes)
+    text = raw_bytes.decode("utf-8-sig", errors="replace")
+    return parse_roster_csv_rows(text)
 
 
 def validate_image_magic_bytes(data: bytes) -> bool:

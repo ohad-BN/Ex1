@@ -75,6 +75,8 @@ def create_app(
         fast_model=cfg.GEMINI_FAST_MODEL,
         pro_model=cfg.GEMINI_PRO_MODEL,
         min_interval_sec=cfg.GEMINI_MIN_INTERVAL_SEC,
+        backoff_base_sec=1.5,
+        max_retries=2,
     )
 
     # Initialize bounded background task executor

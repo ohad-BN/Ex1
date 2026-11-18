@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ClassPulse — Teacher Portal ({{ selected_course.course_code }})</title>
   <script src="/static/js/csrf.js"></script>
+  <script src="/static/js/notifications.js"></script>
   <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
   <style>
     :root {
@@ -406,22 +407,25 @@
       </div>
     </header>
 
-    <!-- 5 Modular Workspace Tabs -->
+    <!-- 6 Modular Workspace Tabs -->
     <nav class="tab-bar">
-      <button class="tab-btn active" onclick="switchTab('tab-attendance', this)">
+      <button class="tab-btn active" data-tab-target="tab-attendance" onclick="switchTab('tab-attendance', this)">
         1. Live Attendance &amp; CV Headcount
       </button>
-      <button class="tab-btn" onclick="switchTab('tab-polls', this)">
+      <button class="tab-btn" data-tab-target="tab-polls" onclick="switchTab('tab-polls', this)">
         2. Live Lecture Polls
       </button>
-      <button class="tab-btn" onclick="switchTab('tab-chat', this)">
-        3. Live Classroom Q&amp;A
+      <button class="tab-btn" data-tab-target="tab-chat" onclick="switchTab('tab-chat', this)">
+        3. Live Classroom Q&amp;A <span id="tab-chat-badge" class="cp-red-dot" style="display:none;"></span>
       </button>
-      <button class="tab-btn" onclick="switchTab('tab-course-roster', this)">
-        4. Course Overview &amp; Roster ({{ selected_course.students|length }})
+      <button class="tab-btn" data-tab-target="tab-ai-lectures" onclick="switchTab('tab-ai-lectures', this)">
+        4. AI Lecture Summarizer
       </button>
-      <button class="tab-btn" onclick="switchTab('tab-ai-hub', this)">
-        5. AI Lecture Studio &amp; Homework
+      <button class="tab-btn" data-tab-target="tab-homework" onclick="switchTab('tab-homework', this)">
+        5. Homework Cohort Analytics
+      </button>
+      <button id="tab-btn-course-monitor" class="tab-btn" data-tab-target="tab-course-roster" onclick="switchTab('tab-course-roster', this)">
+        6. Course Attendance Monitor ({{ selected_course.students|length }})
       </button>
     </nav>
 
@@ -659,7 +663,7 @@
             <a class="btn-secondary btn-sm" href="/lecturer/chat-popout/{{ session.session_code }}" target="_blank">
               &#128172; Open Live Q&amp;A Companion Pop-Out
             </a>
-            <a class="btn-secondary btn-sm" href="/api/sessions/{{ session.id }}/chat/export.txt">
+            <a class="btn-secondary btn-sm" href="/api/sessions/{{ session.id }}/chat/export">
               &#128190; Export Transcript (.txt)
             </a>
           </div>
@@ -671,7 +675,7 @@
             <option value="Question">Question</option>
             <option value="Suggestion">Suggestion</option>
           </select>
-          <input type="text" id="lecturer-chat-body" placeholder="Post an announcement or answer to the live classroom feed..." />
+          <input type="text" id="lecturer-chat-body" placeholder="Post an announcement or answer to the live classroom feed..." onkeydown="if(event.key==='Enter') sendLecturerChat()" />
           <button onclick="sendLecturerChat()">Send</button>
         </div>
 
@@ -679,64 +683,9 @@
       </div>
     </section>
 
+    {% include "teacher/_tab_lecture_ai.html" %}
+    {% include "teacher/_tab_homework.html" %}
     {% include "teacher/_tab_roster.html" %}
-
-    <!-- TAB 5: AI Lecture Studio & Homework Hub (Features 4 & 5) -->
-    <section id="tab-ai-hub" class="tab-pane">
-      <div class="grid-2">
-        <!-- Feature 4: ML Lecture Recording Transcription & 2-Pass Gemini Summarizer -->
-        <div class="card">
-          <h2>
-            <span>&#127908; AI Lecture Summarizer ({{ session.session_code }})</span>
-            <button class="btn-secondary btn-sm" onclick="summarizeLecture(true)">&#9889; Run Ariel Lecture Sample</button>
-          </h2>
-          <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
-            <span class="badge {{ 'VERIFIED' if gemini_configured else 'UNDER_SCANNED' }}">
-              Google Gemini API: {{ 'Live (Transcribe & Summarize)' if gemini_configured else 'Offline Fallback (faster-whisper)' }}
-            </span>
-          </div>
-          <p style="font-size:12px; color:var(--muted); margin-top:0;">
-            Upload a class recording (<code>.mp4</code>, <code>.m4a</code>, <code>.mp3</code>, <code>.wav</code>, <code>.vtt</code>) or paste notes. ClassPulse sends recordings to <strong>Google Gemini API</strong> to transcribe with <code>[MM:SS]</code> timestamps, then uses Gemini AI to produce structured lecturer study notes linked with student chat Q&amp;A.
-          </p>
-
-          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:8px;">
-            <input type="file" id="lecture-media-input" accept=".mp4,.wav,.mp3,.m4a,.ogg,.webm,.vtt,.srt,.txt" style="max-width:260px;" />
-            <button class="btn-green btn-sm" onclick="summarizeLecture(false)">Upload, Transcribe &amp; Summarize</button>
-            <span id="lecture-ai-status" style="font-size:12px; font-weight:600; color:var(--accent);"></span>
-          </div>
-          <textarea id="lecture-transcript-input" rows="3" placeholder="Or paste raw lecture transcript text here (optional)..."></textarea>
-
-          <div id="lecture-artifacts-list" style="margin-top:12px; max-height:420px; overflow-y:auto;"></div>
-        </div>
-
-        <!-- Feature 5: Course Homework Deep Review & O(1) Cohort Analytics -->
-        <div class="card">
-          <h2>
-            <span>&#128202; Homework Cohort Analytics ({{ selected_course.course_code }})</span>
-            <button class="btn-secondary btn-sm" onclick="seedSampleAssignment()">&#9889; Seed Sample Cohort</button>
-          </h2>
-          <p style="font-size:12px; color:var(--muted); margin-top:0;">
-            $O(1)$ incremental aggregation (mean score, topic averages, error tags, student percentile) with Stage-2 zero-PII comparative AI reviews.
-          </p>
-
-          <div style="background:#0f172a; border:1px solid var(--border); border-radius:10px; padding:10px; margin-bottom:12px;">
-            <div style="display:grid; grid-template-columns: 1fr auto; gap:8px; margin-bottom:6px;">
-              <input type="text" id="hw-new-title" placeholder="New Assignment Title (e.g. Ex3 — Concurrency)" />
-              <button class="btn-sm" onclick="createAssignment()">+ Create</button>
-            </div>
-            <input type="text" id="hw-new-rubric" placeholder="Grading rubric & topics (e.g. OOP design, pytest coverage, error handling)" />
-          </div>
-
-          <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:10px;">
-            <select id="hw-assignment-select" onchange="renderSelectedAssignment()" style="flex:1;"></select>
-          </div>
-
-          <div id="hw-cohort-kpis" style="display:grid; grid-template-columns: repeat(3, 1fr); gap:8px; margin-bottom:10px;"></div>
-          <div id="hw-top-tags" style="margin-bottom:10px; font-size:12px;"></div>
-          <div id="hw-submissions-list" style="max-height:260px; overflow-y:auto;"></div>
-        </div>
-      </div>
-    </section>
 
     <!-- Modal: Inspect Student Homework Deep AI Review -->
     <div id="modal-hw-review" class="modal-backdrop">
@@ -745,7 +694,7 @@
           <h3 id="modal-hw-review-title" style="margin:0;">Student Comparative AI Review</h3>
           <button class="btn-secondary btn-sm" onclick="closeModal('modal-hw-review')">Close</button>
         </div>
-        <pre id="modal-hw-review-body" style="white-space:pre-wrap; font-family:inherit; background:#0f172a; padding:12px; border-radius:10px; border:1px solid var(--border); font-size:13px; line-height:1.5; color:#e2e8f0;"></pre>
+        <div id="modal-hw-review-body" style="background:#0f172a; padding:14px; border-radius:10px; border:1px solid var(--border); font-size:13px; line-height:1.5; color:#e2e8f0;"></div>
       </div>
     </div>
   </main>
@@ -811,11 +760,21 @@
       boxes: {{ latest_snap.boxes_json | safe }}
     }{% else %}null{% endif %};
 
+    const LECTURER_ID = {{ lecturer.id if lecturer else 'null' }};
+    let activeTabId = "tab-attendance";
+
     function switchTab(tabId, btnEl) {
+      const targetPane = document.getElementById(tabId);
+      if (!targetPane) return;
+      activeTabId = tabId;
       document.querySelectorAll(".tab-pane").forEach(el => el.classList.remove("active"));
       document.querySelectorAll(".tab-btn").forEach(el => el.classList.remove("active"));
-      document.getElementById(tabId).classList.add("active");
-      btnEl.classList.add("active");
+      targetPane.classList.add("active");
+      const targetBtn = btnEl || document.querySelector(`.tab-btn[data-tab-target="${tabId}"]`);
+      if (targetBtn) targetBtn.classList.add("active");
+      if (tabId === "tab-chat" && window.ClassPulseNotify) {
+        window.ClassPulseNotify.clearUnread();
+      }
     }
 
     function openModal(id) { document.getElementById(id).classList.add("open"); }
@@ -846,11 +805,12 @@
       closeModal("modal-account-security");
     }
 
-    async function resetStudentDevice(studentId) {
-      if (!confirm("Unbind this student's current device so they can scan from a new phone?")) return;
-      const res = await fetch(`/api/courses/${COURSE_ID}/students/${studentId}/reset-device`, { method: "POST" });
+    async function removeStudentFromCourse(studentId, fullName) {
+      const label = fullName ? `${fullName}` : `student #${studentId}`;
+      if (!confirm(`Remove ${label} from this course and clear their course attendance records?`)) return;
+      const res = await fetch(`/api/courses/${COURSE_ID}/students/${studentId}`, { method: "DELETE" });
       const data = await res.json();
-      if (!res.ok) return alert(data.error || "Failed to reset device.");
+      if (!res.ok) return alert(data.error || "Failed to remove student.");
       window.location.reload();
     }
 
@@ -932,17 +892,38 @@
     }
 
     async function importCourseRoster() {
-      const csv_text = document.getElementById("roster-csv-text").value;
+      const fileEl = document.getElementById("roster-file-input");
+      const msgEl = document.getElementById("roster-import-msg");
+      if (!fileEl || !fileEl.files || !fileEl.files.length) {
+        if (msgEl) {
+          msgEl.style.color = "#f87171";
+          msgEl.textContent = "Please choose a .csv or .xlsx file first.";
+        }
+        return;
+      }
+      const fd = new FormData();
+      fd.append("file", fileEl.files[0]);
+      if (msgEl) {
+        msgEl.style.color = "var(--accent)";
+        msgEl.textContent = "Importing roster file...";
+      }
       const res = await fetch(`/api/courses/${COURSE_ID}/roster`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ csv_text }),
+        body: fd,
       });
       const data = await res.json();
-      if (res.ok) {
-        document.getElementById("roster-import-msg").textContent = `Imported ${data.imported} students! Reloading...`;
-        setTimeout(() => window.location.reload(), 600);
+      if (!res.ok) {
+        if (msgEl) {
+          msgEl.style.color = "#f87171";
+          msgEl.textContent = data.error || "Roster import failed.";
+        }
+        return;
       }
+      if (msgEl) {
+        msgEl.style.color = "var(--green)";
+        msgEl.textContent = `Imported ${data.imported} student(s)! Reloading...`;
+      }
+      setTimeout(() => window.location.reload(), 600);
     }
 
     // Start 5-second QR rotation + smooth loading bar + 1-second visual countdown
@@ -1305,12 +1286,12 @@
       }
       const sorted = [...chatMessages].sort((a, b) => (b.is_pinned - a.is_pinned) || (a.id - b.id));
       feed.innerHTML = sorted.map(m => `
-        <div style="background:#0f172a; border:1px solid ${m.is_pinned ? 'var(--amber)' : 'var(--border)'}; border-radius:10px; padding:10px 12px; margin-bottom:8px; font-size:13px;">
+        <div data-msg-id="${m.id}" style="background:#0f172a; border:1px solid ${m.is_pinned ? 'var(--amber)' : 'var(--border)'}; border-radius:10px; padding:10px 12px; margin-bottom:8px; font-size:13px;">
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
             <div>
-              <span class="code-pill">[${m.offset_mmss}]</span>
-              <strong style="margin-left:6px;">${m.author_name}</strong>
-              <span style="font-size:11px; color:var(--muted); margin-left:6px;">(${m.category})</span>
+              <span class="code-pill">[${escapeHtml(m.offset_mmss)}]</span>
+              <strong style="margin-left:6px;">${escapeHtml(m.author_name)}</strong>
+              <span style="font-size:11px; color:var(--muted); margin-left:6px;">(${escapeHtml(m.category)})</span>
               ${m.is_pinned ? '<span style="color:var(--amber); margin-left:6px;">&#128204; Pinned</span>' : ''}
             </div>
             <div style="display:flex; gap:6px;">
@@ -1318,9 +1299,19 @@
               <button class="btn-secondary btn-sm" onclick="pinChat(${m.id})">${m.is_pinned ? 'Unpin' : 'Pin'}</button>
             </div>
           </div>
-          <div>${m.body}</div>
+          <div>${escapeHtml(m.body)}</div>
         </div>
       `).join("");
+    }
+
+    async function fetchLatestLecturerChat() {
+      try {
+        const res = await fetch(`/api/sessions/${SESSION_ID}/chat?_ts=${Date.now()}`, { cache: "no-store" });
+        if (!res.ok) return;
+        const data = await res.json();
+        chatMessages = data.messages || [];
+        renderChatFeed();
+      } catch (_err) {}
     }
 
     async function sendLecturerChat() {
@@ -1329,19 +1320,56 @@
       const body = bodyEl.value.trim();
       if (!body) return;
       bodyEl.value = "";
-      await fetch(`/api/sessions/${SESSION_ID}/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ author_name: "Lecturer", category: catEl.value, body }),
-      });
+      try {
+        const res = await fetch(`/api/sessions/${SESSION_ID}/chat`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ as_lecturer: true, category: catEl.value, body }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          bodyEl.value = body;
+          return alert(data.error || "Could not send message.");
+        }
+        if (!chatMessages.find(x => x.id === data.id)) {
+          chatMessages.push(data);
+        }
+        renderChatFeed();
+      } catch (_err) {
+        bodyEl.value = body;
+        alert("Network error while sending chat message.");
+      }
     }
 
     async function upvoteChat(id) { await fetch(`/api/chat/${id}/upvote`, { method: "POST" }); }
     async function pinChat(id) { await fetch(`/api/chat/${id}/pin`, { method: "POST" }); }
 
+    if (window.ClassPulseNotify) {
+      window.ClassPulseNotify.init({
+        role: "lecturer",
+        baseTitle: document.title,
+        currentLecturerId: LECTURER_ID,
+        isChatVisibleFn: (payload) =>
+          activeTabId === "tab-chat" && (!payload || payload.session_code === SESSION_CODE),
+        onOpenMessage: (payload) => {
+          const msgId = payload.message_id || payload.id;
+          if (payload.session_code === SESSION_CODE) {
+            switchTab("tab-chat");
+            if (!window.ClassPulseNotify.highlightMessage(msgId)) {
+              fetchLatestLecturerChat().then(() => window.ClassPulseNotify.highlightMessage(msgId));
+            }
+          } else {
+            const cidParam = payload.course_id || COURSE_ID;
+            window.location.href = `/teacher?course_id=${cidParam}&session=${encodeURIComponent(payload.session_code)}&tab=tab-chat&msg_id=${encodeURIComponent(msgId)}`;
+          }
+        },
+      });
+    }
+
     const socket = io({ transports: ["websocket", "polling"] });
     socket.on("connect", () => {
       socket.emit("join_session", { session_code: SESSION_CODE });
+      socket.emit("join_notifications", {});
     });
     socket.on("attendance:count_update", (d) => {
       if (d && d.qr_count !== undefined) {
@@ -1365,6 +1393,11 @@
     socket.on("chat:new", (m) => {
       if (!chatMessages.find(x => x.id === m.id)) chatMessages.push(m);
       renderChatFeed();
+    });
+    socket.on("chat:notify", (payload) => {
+      if (window.ClassPulseNotify) {
+        window.ClassPulseNotify.pushChatNotification(payload);
+      }
     });
     socket.on("chat:updated", (m) => {
       const idx = chatMessages.findIndex(x => x.id === m.id);
@@ -1548,8 +1581,13 @@
         <div class="kpi" style="padding:10px;"><div class="num" style="font-size:20px; color:#4ade80;">${stats.mean_overall_score || 0}</div><div class="lbl">O(1) Mean Score</div></div>
         <div class="kpi" style="padding:10px;"><div class="num" style="font-size:20px;">${topicCount}</div><div class="lbl">Tracked Topics</div></div>
       `;
+      const catAvgs = Object.entries(stats.category_averages || {}).map(
+        ([k, v]) => `<span class="code-pill" style="margin-right:4px;">${escapeHtml(k)}: ${v}/100</span>`
+      ).join("");
       const tagsHtml = (stats.top_error_tags || []).map(t => `<span class="code-pill" style="margin-right:4px;">${escapeHtml(t.tag)} (${t.count})</span>`).join("");
-      tagsEl.innerHTML = tagsHtml ? `<strong>Top Cohort Error Tags:</strong> ${tagsHtml}` : "";
+      tagsEl.innerHTML =
+        (catAvgs ? `<div style="margin-bottom:4px;"><strong>Category Cohort Averages:</strong> ${catAvgs}</div>` : "") +
+        (tagsHtml ? `<div><strong>Top Cohort Error Tags:</strong> ${tagsHtml}</div>` : "");
 
       const subs = a.submissions || [];
       if (!subs.length) {
@@ -1558,17 +1596,23 @@
       }
       listEl.innerHTML = `
         <table>
-          <thead><tr><th>Student</th><th>Ver</th><th>Score</th><th>Percentile</th><th>Review</th></tr></thead>
+          <thead><tr><th>Student</th><th>Ver</th><th>AI Rubric</th><th>Class Score (1-10)</th><th>Weakest Category</th><th>Review</th></tr></thead>
           <tbody>
             ${subs.map(s => {
-              const score = s.metrics ? s.metrics.overall_score : 0;
-              const pct = s.cohort_snapshot ? s.cohort_snapshot.student_percentile : "—";
+              const score = s.ai_rubric_grade !== undefined ? s.ai_rubric_grade : (s.metrics ? s.metrics.overall_score : 0);
+              const standing = s.class_standing || {};
+              const clsScore = standing.class_score !== undefined ? `${standing.class_score}/10 (#${standing.rank}/${standing.cohort_size})` : "—";
+              const cats = Array.isArray(s.category_breakdown) ? s.category_breakdown : [];
+              const weakest = cats.length
+                ? [...cats].sort((x, y) => x.ai_rubric_score - y.ai_rubric_score)[0]
+                : null;
               return `
                 <tr>
                   <td><strong>${escapeHtml(s.student_name)}</strong></td>
                   <td>v${s.version}</td>
                   <td><span class="badge VERIFIED">${score}/100</span></td>
-                  <td>${pct}%</td>
+                  <td><span class="badge" style="background:rgba(168,85,247,0.2); color:#d8b4fe; border:1px solid rgba(168,85,247,0.45);">${clsScore}</span></td>
+                  <td style="font-size:11px; color:var(--muted);">${weakest ? `${escapeHtml(weakest.label)} (${weakest.class_score}/10)` : "—"}</td>
                   <td><button class="btn-secondary btn-sm" onclick="openReviewModal(${s.id}, ${a.id})">View Review</button></td>
                 </tr>
               `;
@@ -1578,12 +1622,49 @@
       `;
     }
 
+    function renderTeacherReviewHtml(md) {
+      const safe = escapeHtml(md || "No review generated yet.");
+      const fmt = (s) =>
+        s
+          .replace(/\*\*(.+?)\*\*/g, '<strong style="color:#f8fafc;">$1</strong>')
+          .replace(/`([^`]+)`/g, '<code style="background:#1e293b; color:#bae6fd; padding:1px 5px; border-radius:4px; font-size:11px;">$1</code>');
+      let html = "";
+      let inList = false;
+      for (const raw of safe.split(/\r?\n/)) {
+        const line = raw.trim();
+        if (!line) {
+          if (inList) { html += "</ul>"; inList = false; }
+          continue;
+        }
+        if (line.startsWith("### ") || line.startsWith("## ")) {
+          if (inList) { html += "</ul>"; inList = false; }
+          html += `<div style="font-size:11px; font-weight:800; color:var(--accent); text-transform:uppercase; letter-spacing:0.04em; margin:10px 0 4px;">${fmt(line.replace(/^#{2,3}\s+/, ""))}</div>`;
+        } else if (line.startsWith("- ") || line.startsWith("* ")) {
+          if (!inList) { html += '<ul style="margin:0 0 6px 18px; padding:0;">'; inList = true; }
+          html += `<li style="margin:3px 0; color:#e2e8f0;">${fmt(line.slice(2))}</li>`;
+        } else {
+          if (inList) { html += "</ul>"; inList = false; }
+          html += `<p style="margin:4px 0; color:#cbd5e1;">${fmt(line)}</p>`;
+        }
+      }
+      if (inList) html += "</ul>";
+      return html;
+    }
+
     function openReviewModal(subId, assignId) {
       const a = courseAssignments.find(x => x.id === assignId);
       const sub = a && (a.submissions || []).find(s => s.id === subId);
       if (!sub) return;
       document.getElementById("modal-hw-review-title").textContent = `${sub.student_name} — ${a.title} (v${sub.version})`;
-      document.getElementById("modal-hw-review-body").textContent = sub.deep_review_md || "No review generated yet.";
+      const standing = sub.class_standing || {};
+      const rubricScore = sub.ai_rubric_grade !== undefined ? sub.ai_rubric_grade : (sub.metrics ? sub.metrics.overall_score : 0);
+      const summaryBadges = `
+        <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; padding-bottom:10px; border-bottom:1px solid var(--border);">
+          <span class="badge VERIFIED">AI Rubric: ${rubricScore}/100</span>
+          <span class="badge" style="background:rgba(168,85,247,0.2); color:#d8b4fe; border:1px solid rgba(168,85,247,0.45);">Class Standing: ${standing.class_score || 10}/10 (#${standing.rank || 1}/${standing.cohort_size || 1})</span>
+        </div>
+      `;
+      document.getElementById("modal-hw-review-body").innerHTML = summaryBadges + renderTeacherReviewHtml(sub.deep_review_md);
       openModal("modal-hw-review");
     }
 
@@ -1623,8 +1704,24 @@
     // Initial load + resilient 3.5-second live background sync (guarantees zero-refresh updates even across tunnels)
     refreshOverview();
     loadPolls();
+    fetchLatestLecturerChat();
     loadLectureArtifacts();
     loadAssignments();
+
+    (function handleDeepLinkParams() {
+      const params = new URLSearchParams(window.location.search);
+      const targetTab = params.get("tab");
+      const targetMsgId = params.get("msg_id");
+      if (targetTab) switchTab(targetTab);
+      if (targetMsgId && window.ClassPulseNotify) {
+        setTimeout(() => {
+          if (!window.ClassPulseNotify.highlightMessage(targetMsgId)) {
+            fetchLatestLecturerChat().then(() => window.ClassPulseNotify.highlightMessage(targetMsgId));
+          }
+        }, 350);
+      }
+    })();
+
     setInterval(() => {
       refreshOverview();
       loadPolls();

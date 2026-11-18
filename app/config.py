@@ -40,9 +40,9 @@ class Config:
 
     # Google AI Studio settings (Features 4 & 5)
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
-    GEMINI_FAST_MODEL: str = os.getenv("GEMINI_FAST_MODEL", "gemini-3.8-flash")
-    GEMINI_PRO_MODEL: str = os.getenv("GEMINI_PRO_MODEL", "gemini-3.8-flash")
-    GEMINI_MIN_INTERVAL_SEC: float = float(os.getenv("GEMINI_MIN_INTERVAL_SEC", "4.5"))
+    GEMINI_FAST_MODEL: str = os.getenv("GEMINI_FAST_MODEL", "gemini-2.5-flash-lite")
+    GEMINI_PRO_MODEL: str = os.getenv("GEMINI_PRO_MODEL", "gemini-2.5-flash-lite")
+    GEMINI_MIN_INTERVAL_SEC: float = float(os.getenv("GEMINI_MIN_INTERVAL_SEC", "1.5"))
 
     # Background task executor threads
     MAX_TASK_WORKERS: int = int(os.getenv("MAX_TASK_WORKERS", "2"))

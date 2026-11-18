@@ -1,0 +1,41 @@
+    <!-- TAB 4: Dedicated AI Lecture Summarizer (Feature 4) -->
+    <section id="tab-ai-lectures" class="tab-pane">
+      <div class="card" style="margin-bottom:18px;">
+        <h2>
+          <span>&#127908; AI Lecture Recording &amp; Summarizer ({{ session.session_code }})</span>
+          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+            <span class="badge {{ 'VERIFIED' if gemini_configured else 'UNDER_SCANNED' }}">
+              Google Gemini API: {{ 'Live (Transcribe & Summarize)' if gemini_configured else 'Offline Fallback (faster-whisper)' }}
+            </span>
+            <button class="btn-secondary btn-sm" onclick="summarizeLecture(true)">&#9889; Run Ariel Lecture Sample</button>
+          </div>
+        </h2>
+        <p style="font-size:13px; color:var(--muted); margin-top:0;">
+          Upload a class recording (<code>.mp4</code>, <code>.m4a</code>, <code>.mp3</code>, <code>.wav</code>, <code>.vtt</code>) or paste raw notes. ClassPulse sends recordings to <strong>Google Gemini API</strong> to transcribe with <code>[MM:SS]</code> timestamps, then uses Gemini AI to synthesize structured lecturer notes cross-referenced with student Q&amp;A.
+        </p>
+
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:14px; align-items:start;">
+          <div style="background:#0f172a; border:1px solid var(--border); border-radius:10px; padding:12px;">
+            <div style="font-size:12px; font-weight:700; color:var(--accent); margin-bottom:8px;">Upload Audio / Video Recording</div>
+            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+              <input type="file" id="lecture-media-input" accept=".mp4,.wav,.mp3,.m4a,.ogg,.webm,.vtt,.srt,.txt" />
+              <button class="btn-green btn-sm" onclick="summarizeLecture(false)">Upload, Transcribe &amp; Summarize</button>
+            </div>
+            <div id="lecture-ai-status" style="font-size:12px; font-weight:600; color:var(--accent); margin-top:8px;"></div>
+          </div>
+
+          <div style="background:#0f172a; border:1px solid var(--border); border-radius:10px; padding:12px;">
+            <div style="font-size:12px; font-weight:700; color:var(--muted); margin-bottom:6px;">Or Paste Transcript / Notes Manually (Optional)</div>
+            <textarea id="lecture-transcript-input" rows="3" placeholder="Paste raw lecture transcript lines here..."></textarea>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>
+          <span>Published Study Guides &amp; Transcripts ({{ session.session_code }})</span>
+          <button class="btn-secondary btn-sm" onclick="loadLectureArtifacts()">&#8635; Refresh</button>
+        </h2>
+        <div id="lecture-artifacts-list" style="max-height:620px; overflow-y:auto;"></div>
+      </div>
+    </section>

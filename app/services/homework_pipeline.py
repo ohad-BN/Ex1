@@ -4,13 +4,14 @@ import bisect
 import io
 import json
 import logging
+import re
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
 import requests
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
 from app.models import (
@@ -68,16 +69,145 @@ class HomeworkPipelineError(Exception):
         self.status_code = status_code
 
 
+STANDARD_CATEGORIES: tuple[tuple[str, str, str], ...] = (
+    (
+        "materials_details",
+        "Materials & Details",
+        "Completeness of deliverables, prompt adherence, documentation, and edge-case details.",
+    ),
+    (
+        "execution_style",
+        "Execution Style",
+        "Readability, naming conventions, modularity, and structural craftsmanship.",
+    ),
+    (
+        "technical_logic",
+        "Technical Logic & Architecture",
+        "Functional correctness, architectural patterns, error handling, and portability.",
+    ),
+    (
+        "testing_verification",
+        "Testing & Verification",
+        "Automated test coverage, assertions, and verification of edge/failure cases.",
+    ),
+)
+STANDARD_CATEGORY_LABELS: tuple[str, ...] = tuple(item[1] for item in STANDARD_CATEGORIES)
+STANDARD_CATEGORY_BY_LABEL: dict[str, tuple[str, str]] = {
+    label: (key, desc) for key, label, desc in STANDARD_CATEGORIES
+}
+
+
+def _normalize_standard_categories(
+    raw_scores: dict[str, float],
+    raw_notes: dict[str, str],
+    overall_score: float,
+    topic_scores: dict[str, float],
+) -> tuple[dict[str, float], dict[str, str]]:
+    """Ensure all 4 standardized comparative categories exist, deriving sensible fallbacks if omitted."""
+    fallback_pool = list(topic_scores.values())
+    avg_topic = round(sum(fallback_pool) / len(fallback_pool), 1) if fallback_pool else float(overall_score)
+    scores_out: dict[str, float] = {}
+    notes_out: dict[str, str] = {}
+
+    lower_score_map = {str(k).strip().lower(): float(v) for k, v in raw_scores.items()}
+    lower_note_map = {str(k).strip().lower(): str(v).strip() for k, v in raw_notes.items()}
+
+    for key, label, _desc in STANDARD_CATEGORIES:
+        val = (
+            raw_scores.get(label)
+            if label in raw_scores
+            else lower_score_map.get(label.lower(), lower_score_map.get(key))
+        )
+        if val is None:
+            val = float(overall_score) if overall_score else avg_topic
+        scores_out[label] = round(max(0.0, min(100.0, float(val))), 1)
+
+        note = (
+            raw_notes.get(label)
+            if label in raw_notes
+            else lower_note_map.get(label.lower(), lower_note_map.get(key, ""))
+        )
+        notes_out[label] = str(note or "").strip()
+    return scores_out, notes_out
+
+
+class TopicScoreItem(BaseModel):
+    """Single topic-score pair avoiding JSON-schema additionalProperties for Gemini API."""
+
+    topic: str
+    score: float = Field(ge=0.0, le=100.0)
+
+
+class CategoryEvaluationItem(BaseModel):
+    """Structured rubric score and diagnostic note for a standardized homework category."""
+
+    category: str
+    score: float = Field(ge=0.0, le=100.0)
+    note: str = ""
+
+
 class HomeworkMetrics(BaseModel):
     """Stage-1 Pydantic schema extracted for a single student submission."""
 
     overall_score: float = Field(ge=0.0, le=100.0)
     topic_scores: dict[str, float] = Field(default_factory=dict)
+    category_scores: dict[str, float] = Field(default_factory=dict)
+    category_notes: dict[str, str] = Field(default_factory=dict)
+    telemetry: dict[str, float] = Field(default_factory=dict)
     requirements_coverage_pct: float = Field(ge=0.0, le=100.0)
     strengths: list[str] = Field(default_factory=list)
     weaknesses: list[str] = Field(default_factory=list)
     error_tags: list[str] = Field(default_factory=list)
     style_summary: str = ""
+
+
+class HomeworkMetricsResponse(BaseModel):
+    """Gemini-compatible Stage-1 schema mapping topic_scores and categories as arrays."""
+
+    overall_score: float = Field(ge=0.0, le=100.0)
+    topic_scores: list[TopicScoreItem] = Field(default_factory=list)
+    categories: list[CategoryEvaluationItem] = Field(default_factory=list)
+    requirements_coverage_pct: float = Field(ge=0.0, le=100.0)
+    strengths: list[str] = Field(default_factory=list)
+    weaknesses: list[str] = Field(default_factory=list)
+    error_tags: list[str] = Field(default_factory=list)
+    style_summary: str = ""
+
+    @field_validator("topic_scores", mode="before")
+    @classmethod
+    def _coerce_topic_scores(cls, value: Any) -> Any:
+        if isinstance(value, dict):
+            return [{"topic": str(k), "score": float(v)} for k, v in value.items()]
+        return value
+
+    @field_validator("categories", mode="before")
+    @classmethod
+    def _coerce_categories(cls, value: Any) -> Any:
+        if isinstance(value, dict):
+            return [
+                {"category": str(k), "score": float(v), "note": ""}
+                for k, v in value.items()
+            ]
+        return value
+
+    def to_metrics(self) -> HomeworkMetrics:
+        topics = {item.topic: float(item.score) for item in self.topic_scores}
+        raw_cat_scores = {item.category: float(item.score) for item in self.categories}
+        raw_cat_notes = {item.category: item.note for item in self.categories if item.note}
+        cat_scores, cat_notes = _normalize_standard_categories(
+            raw_cat_scores, raw_cat_notes, self.overall_score, topics
+        )
+        return HomeworkMetrics(
+            overall_score=self.overall_score,
+            topic_scores=topics,
+            category_scores=cat_scores,
+            category_notes=cat_notes,
+            requirements_coverage_pct=self.requirements_coverage_pct,
+            strengths=list(self.strengths),
+            weaknesses=list(self.weaknesses),
+            error_tags=list(self.error_tags),
+            style_summary=self.style_summary,
+        )
 
 
 class SubmissionExtractor:
@@ -168,16 +298,48 @@ class SubmissionExtractor:
         github_url: Optional[str] = None,
     ) -> tuple[str, str, str]:
         """Return (extracted_text, source_type, source_ref)."""
-        if content_text and content_text.strip():
-            return content_text.strip()[: self.max_chars], "text", "inline://submission"
+        clean_notes = (content_text or "").strip()
         if file_path is not None:
-            return self.extract_from_file(file_path), "file", str(file_path)
+            file_text = self.extract_from_file(file_path).strip()
+            combined = (
+                f"{file_text}\n\n--- STUDENT NOTES ---\n{clean_notes}".strip()
+                if file_text and clean_notes
+                else (file_text or clean_notes)
+            )
+            if not combined:
+                raise HomeworkPipelineError(
+                    "Uploaded file contained no readable text or supported source files.",
+                    status_code=400,
+                )
+            return combined[: self.max_chars], "file", str(file_path)
+        if clean_notes:
+            return clean_notes[: self.max_chars], "text", "inline://submission"
         if github_url and github_url.strip():
             return self.extract_from_github_url(github_url), "github", github_url.strip()
         raise HomeworkPipelineError(
             "Provide code/text, upload a submission file, or enter a GitHub repository URL.",
             status_code=400,
         )
+
+    @staticmethod
+    def extract_telemetry(extracted_text: str) -> dict[str, float]:
+        """Compute deterministic structural metrics (zero LLM calls) for peer comparison."""
+        text = extracted_text or ""
+        non_empty_lines = [ln for ln in text.splitlines() if ln.strip()]
+        structures = re.findall(
+            r"(?m)^\s*(?:def |async def |class |public class |function )", text
+        )
+        assertions = re.findall(
+            r"\b(?:assert\w*|expect|describe|test_|pytest|@Test)\b", text
+        )
+        doc_signals = re.findall(r'("""|\'\'\'|/\*\*|\s#\s|//)', text)
+        return {
+            "line_count": float(len(non_empty_lines)),
+            "char_count": float(len(text)),
+            "structure_count": float(len(structures)),
+            "assertion_count": float(len(assertions)),
+            "doc_signals": float(len(doc_signals)),
+        }
 
 
 class CohortAggregator:
@@ -199,9 +361,20 @@ class CohortAggregator:
         except (json.JSONDecodeError, TypeError, ValueError):
             return []
 
+    @staticmethod
+    def _remove_nearest_score(scores: list[float], old_score: float) -> None:
+        if not scores:
+            return
+        idx = bisect.bisect_left(scores, old_score - 1e-4)
+        if idx < len(scores) and abs(scores[idx] - old_score) <= 1e-3:
+            scores.pop(idx)
+        else:
+            nearest_idx = min(range(len(scores)), key=lambda i: abs(scores[i] - old_score))
+            scores.pop(nearest_idx)
+
     @classmethod
     def apply_metrics(cls, stats: ClassStatsAggregate, metrics: HomeworkMetrics) -> None:
-        """Update aggregate mean, topic sums, sorted scores, and error tag frequencies in O(1)."""
+        """Update aggregate mean, topic sums, category lists, telemetry, and tags in O(1)."""
         prev_count = int(stats.submission_count or 0)
         prev_total = float(stats.mean_overall_score or 0.0) * prev_count
         new_count = prev_count + 1
@@ -217,6 +390,21 @@ class CohortAggregator:
         scores = cls._load_list(stats.scores_list_json)
         bisect.insort(scores, new_score)
         stats.scores_list_json = json.dumps(scores)
+
+        cat_scores_norm, _ = _normalize_standard_categories(
+            metrics.category_scores, metrics.category_notes, new_score, metrics.topic_scores
+        )
+        cat_lists = cls._load_dict(getattr(stats, "category_scores_json", "{}") or "{}")
+        for cat_label, cat_val in cat_scores_norm.items():
+            lst = [float(x) for x in cat_lists.get(cat_label, [])]
+            bisect.insort(lst, float(cat_val))
+            cat_lists[cat_label] = lst
+        stats.category_scores_json = json.dumps(cat_lists)
+
+        telem_sums = cls._load_dict(getattr(stats, "telemetry_sums_json", "{}") or "{}")
+        for t_key, t_val in metrics.telemetry.items():
+            telem_sums[t_key] = round(float(telem_sums.get(t_key, 0.0)) + float(t_val), 4)
+        stats.telemetry_sums_json = json.dumps(telem_sums)
 
         tag_counts = cls._load_dict(stats.error_tag_counts_json)
         for tag in metrics.error_tags:
@@ -255,15 +443,33 @@ class CohortAggregator:
         stats.topic_sums_json = json.dumps(topic_sums)
 
         scores = cls._load_list(stats.scores_list_json)
-        if scores:
-            idx = bisect.bisect_left(scores, old_score - 1e-4)
-            if idx < len(scores) and abs(scores[idx] - old_score) <= 1e-3:
-                scores.pop(idx)
-            else:
-                # Remove nearest match if float serialization drifted slightly
-                nearest_idx = min(range(len(scores)), key=lambda i: abs(scores[i] - old_score))
-                scores.pop(nearest_idx)
+        cls._remove_nearest_score(scores, old_score)
         stats.scores_list_json = json.dumps(scores)
+
+        old_cat_norm, _ = _normalize_standard_categories(
+            old_metrics.category_scores, old_metrics.category_notes, old_score, old_metrics.topic_scores
+        )
+        cat_lists = cls._load_dict(getattr(stats, "category_scores_json", "{}") or "{}")
+        for cat_label, cat_val in old_cat_norm.items():
+            raw_lst = cat_lists.get(cat_label)
+            if isinstance(raw_lst, list) and raw_lst:
+                lst = [float(x) for x in raw_lst]
+                cls._remove_nearest_score(lst, float(cat_val))
+                if lst and new_count > 0:
+                    cat_lists[cat_label] = lst
+                else:
+                    cat_lists.pop(cat_label, None)
+        stats.category_scores_json = json.dumps(cat_lists)
+
+        telem_sums = cls._load_dict(getattr(stats, "telemetry_sums_json", "{}") or "{}")
+        for t_key, t_val in old_metrics.telemetry.items():
+            if t_key in telem_sums:
+                rem_t = round(float(telem_sums[t_key]) - float(t_val), 4)
+                if rem_t <= 1e-6 or new_count == 0:
+                    telem_sums.pop(t_key, None)
+                else:
+                    telem_sums[t_key] = rem_t
+        stats.telemetry_sums_json = json.dumps(telem_sums)
 
         tag_counts = cls._load_dict(stats.error_tag_counts_json)
         for tag in old_metrics.error_tags:
@@ -276,6 +482,114 @@ class CohortAggregator:
                     tag_counts[clean_tag] = rem_tag
         stats.error_tag_counts_json = json.dumps(tag_counts)
         stats.updated_at = datetime.now(timezone.utc)
+
+    @staticmethod
+    def compute_relative_class_score(
+        scores_list: list[float], score: float
+    ) -> dict[str, Any]:
+        """Compute peer-only dynamic 1-10 Class Standing from sorted cohort scores."""
+        target = float(score)
+        sorted_scores = sorted(float(x) for x in scores_list)
+        if not sorted_scores:
+            return {
+                "class_score": 10,
+                "class_score_precise": 10.0,
+                "rank": 1,
+                "cohort_size": 1,
+                "leader_score": round(target, 1),
+                "cohort_mean": round(target, 1),
+            }
+
+        n = len(sorted_scores)
+        s_max = sorted_scores[-1]
+        s_min = sorted_scores[0]
+        mean = round(sum(sorted_scores) / n, 1)
+        rank = 1 + sum(1 for x in sorted_scores if x > target + 1e-6)
+
+        if n <= 1 or abs(s_max - s_min) <= 1e-6 or target >= s_max - 1e-6:
+            return {
+                "class_score": 10,
+                "class_score_precise": 10.0,
+                "rank": rank,
+                "cohort_size": n,
+                "leader_score": round(s_max, 1),
+                "cohort_mean": mean,
+            }
+
+        spread = max(35.0, s_max - s_min)
+        gap_score = 10.0 - 9.0 * min(1.0, max(0.0, s_max - target) / spread)
+        below = sum(1 for x in sorted_scores if x < target - 1e-6)
+        equal = sum(1 for x in sorted_scores if abs(x - target) <= 1e-6)
+        pct = (below + 0.5 * max(0, equal - 1)) / max(1, n - 1)
+        rank_floor = max(1.0, 10.0 - 1.5 * (n - 1))
+        ord_score = rank_floor + (10.0 - rank_floor) * pct
+        raw = 0.65 * gap_score + 0.35 * ord_score
+        return {
+            "class_score": max(1, min(9, int(round(raw)))),
+            "class_score_precise": round(max(1.0, min(9.9, raw)), 1),
+            "rank": rank,
+            "cohort_size": n,
+            "leader_score": round(s_max, 1),
+            "cohort_mean": mean,
+        }
+
+    @classmethod
+    def build_category_comparison(
+        cls, stats: ClassStatsAggregate, metrics_dict: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        """Build zero-PII per-category relative standing (1-10) + cohort mean/best."""
+        overall = float(metrics_dict.get("overall_score", 0.0) or 0.0)
+        topic_scores = metrics_dict.get("topic_scores") or {}
+        cat_scores, cat_notes = _normalize_standard_categories(
+            metrics_dict.get("category_scores") or {},
+            metrics_dict.get("category_notes") or {},
+            overall,
+            topic_scores,
+        )
+        cat_lists = cls._load_dict(getattr(stats, "category_scores_json", "{}") or "{}")
+        overall_list = cls._load_list(stats.scores_list_json)
+
+        out: list[dict[str, Any]] = []
+        for key, label, desc in STANDARD_CATEGORIES:
+            mine = float(cat_scores[label])
+            peer_scores = cat_lists.get(label)
+            if not isinstance(peer_scores, list) or not peer_scores:
+                peer_scores = overall_list or [mine]
+            rel = cls.compute_relative_class_score([float(x) for x in peer_scores], mine)
+            out.append(
+                {
+                    "key": key,
+                    "label": label,
+                    "description": desc,
+                    "ai_rubric_score": round(mine, 1),
+                    "class_score": rel["class_score"],
+                    "class_score_precise": rel["class_score_precise"],
+                    "rank": rel["rank"],
+                    "cohort_size": rel["cohort_size"],
+                    "cohort_mean": rel["cohort_mean"],
+                    "cohort_best": rel["leader_score"],
+                    "note": cat_notes.get(label, ""),
+                }
+            )
+        return out
+
+    @classmethod
+    def build_telemetry_comparison(
+        cls, stats: ClassStatsAggregate, metrics_dict: dict[str, Any]
+    ) -> dict[str, dict[str, float]]:
+        """Compare deterministic structural metrics of this submission against cohort average."""
+        telemetry = metrics_dict.get("telemetry") or {}
+        if not telemetry:
+            return {}
+        count = max(1, int(stats.submission_count or 0))
+        telem_sums = cls._load_dict(getattr(stats, "telemetry_sums_json", "{}") or "{}")
+        result: dict[str, dict[str, float]] = {}
+        for key in ("line_count", "structure_count", "assertion_count", "doc_signals"):
+            if key in telemetry:
+                mine_val = float(telemetry[key])
+                avg_val = round(float(telem_sums.get(key, mine_val)) / count, 1)
+                result[key] = {"mine": round(mine_val, 1), "cohort_avg": avg_val}
+        return result
 
     @staticmethod
     def compute_percentile(scores_list: list[float], score: float) -> float:
@@ -309,6 +623,16 @@ class CohortAggregator:
             )[:5]
         ]
 
+        cat_lists = cls._load_dict(getattr(stats, "category_scores_json", "{}") or "{}")
+        category_averages: dict[str, float] = {}
+        category_bests: dict[str, float] = {}
+        for _key, label, _desc in STANDARD_CATEGORIES:
+            raw_lst = cat_lists.get(label)
+            if isinstance(raw_lst, list) and raw_lst:
+                vals = [float(x) for x in raw_lst]
+                category_averages[label] = round(sum(vals) / len(vals), 1)
+                category_bests[label] = round(max(vals), 1)
+
         percentile = (
             cls.compute_percentile(scores, student_score)
             if student_score is not None and count > 0
@@ -319,6 +643,8 @@ class CohortAggregator:
             "mean_overall_score": round(float(stats.mean_overall_score or 0.0), 1),
             "student_percentile": percentile,
             "topic_averages": topic_averages,
+            "category_averages": category_averages,
+            "category_bests": category_bests,
             "top_error_tags": top_tags,
         }
 
@@ -384,13 +710,31 @@ class HomeworkReviewService:
             metrics = json.loads(sub.metrics_json or "{}")
         except json.JSONDecodeError:
             metrics = {}
-        overall_score = metrics.get("overall_score", 0.0)
+        overall_score = float(metrics.get("overall_score", 0.0) or 0.0)
         cohort_snapshot = (
             CohortAggregator.build_anonymized_cohort_snapshot(
-                stats, student_score=float(overall_score)
+                stats, student_score=overall_score
             )
             if stats is not None
             else None
+        )
+        scores_list = (
+            CohortAggregator._load_list(stats.scores_list_json)
+            if stats is not None
+            else [overall_score]
+        )
+        class_standing = CohortAggregator.compute_relative_class_score(
+            scores_list or [overall_score], overall_score
+        )
+        category_breakdown = (
+            CohortAggregator.build_category_comparison(stats, metrics)
+            if stats is not None
+            else []
+        )
+        telemetry_comparison = (
+            CohortAggregator.build_telemetry_comparison(stats, metrics)
+            if stats is not None
+            else {}
         )
         return {
             "id": sub.id,
@@ -402,6 +746,10 @@ class HomeworkReviewService:
             "source_type": sub.source_type,
             "source_ref": sub.source_ref,
             "metrics": metrics,
+            "ai_rubric_grade": round(overall_score, 1),
+            "class_standing": class_standing,
+            "category_breakdown": category_breakdown,
+            "telemetry_comparison": telemetry_comparison,
             "deep_review_md": sub.deep_review_md,
             "cohort_snapshot": cohort_snapshot,
             "submitted_at": sub.submitted_at.strftime("%Y-%m-%d %H:%M UTC"),
@@ -489,21 +837,30 @@ class HomeworkReviewService:
             github_url=github_url,
         )
 
+        cat_instructions = "\n".join(
+            f"- {label}: {desc}" for _k, label, desc in STANDARD_CATEGORIES
+        )
         stage1_prompt = (
             f"Assignment Title: {assignment.title}\n"
             f"Rubric: {assignment.rubric_text}\n"
             f"Topics: {assignment.topics_json}\n\n"
+            f"Standardized Evaluation Categories (populate ALL 4 inside `categories` with 0-100 score + 1-sentence note):\n"
+            f"{cat_instructions}\n\n"
             f"Student Submission Code/Text:\n{extracted_code}"
         )
-        metrics = self.llm_client.generate_structured(
+        metrics_resp = self.llm_client.generate_structured(
             stage1_prompt,
-            HomeworkMetrics,
+            HomeworkMetricsResponse,
             system_instruction=(
-                "Grade this single submission strictly against the rubric and return "
-                "structured HomeworkMetrics JSON."
+                "Grade this single submission strictly against the rubric. "
+                "Populate both assignment topic_scores and all 4 standardized categories "
+                "('Materials & Details', 'Execution Style', 'Technical Logic & Architecture', 'Testing & Verification') "
+                "with concise 1-sentence diagnostic notes in HomeworkMetricsResponse JSON."
             ),
             model=self.llm_client.fast_model,
         )
+        metrics = metrics_resp.to_metrics()
+        metrics.telemetry = self.extractor.extract_telemetry(extracted_code)
 
         stats = self._ensure_stats(assignment.id)
         existing = (
@@ -554,10 +911,25 @@ class HomeworkReviewService:
         anonymized_cohort = CohortAggregator.build_anonymized_cohort_snapshot(
             stats, student_score=metrics.overall_score
         )
+        scores_list = CohortAggregator._load_list(stats.scores_list_json) or [
+            metrics.overall_score
+        ]
+        class_standing = CohortAggregator.compute_relative_class_score(
+            scores_list, metrics.overall_score
+        )
+        category_breakdown = CohortAggregator.build_category_comparison(
+            stats, metrics.model_dump()
+        )
+        telemetry_comparison = CohortAggregator.build_telemetry_comparison(
+            stats, metrics.model_dump()
+        )
         return {
             "assignment_title": assignment.title if assignment else "",
             "rubric_text": assignment.rubric_text if assignment else "",
             "student_metrics": metrics.model_dump(),
+            "class_standing": class_standing,
+            "category_breakdown": category_breakdown,
+            "telemetry_comparison": telemetry_comparison,
             "anonymized_cohort_snapshot": anonymized_cohort,
         }
 
@@ -570,47 +942,54 @@ class HomeworkReviewService:
         payload = self.build_stage2_prompt_payload(submission_id)
         metrics = payload["student_metrics"]
         cohort = payload["anonymized_cohort_snapshot"]
+        standing = payload["class_standing"]
+        categories = payload["category_breakdown"]
 
         if self.llm_client.is_configured():
             prompt = (
-                "Compare ONLY this student's structured metrics against the anonymized class cohort statistics. "
+                "Write a SHORT, direct, scannable student review (MAX 110 words total). "
+                "The UI already displays the 0-100 AI Rubric Grade, the 1-10 Class Standing, and the 4 Category bars — "
+                "so do NOT repeat big numeric tables. Use ONLY these 3 compact Markdown sections:\n"
+                "### Summary\n(1-2 crisp sentences explaining where they stand vs classmates)\n"
+                "### What Worked\n(2 short bullet points)\n"
+                "### Fix Next\n(2-3 high-impact bullets starting with their lowest category)\n"
                 "Do not speculate about individual classmates.\n\n"
                 f"Payload JSON:\n{json.dumps(payload, indent=2)}"
             )
             review_md = self.llm_client.generate_text(
                 prompt,
                 system_instruction=(
-                    "Write an encouraging, actionable university TA feedback report comparing "
-                    "the student's rubric scores against the anonymized cohort averages and common pitfalls."
+                    "You are a concise university TA. Be crisp, encouraging, and to the point (<= 110 words). "
+                    "Use only simple bullets and ### headings; zero filler."
                 ),
                 model=self.llm_client.fast_model,
             )
         else:
             score = metrics["overall_score"]
             mean = cohort["mean_overall_score"]
-            pct = cohort["student_percentile"]
             delta = round(score - mean, 1)
             delta_str = f"+{delta}" if delta >= 0 else f"{delta}"
-            topic_lines = "\n".join(
-                f"- **{topic}**: You scored `{val}` vs. Class Average `{cohort['topic_averages'].get(topic, val)}`"
-                for topic, val in metrics.get("topic_scores", {}).items()
+            weakest = sorted(categories, key=lambda c: c["ai_rubric_score"])[0] if categories else None
+            strengths_md = "\n".join(f"- {s}" for s in metrics.get("strengths", [])[:2])
+            weaknesses_md = "\n".join(f"- {w}" for w in metrics.get("weaknesses", [])[:2])
+            top_tag = cohort.get("top_error_tags", [])
+            pitfall_line = (
+                f"- Watch out for `{top_tag[0]['tag']}` (common in {top_tag[0]['count']} submission(s))."
+                if top_tag
+                else ""
             )
-            strengths_md = "\n".join(f"- {s}" for s in metrics.get("strengths", []))
-            weaknesses_md = "\n".join(f"- {w}" for w in metrics.get("weaknesses", []))
-            pitfalls_md = "\n".join(
-                f"- `{item['tag']}` ({item['count']} cohort submission(s))"
-                for item in cohort.get("top_error_tags", [])
-            ) or "- None recorded yet."
+            focus_line = (
+                f"Priority focus: **{weakest['label']}** (`{weakest['class_score']}/10` class standing)."
+                if weakest
+                else ""
+            )
 
             review_md = (
                 f"### Comparative Performance Summary\n"
-                f"- **Your Score:** `{score}/100` (**{pct}th percentile** across {cohort['submission_count']} submission(s))\n"
-                f"- **Class Mean:** `{mean}/100` (`{delta_str}` pts vs. cohort mean)\n"
-                f"- **Requirements Coverage:** `{metrics['requirements_coverage_pct']}%`\n\n"
-                f"### Topic Comparison vs. Anonymized Cohort\n{topic_lines}\n\n"
-                f"### Key Strengths\n{strengths_md}\n\n"
-                f"### Recommended Next Improvements\n{weaknesses_md}\n\n"
-                f"### Most Common Class Cohort Error Tags\n{pitfalls_md}"
+                f"AI Rubric **{score}/100** (`{delta_str}` vs. class avg `{mean}`) &bull; Class Standing **{standing['class_score']}/10** (#{standing['rank']} of {standing['cohort_size']}). {focus_line}\n\n"
+                f"### What Worked\n{strengths_md}\n\n"
+                f"### Fix Next\n{weaknesses_md}"
+                + (f"\n{pitfall_line}" if pitfall_line else "")
             )
 
         sub.deep_review_md = review_md

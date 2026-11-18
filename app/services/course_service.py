@@ -873,14 +873,16 @@ class CourseService:
         self.db.commit()
         return course, student
 
-    def import_course_roster_csv(self, course_id: int, csv_content: str) -> int:
-        """Import a CSV of (Full Name, Email[, Student ID]) into CourseEnrollment and all sessions."""
+    def import_course_roster_rows(
+        self, course_id: int, rows: list[tuple[Optional[str], str, str]]
+    ) -> int:
+        """Enroll parsed (Student ID, Full Name, Email) rows into CourseEnrollment and all sessions."""
         course = self.db.get(Course, course_id)
         if course is None:
             raise CourseError("Course not found.", status_code=404)
 
         count = 0
-        for sid_val, name_val, email_val in parse_roster_csv_rows(csv_content):
+        for sid_val, name_val, email_val in rows:
             self.enroll_student_by_code(
                 course_code=course.course_code,
                 full_name=name_val,
@@ -889,6 +891,58 @@ class CourseService:
             )
             count += 1
         return count
+
+    def import_course_roster_csv(self, course_id: int, csv_content: str) -> int:
+        """Import a CSV of (Full Name, Email[, Student ID]) into CourseEnrollment and all sessions."""
+        return self.import_course_roster_rows(
+            course_id, parse_roster_csv_rows(csv_content)
+        )
+
+    def remove_student_from_course(
+        self,
+        course_id: int,
+        student_id: int,
+        lecturer_id: int,
+        ip_address: Optional[str] = None,
+    ) -> Student:
+        """Remove a student's enrollment, session roster entries, and course attendance records."""
+        course = self.db.get(Course, course_id)
+        if course is None:
+            raise CourseError("Course not found.", status_code=404)
+        student = self.db.get(Student, student_id)
+        if student is None:
+            raise CourseError("Student not found.", status_code=404)
+
+        self.db.query(CourseEnrollment).filter_by(
+            course_id=course_id, student_id=student.id
+        ).delete()
+
+        session_ids = [
+            s.id
+            for s in self.db.query(ClassSession.id).filter_by(course_id=course_id).all()
+        ]
+        if session_ids:
+            self.db.query(AttendanceRecord).filter(
+                AttendanceRecord.session_id.in_(session_ids),
+                AttendanceRecord.student_id == student.id,
+            ).delete(synchronize_session=False)
+            self.db.query(RosterEntry).filter(
+                RosterEntry.session_id.in_(session_ids),
+                func.lower(RosterEntry.email) == student.email.lower(),
+            ).delete(synchronize_session=False)
+
+        record_audit_event(
+            self.db,
+            actor_type="lecturer",
+            actor_id=lecturer_id,
+            action="course.student_removed",
+            target_type="student",
+            target_id=student.id,
+            detail=f"Removed student_id={student.id} ({student.email}) from course_id={course_id}",
+            ip_address=ip_address,
+        )
+        self.db.commit()
+        return student
 
     def reset_student_device(
         self,
