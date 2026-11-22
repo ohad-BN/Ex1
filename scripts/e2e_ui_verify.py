@@ -1988,6 +1988,65 @@ def run_tier3(
     else:
         results.fail("Interactive #modal-account-security failed to populate audit logs")
 
+    # 3b. Professor Phone Headcount QR modal -> auto-close on phone connect -> mobile +1/-1 stepper
+    cdp.eval_js('document.querySelector(\'[data-tab-target="tab-attendance"]\').click()')
+    cdp.eval_js('document.getElementById("btn-open-phone-cam-qr").click()')
+    qr_ready = cdp.wait_for(
+        "Boolean(document.getElementById('modal-phone-headcount-qr')?.classList.contains('open')) && "
+        "String(document.getElementById('phone-cam-qr-img')?.src || '').startsWith('data:image/svg+xml') && "
+        "String(document.getElementById('phone-cam-qr-link')?.href || '').includes('/headcount-cam/')",
+        timeout=5.0,
+    )
+    pair_url = cdp.eval_js("document.getElementById('phone-cam-qr-link')?.href || ''") if qr_ready else ""
+    if qr_ready and pair_url:
+        # Simulate professor's phone scanning the QR code -> desktop modal must auto-close
+        r_phone_open = requests.get(pair_url, timeout=5)
+        auto_closed = cdp.wait_for(
+            "!document.getElementById('modal-phone-headcount-qr').classList.contains('open') && "
+            "document.getElementById('cv-status').innerText.toLowerCase().includes('phone connected')",
+            timeout=5.0,
+        )
+        if r_phone_open.status_code == 200 and auto_closed:
+            results.ok("Phone Headcount QR opened & auto-closed automatically upon phone connection")
+        else:
+            results.fail(f"Phone Headcount QR auto-close failed (http={r_phone_open.status_code}, closed={auto_closed})")
+
+        # Open companion page on mobile viewport, audit geometry/theme, and test +1 / -1 stepper
+        cdp.set_viewport("mobile")
+        cdp.set_role_cookies("anonymous", seed)
+        nav_cam = cdp.goto(pair_url, settle_s=0.45, results=results, label="t3_phone_headcount_cam")
+        audit_theme_and_r2_dom(cdp, "phone_headcount_cam", results, allow_theme_fail, nav_cam)
+        audit_geometry(cdp, "mobile", "phone_headcount_cam", results)
+        step_res = cdp.eval_js(
+            """(() => {
+                const el = document.getElementById("phone-verified-count");
+                const plus = document.getElementById("btn-step-plus");
+                if (!el || !plus) return { ok: false };
+                const before = parseInt(el.innerText.trim(), 10);
+                plus.click();
+                return { ok: true, before };
+            })()"""
+        )
+        if step_res.get("ok"):
+            expected_after = step_res["before"] + 1
+            step_ok = cdp.wait_for(
+                f"parseInt(document.getElementById('phone-verified-count').innerText.trim(), 10) === {expected_after} && "
+                "document.getElementById('phone-sync-badge').innerText.includes('Synced')",
+                timeout=4.0,
+            )
+            if step_ok:
+                cdp.eval_js("document.getElementById('btn-step-minus').click()")
+                time.sleep(0.3)
+                results.ok("Phone Headcount companion +1/-1 stepper synced live")
+            else:
+                results.fail("Phone Headcount companion +1 stepper did not sync")
+        # Restore desktop lecturer session for step 4
+        cdp.set_viewport("desktop")
+        cdp.set_role_cookies("lecturer", seed)
+        cdp.goto(f"{seed.base_url}/teacher", settle_s=0.6, results=results, label="t3_teacher_restore_after_cam")
+    else:
+        results.fail("Phone Headcount QR modal did not generate QR SVG & pairing link")
+
     # 4. Create & Launch Live Poll on #tab-polls -> Vote as Alice on /student
     poll_title = "E2E Live Poll: Which pattern decouples adapters?"
     cdp.eval_js('document.querySelector(\'[data-tab-target="tab-polls"]\').click()')
@@ -2299,6 +2358,22 @@ def run_tier4(
         label="shot_checkin_error_403",
     )
     cdp.capture_png(shots_dir / "23_checkin_error_403_390x844.png", (390, 844), results)
+
+    # 8. Professor Phone Headcount Companion (390x844)
+    s_lec = requests.Session()
+    s_lec.cookies.set("cp_lecturer", seed.lecturer_cookie)
+    pair_r = s_lec.post(
+        f"{seed.base_url}/api/sessions/{seed.ariel1_id}/headcount-cam/pair",
+        json={},
+        timeout=5,
+    )
+    if pair_r.status_code == 200:
+        cam_url = pair_r.json().get("url", "")
+        if cam_url:
+            cdp.set_viewport("mobile")
+            cdp.set_role_cookies("anonymous", seed)
+            cdp.goto(cam_url, settle_s=0.45, results=results, label="shot_phone_headcount_cam")
+            cdp.capture_png(shots_dir / "24_phone_headcount_cam_390x844.png", (390, 844), results)
 
 
 def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:

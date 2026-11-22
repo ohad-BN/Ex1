@@ -6,11 +6,28 @@ class HeadcountCanvasEditor {
     this.currentBoxes = [];
     this.loadedImg = null;
     this.autoCount = 0;
+    this.verifiedCount = 0;
+    this.snapshotId = null;
 
     if (this.canvas) {
       this.ctx = this.canvas.getContext("2d");
       this.canvas.addEventListener("click", (evt) => this.handleClick(evt));
     }
+  }
+
+  _updateCountLabels() {
+    const countText = String(this.verifiedCount);
+    for (const id of ["kpi-visual-count", "kpi-visual", "snap-verified-count"]) {
+      const el = document.getElementById(id);
+      if (el) el.textContent = countText;
+    }
+    const autoEl = document.getElementById("snap-auto-count");
+    if (autoEl) autoEl.textContent = String(this.autoCount);
+  }
+
+  setVerifiedCount(count) {
+    this.verifiedCount = Math.max(0, Number(count || 0));
+    this._updateCountLabels();
   }
 
   drawCanvas() {
@@ -34,11 +51,7 @@ class HeadcountCanvasEditor {
       this.ctx.fillText(String(box.label_id), box.x1, Math.max(22, box.y1 - 6));
     });
 
-    const countText = String(this.currentBoxes.length);
-    for (const id of ["kpi-visual-count", "kpi-visual", "snap-verified-count"]) {
-      const el = document.getElementById(id);
-      if (el) el.textContent = countText;
-    }
+    this._updateCountLabels();
   }
 
   loadSnapshot(snapshotOrUrl, boxesArg) {
@@ -49,10 +62,20 @@ class HeadcountCanvasEditor {
     if (typeof snapshotOrUrl === "string") {
       imageUrl = snapshotOrUrl;
       boxes = Array.isArray(boxesArg) ? boxesArg : [];
+      this.autoCount = boxes.length;
+      this.verifiedCount = boxes.length;
     } else if (snapshotOrUrl && typeof snapshotOrUrl === "object") {
-      imageUrl = snapshotOrUrl.image_url || "";
+      imageUrl = snapshotOrUrl.image_url || snapshotOrUrl.raw_image_url || "";
       boxes = Array.isArray(snapshotOrUrl.boxes) ? snapshotOrUrl.boxes : [];
-      this.autoCount = snapshotOrUrl.auto_count ?? boxes.length;
+      this.snapshotId = snapshotOrUrl.snapshot_id ?? snapshotOrUrl.id ?? null;
+      this.autoCount =
+        snapshotOrUrl.auto_count ??
+        snapshotOrUrl.auto_face_count ??
+        boxes.length;
+      this.verifiedCount =
+        snapshotOrUrl.verified_count ??
+        snapshotOrUrl.verified_face_count ??
+        boxes.length;
     }
 
     if (!imageUrl) return;
@@ -121,6 +144,7 @@ class HeadcountCanvasEditor {
         source: "manual_added",
       });
     }
+    this.verifiedCount = this.currentBoxes.length;
     this.drawCanvas();
     this.syncBoxesToServer();
   }

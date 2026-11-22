@@ -223,6 +223,9 @@ class DeviceBindingManager:
         self._projector_serializer = URLSafeTimedSerializer(
             secret_key, salt="classpulse-projector-v1"
         )
+        self._headcount_cam_serializer = URLSafeTimedSerializer(
+            secret_key, salt="classpulse-headcount-cam-v1"
+        )
 
     def create_device_cookie(self, device_id: str, student_id: int) -> str:
         """Serialize and sign (device_id, student_id) for the browser cookie."""
@@ -293,3 +296,46 @@ class DeviceBindingManager:
             )
         except (BadSignature, SignatureExpired, TypeError):
             return False
+
+    def create_headcount_cam_token(
+        self,
+        *,
+        session_id: int,
+        session_code: str,
+        lecturer_id: int,
+        nonce: str,
+    ) -> str:
+        """Issue a scoped, short-lived token authorizing phone camera headcount capture for one session."""
+        return self._headcount_cam_serializer.dumps(
+            {
+                "session_id": int(session_id),
+                "session_code": str(session_code).strip().upper(),
+                "lecturer_id": int(lecturer_id),
+                "nonce": str(nonce).strip(),
+            }
+        )
+
+    def verify_headcount_cam_token(
+        self,
+        token: Optional[str],
+        session_code: str,
+        max_age: int = 1800,
+    ) -> Optional[dict[str, Any]]:
+        """Verify a phone headcount camera token matches session_code and is not expired."""
+        if not token or not session_code:
+            return None
+        try:
+            data = self._headcount_cam_serializer.loads(token, max_age=max_age)
+            if not isinstance(data, dict):
+                return None
+            tok_code = str(data.get("session_code", "")).strip().upper()
+            if tok_code != str(session_code).strip().upper():
+                return None
+            return {
+                "session_id": int(data["session_id"]),
+                "session_code": tok_code,
+                "lecturer_id": int(data["lecturer_id"]),
+                "nonce": str(data["nonce"]),
+            }
+        except (BadSignature, SignatureExpired, KeyError, ValueError, TypeError):
+            return None

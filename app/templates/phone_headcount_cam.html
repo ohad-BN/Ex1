@@ -1,0 +1,396 @@
+{% extends "layouts/base.html" %}
+{% set cp_use_csrf = true %}
+{% from "macros/icons.html" import cp_icon %}
+
+{% block title %}ClassPulse — Phone Headcount Camera{% endblock %}
+
+{% block body %}
+<main class="cp-cam-page">
+  {% if error_title %}
+    <div class="cp-cam-hero" style="margin-top:auto; margin-bottom:auto;">
+      <div style="color:var(--cp-red-ink);">
+        {{ cp_icon('alert-triangle', 34) }}
+      </div>
+      <h1 style="font-size:20px; margin:0; color:var(--cp-ink);">{{ error_title }}</h1>
+      <p class="cp-secondary" style="margin:0; font-size:14px; line-height:1.45;">{{ error_message }}</p>
+    </div>
+  {% else %}
+    <header class="cp-cam-header">
+      <div class="cp-brand-lockup" style="gap:10px; min-width:0; flex:1;">
+        <span class="cp-orb cp-orb--xs" aria-hidden="true"></span>
+        <div style="min-width:0; flex:1;">
+          <div style="font-size:14px; font-weight:800; color:var(--cp-ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+            {{ session.title }}
+          </div>
+          <div class="cp-muted" style="font-size:11.5px;">Phone Headcount Camera</div>
+        </div>
+      </div>
+      <span class="cp-code-pill code-pill" style="flex-shrink:0;">{{ session.session_code }}</span>
+    </header>
+
+    <!-- Hidden native camera & gallery file inputs -->
+    <input type="file"
+           id="cam-capture-input"
+           accept="image/*"
+           capture="environment"
+           style="display:none;"
+           onchange="handlePhonePhotoSelected(this)" />
+    <input type="file"
+           id="cam-gallery-input"
+           accept="image/*"
+           style="display:none;"
+           onchange="handlePhonePhotoSelected(this)" />
+
+    <!-- Error / Retry Banner -->
+    <div id="cam-error-box" class="cp-alert cp-alert--err" style="display:none; margin-bottom:0;">
+      <div id="cam-error-text" style="margin-bottom:8px;"></div>
+      <div class="cp-row-wrap" style="gap:8px;">
+        <button type="button" id="cam-retry-btn" class="cp-btn cp-btn--primary cp-btn--sm" style="display:none;" onclick="retryLastUpload()">
+          {{ cp_icon('refresh', 14) }}
+          <span>Retry Upload</span>
+        </button>
+        <button type="button" class="cp-btn cp-btn--white cp-btn--sm" onclick="triggerCameraCapture()">
+          {{ cp_icon('camera', 14) }}
+          <span>Retake</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- STATE 1: Ready to Shoot -->
+    <section id="cam-ready-panel" class="cp-cam-hero" {% if latest_snap %}style="display:none;"{% endif %}>
+      <div class="cp-cam-icon-ring" aria-hidden="true">
+        {{ cp_icon('camera', 30) }}
+      </div>
+      <div>
+        <h1 style="font-size:20px; margin:0 0 6px 0; color:var(--cp-ink);">Scan Classroom Headcount</h1>
+        <p class="cp-secondary" style="margin:0; font-size:13.5px; line-height:1.45;">
+          Tap below to open your camera. After confirming <strong>Use Photo</strong>, it sends and scans automatically.
+        </p>
+      </div>
+
+      <button type="button"
+              id="btn-take-classroom-photo"
+              class="cp-btn cp-btn--primary cp-btn--block"
+              style="min-height:52px; font-size:15px;"
+              onclick="triggerCameraCapture()">
+        {{ cp_icon('camera', 18) }}
+        <span>Take Classroom Photo</span>
+      </button>
+
+      <button type="button" class="cp-cam-link-btn" onclick="triggerGalleryPick()">
+        Or choose existing photo from Gallery
+      </button>
+    </section>
+
+    <!-- STATE 2: Preview, Scanning Progress & Brief-Look ±1 Adjust -->
+    <section id="cam-result-panel" class="cp-cam-stepper-card" {% if not latest_snap %}style="display:none;"{% endif %}>
+      <div class="cp-cam-preview-wrap">
+        <img id="cam-preview-img"
+             src="{{ latest_snap.annotated_image_url if latest_snap else '' }}"
+             alt="Classroom headcount preview" />
+        <div id="cam-upload-overlay" class="cp-cam-overlay" style="display:none;">
+          <div class="cp-cam-spinner" aria-hidden="true"></div>
+          <span id="cam-overlay-text">Scanning faces...</span>
+        </div>
+      </div>
+
+      <div id="cam-count-section">
+        <div style="text-align:center; margin-bottom:10px;">
+          <span class="cp-eyebrow" style="font-size:10.5px;">Verified Headcount</span>
+        </div>
+
+        <div class="cp-cam-stepper-row">
+          <button type="button"
+                  id="btn-step-minus"
+                  class="cp-cam-step-btn cp-cam-step-btn--minus"
+                  aria-label="Subtract 1 person"
+                  onclick="queueCountDelta(-1)">&minus;1</button>
+          <div class="cp-cam-count-display">
+            <div id="phone-verified-count" class="cp-cam-count-num">
+              {{ latest_snap.verified_count if latest_snap else 0 }}
+            </div>
+            <div id="phone-auto-subtitle" class="cp-muted cp-tabular" style="font-size:12px;">
+              {% if latest_snap %}Model detected: {{ latest_snap.auto_count }}{% endif %}
+            </div>
+          </div>
+          <button type="button"
+                  id="btn-step-plus"
+                  class="cp-cam-step-btn cp-cam-step-btn--plus"
+                  aria-label="Add 1 person"
+                  onclick="queueCountDelta(1)">+1</button>
+        </div>
+
+        <div style="text-align:center; margin-top:10px;">
+          <span id="phone-sync-badge" class="cp-badge cp-badge--green">
+            &#10003; Synced to Lecture Laptop
+          </span>
+        </div>
+      </div>
+
+      <div class="cp-stack-xs" style="margin-top:4px;">
+        <button type="button"
+                id="btn-retake-classroom-photo"
+                class="cp-btn cp-btn--primary cp-btn--block"
+                style="min-height:48px; font-size:14.5px;"
+                onclick="triggerCameraCapture()">
+          {{ cp_icon('camera', 17) }}
+          <span>Retake Classroom Photo</span>
+        </button>
+        <div style="text-align:center;">
+          <button type="button" class="cp-cam-link-btn" onclick="triggerGalleryPick()">
+            Pick another photo from Gallery
+          </button>
+        </div>
+      </div>
+    </section>
+  {% endif %}
+</main>
+{% endblock %}
+
+{% block scripts %}
+{% if not error_title %}
+<script>
+  const SESSION_CODE = {{ session.session_code | tojson }};
+  const CTOK = {{ ctok | tojson }};
+  const INITIAL_SNAP = {{ latest_snap | tojson }};
+
+  let currentSnapshotId = INITIAL_SNAP ? INITIAL_SNAP.snapshot_id : null;
+  let currentAutoCount = INITIAL_SNAP ? Number(INITIAL_SNAP.auto_count || 0) : 0;
+  let currentVerifiedCount = INITIAL_SNAP ? Number(INITIAL_SNAP.verified_count || 0) : 0;
+  let lastNormalizedBlob = null;
+  let stepQueue = Promise.resolve();
+
+  function triggerCameraCapture() {
+    const input = document.getElementById("cam-capture-input");
+    if (input) {
+      input.value = "";
+      input.click();
+    }
+  }
+
+  function triggerGalleryPick() {
+    const input = document.getElementById("cam-gallery-input");
+    if (input) {
+      input.value = "";
+      input.click();
+    }
+  }
+
+  function showCamError(message, canRetry) {
+    const box = document.getElementById("cam-error-box");
+    const txt = document.getElementById("cam-error-text");
+    const retryBtn = document.getElementById("cam-retry-btn");
+    if (txt) txt.textContent = message || "Upload failed.";
+    if (retryBtn) retryBtn.style.display = canRetry ? "inline-flex" : "none";
+    if (box) box.style.display = "block";
+  }
+
+  function hideCamError() {
+    const box = document.getElementById("cam-error-box");
+    if (box) box.style.display = "none";
+  }
+
+  function setOverlay(visible, text) {
+    const overlay = document.getElementById("cam-upload-overlay");
+    const label = document.getElementById("cam-overlay-text");
+    if (label && text) label.textContent = text;
+    if (overlay) overlay.style.display = visible ? "flex" : "none";
+  }
+
+  function renderCountUI(syncText, isSyncing) {
+    const numEl = document.getElementById("phone-verified-count");
+    const subEl = document.getElementById("phone-auto-subtitle");
+    const minusBtn = document.getElementById("btn-step-minus");
+    const plusBtn = document.getElementById("btn-step-plus");
+    const badge = document.getElementById("phone-sync-badge");
+
+    if (numEl) numEl.textContent = String(currentVerifiedCount);
+    if (subEl) {
+      const diff = currentVerifiedCount - currentAutoCount;
+      if (diff === 0) {
+        subEl.textContent = `Model detected: ${currentAutoCount}`;
+      } else {
+        const sign = diff > 0 ? `+${diff}` : String(diff);
+        subEl.textContent = `Model detected: ${currentAutoCount} (${sign} manual)`;
+      }
+    }
+    if (minusBtn) minusBtn.disabled = currentSnapshotId === null || currentVerifiedCount <= 0;
+    if (plusBtn) plusBtn.disabled = currentSnapshotId === null;
+    if (badge) {
+      badge.className = isSyncing ? "cp-badge cp-badge--indigo" : "cp-badge cp-badge--green";
+      badge.textContent = syncText || "✓ Synced to Lecture Laptop";
+    }
+  }
+
+  async function normalizePhotoToJpeg(file, maxEdge = 2560, quality = 0.90) {
+    let source = null;
+    let width = 0;
+    let height = 0;
+    let cleanup = () => {};
+
+    if (typeof createImageBitmap === "function") {
+      try {
+        source = await createImageBitmap(file, { imageOrientation: "from-image" });
+        width = source.width;
+        height = source.height;
+        cleanup = () => {
+          if (source && typeof source.close === "function") source.close();
+        };
+      } catch (_bitmapErr) {
+        source = null;
+      }
+    }
+
+    if (!source) {
+      const objUrl = URL.createObjectURL(file);
+      source = await new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => reject(new Error("Could not decode captured photo."));
+        img.src = objUrl;
+      });
+      width = source.naturalWidth || source.width;
+      height = source.naturalHeight || source.height;
+      cleanup = () => URL.revokeObjectURL(objUrl);
+    }
+
+    try {
+      const longest = Math.max(width, height, 1);
+      const scale = longest > maxEdge ? (maxEdge / longest) : 1;
+      const targetW = Math.max(1, Math.round(width * scale));
+      const targetH = Math.max(1, Math.round(height * scale));
+
+      const canvas = document.createElement("canvas");
+      canvas.width = targetW;
+      canvas.height = targetH;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(source, 0, 0, targetW, targetH);
+
+      const blob = await new Promise((resolve, reject) => {
+        canvas.toBlob(
+          (b) => (b ? resolve(b) : reject(new Error("Failed to encode JPEG."))),
+          "image/jpeg",
+          quality
+        );
+      });
+      return blob;
+    } finally {
+      cleanup();
+    }
+  }
+
+  async function uploadNormalizedBlob(blob) {
+    hideCamError();
+    document.getElementById("cam-ready-panel").style.display = "none";
+    document.getElementById("cam-result-panel").style.display = "flex";
+    setOverlay(true, "Scanning classroom faces...");
+
+    const fd = new FormData();
+    fd.append("photo", blob, "classroom_phone.jpg");
+    fd.append("ctok", CTOK);
+
+    try {
+      const resp = await fetch(`/api/headcount-cam/${encodeURIComponent(SESSION_CODE)}`, {
+        method: "POST",
+        headers: { "X-Headcount-Token": CTOK },
+        body: fd,
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        setOverlay(false);
+        showCamError(data.error || `Upload failed (HTTP ${resp.status}).`, true);
+        return;
+      }
+
+      currentSnapshotId = data.snapshot_id;
+      currentAutoCount = Number(data.auto_count ?? data.auto_face_count ?? 0);
+      currentVerifiedCount = Number(data.verified_count ?? data.verified_face_count ?? currentAutoCount);
+
+      const imgEl = document.getElementById("cam-preview-img");
+      if (imgEl && data.annotated_image_url) {
+        imgEl.src = data.annotated_image_url + (data.annotated_image_url.includes("?") ? "&" : "?") + "v=" + Date.now();
+      }
+      setOverlay(false);
+      renderCountUI("✓ Synced to Lecture Laptop", false);
+    } catch (_err) {
+      setOverlay(false);
+      showCamError("Network error while sending photo. Check Wi-Fi and tap Retry Upload.", true);
+    }
+  }
+
+  async function handlePhonePhotoSelected(inputEl) {
+    if (!inputEl || !inputEl.files || !inputEl.files.length) return;
+    const rawFile = inputEl.files[0];
+    hideCamError();
+
+    // Immediately show preview & optimize -> auto-upload (Flavor 1)
+    document.getElementById("cam-ready-panel").style.display = "none";
+    document.getElementById("cam-result-panel").style.display = "flex";
+    const imgEl = document.getElementById("cam-preview-img");
+    if (imgEl) {
+      const tempPreviewUrl = URL.createObjectURL(rawFile);
+      imgEl.onload = () => URL.revokeObjectURL(tempPreviewUrl);
+      imgEl.src = tempPreviewUrl;
+    }
+    setOverlay(true, "Optimizing photo...");
+
+    try {
+      const jpegBlob = await normalizePhotoToJpeg(rawFile);
+      lastNormalizedBlob = jpegBlob;
+      await uploadNormalizedBlob(jpegBlob);
+    } catch (_normErr) {
+      // If browser couldn't decode via canvas (rare), upload original file directly
+      lastNormalizedBlob = rawFile;
+      await uploadNormalizedBlob(rawFile);
+    }
+  }
+
+  function retryLastUpload() {
+    if (!lastNormalizedBlob) {
+      triggerCameraCapture();
+      return;
+    }
+    uploadNormalizedBlob(lastNormalizedBlob);
+  }
+
+  function queueCountDelta(delta) {
+    if (currentSnapshotId === null) return;
+    if (delta < 0 && currentVerifiedCount <= 0) return;
+
+    // Optimistic update for snappy thumb feel, serialized to server
+    currentVerifiedCount = Math.max(0, currentVerifiedCount + delta);
+    renderCountUI("Syncing adjustment...", true);
+
+    stepQueue = stepQueue.then(async () => {
+      try {
+        const resp = await fetch(`/api/headcount-cam/${encodeURIComponent(SESSION_CODE)}`, {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Headcount-Token": CTOK,
+          },
+          body: JSON.stringify({
+            snapshot_id: currentSnapshotId,
+            delta: delta,
+          }),
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+          showCamError(data.error || "Could not sync adjustment.", false);
+          return;
+        }
+        currentAutoCount = Number(data.auto_count ?? currentAutoCount);
+        currentVerifiedCount = Number(data.verified_count ?? currentVerifiedCount);
+        renderCountUI("✓ Synced to Lecture Laptop", false);
+      } catch (_err) {
+        showCamError("Connection interrupted while updating count.", false);
+      }
+    });
+  }
+
+  if (INITIAL_SNAP) {
+    renderCountUI("✓ Synced to Lecture Laptop", false);
+  }
+</script>
+{% endif %}
+{% endblock %}

@@ -312,6 +312,10 @@
               {{ cp_icon('camera', 14) }}
               <span>Upload &amp; Count Faces</span>
             </button>
+            <button type="button" id="btn-open-phone-cam-qr" class="cp-btn cp-btn--indigo cp-btn--sm" onclick="openPhoneHeadcountQr(false)">
+              {{ cp_icon('smartphone', 14) }}
+              <span>Phone Camera</span>
+            </button>
             <button type="button" class="cp-btn cp-btn--secondary cp-btn--sm" onclick="runSamplePhoto()">Use Ariel Classroom Sample</button>
             <span id="cv-status" style="font-size:12px; font-weight:700; color:var(--cp-indigo-ink);"></span>
           </div>
@@ -559,6 +563,39 @@
 </div>
 
 {% include "teacher/_modal_security.html" %}
+
+<!-- Modal: Professor Phone Camera Companion QR (Auto-closes when phone connects) -->
+<div id="modal-phone-headcount-qr" class="cp-modal-backdrop modal-backdrop">
+  <div class="cp-modal-card modal-card" style="max-width:380px; text-align:center;">
+    <div class="cp-card-header" style="margin-bottom:12px;">
+      <h3 style="margin:0;">{{ cp_icon('smartphone', 17) }} <span>Scan with Your Phone</span></h3>
+      <button type="button" class="cp-btn cp-btn--secondary cp-btn--sm" onclick="closePhoneHeadcountQr()">
+        {{ cp_icon('x', 14) }}
+        <span>Close</span>
+      </button>
+    </div>
+
+    <div class="cp-qr-island" style="margin:0 auto 12px auto;">
+      <img id="phone-cam-qr-img" src="" alt="Phone Headcount Companion QR" style="width:210px; height:210px; display:block;" />
+    </div>
+
+    <div style="margin-bottom:10px;">
+      <span id="phone-cam-qr-status" class="cp-badge cp-badge--indigo">Waiting for phone to scan...</span>
+    </div>
+
+    <div class="cp-well" style="font-size:11px; word-break:break-all; overflow-wrap:anywhere; text-align:left; margin-bottom:12px;">
+      <a id="phone-cam-qr-link" href="#" target="_blank" style="color:var(--cp-indigo-ink); text-decoration:none;">Generating secure camera link...</a>
+    </div>
+
+    <div class="cp-row-wrap" style="justify-content:center;">
+      <button type="button" class="cp-btn cp-btn--secondary cp-btn--sm" onclick="openPhoneHeadcountQr(true)">
+        {{ cp_icon('refresh', 13) }}
+        <span>New QR</span>
+      </button>
+      <button type="button" class="cp-btn cp-btn--white cp-btn--sm" onclick="closePhoneHeadcountQr()">Done</button>
+    </div>
+  </div>
+</div>
 
 <!-- Modal: Create New Lecture Session in Current Course -->
 <div id="modal-new-lecture" class="cp-modal-backdrop modal-backdrop">
@@ -857,6 +894,11 @@
 
   // Initialize interactive CV headcount canvas safely
   let editor = null;
+  let lastLoadedSnapId = INITIAL_SNAP ? (INITIAL_SNAP.snapshot_id ?? INITIAL_SNAP.id ?? null) : null;
+  let lastLoadedVerifiedCount = INITIAL_SNAP ? (INITIAL_SNAP.verified_count ?? INITIAL_SNAP.verified_face_count ?? null) : null;
+  let activePhonePairNonce = null;
+  let phonePairPollTimer = null;
+
   try {
     if (window.HeadcountCanvasEditor) {
       editor = new window.HeadcountCanvasEditor("headcount-canvas", SESSION_ID, (data) => {
@@ -864,6 +906,7 @@
         const verEl = document.getElementById("snap-verified-count");
         if (autoEl) autoEl.textContent = data.auto_count;
         if (verEl) verEl.textContent = data.verified_count;
+        lastLoadedVerifiedCount = data.verified_count;
         if (data.verdict) applyVerdict(data.verdict);
       });
       if (INITIAL_SNAP && INITIAL_SNAP.image_url) {
@@ -872,6 +915,129 @@
     }
   } catch (err) {
     console.error("Canvas init error:", err);
+  }
+
+  function applyIncomingHeadcountUpdate(data) {
+    if (!data) return;
+    const snapId = data.snapshot_id ?? data.id ?? null;
+    const autoCount = data.auto_count ?? data.auto_face_count ?? 0;
+    const verifiedCount = data.verified_count ?? data.verified_face_count ?? autoCount;
+    const imgUrl = data.image_url || data.raw_image_url || "";
+    const isNewSnap = snapId !== null && snapId !== lastLoadedSnapId;
+
+    if (isNewSnap && imgUrl && editor) {
+      editor.loadSnapshot({
+        snapshot_id: snapId,
+        image_url: imgUrl,
+        boxes: data.boxes || [],
+        auto_count: autoCount,
+        verified_count: verifiedCount,
+      });
+    } else if (editor && verifiedCount !== null && verifiedCount !== undefined) {
+      editor.autoCount = autoCount;
+      editor.setVerifiedCount(verifiedCount);
+    }
+
+    lastLoadedSnapId = snapId ?? lastLoadedSnapId;
+    lastLoadedVerifiedCount = verifiedCount;
+
+    const autoEl = document.getElementById("snap-auto-count");
+    const verEl = document.getElementById("snap-verified-count");
+    if (autoEl) autoEl.textContent = autoCount;
+    if (verEl) verEl.textContent = verifiedCount;
+    if (data.verdict) applyVerdict(data.verdict);
+
+    const statusEl = document.getElementById("cv-status");
+    if (statusEl) {
+      if (data.source === "phone") {
+        statusEl.textContent = `Phone photo scanned: ${autoCount} faces detected!`;
+      } else if (data.source === "phone_step") {
+        statusEl.textContent = `Phone count adjusted to ${verifiedCount} faces.`;
+      }
+    }
+  }
+
+  function closePhoneHeadcountQr() {
+    if (phonePairPollTimer) {
+      clearInterval(phonePairPollTimer);
+      phonePairPollTimer = null;
+    }
+    closeModal("modal-phone-headcount-qr");
+  }
+
+  function handlePhoneConnected(nonce) {
+    if (activePhonePairNonce && nonce && nonce !== activePhonePairNonce) return;
+    closePhoneHeadcountQr();
+    const statusEl = document.getElementById("cv-status");
+    if (statusEl) {
+      statusEl.textContent = "Phone connected — waiting for classroom photo...";
+    }
+  }
+
+  async function openPhoneHeadcountQr(rotatePrev = false) {
+    const statusBadge = document.getElementById("phone-cam-qr-status");
+    const linkEl = document.getElementById("phone-cam-qr-link");
+    const imgEl = document.getElementById("phone-cam-qr-img");
+    if (statusBadge) {
+      statusBadge.className = "cp-badge cp-badge--indigo";
+      statusBadge.textContent = "Generating secure QR...";
+    }
+    openModal("modal-phone-headcount-qr");
+
+    try {
+      const resp = await fetch(`/api/sessions/${SESSION_ID}/headcount-cam/pair`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          revoke_nonce: rotatePrev && activePhonePairNonce ? activePhonePairNonce : "",
+        }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) {
+        if (statusBadge) {
+          statusBadge.className = "cp-badge cp-badge--red";
+          statusBadge.textContent = data.error || "Could not generate QR.";
+        }
+        return;
+      }
+
+      activePhonePairNonce = data.nonce;
+      if (imgEl && data.svg_data_uri) imgEl.src = data.svg_data_uri;
+      if (linkEl && data.url) {
+        linkEl.href = data.url;
+        linkEl.textContent = data.url;
+      }
+      if (statusBadge) {
+        statusBadge.className = "cp-badge cp-badge--indigo";
+        statusBadge.textContent = "Waiting for phone to scan...";
+      }
+
+      if (phonePairPollTimer) clearInterval(phonePairPollTimer);
+      phonePairPollTimer = setInterval(async () => {
+        const modalEl = document.getElementById("modal-phone-headcount-qr");
+        if (!modalEl || !modalEl.classList.contains("open") || !activePhonePairNonce) {
+          clearInterval(phonePairPollTimer);
+          phonePairPollTimer = null;
+          return;
+        }
+        try {
+          const stRes = await fetch(
+            `/api/sessions/${SESSION_ID}/headcount-cam/pair/${encodeURIComponent(activePhonePairNonce)}/status?_ts=${Date.now()}`,
+            { cache: "no-store" }
+          );
+          if (!stRes.ok) return;
+          const stData = await stRes.json();
+          if (stData.connected) {
+            handlePhoneConnected(stData.nonce);
+          }
+        } catch (_err) {}
+      }, 1200);
+    } catch (_err) {
+      if (statusBadge) {
+        statusBadge.className = "cp-badge cp-badge--red";
+        statusBadge.textContent = "Network error generating QR.";
+      }
+    }
   }
 
   function applyVerdict(v) {
@@ -902,6 +1068,20 @@
       if (!resp.ok) return;
       const data = await resp.json();
       if (data.verdict) applyVerdict(data.verdict);
+      if (data.snapshot) {
+        const snapId = data.snapshot.id;
+        const verCount = data.snapshot.verified_face_count;
+        if (snapId !== lastLoadedSnapId || verCount !== lastLoadedVerifiedCount) {
+          applyIncomingHeadcountUpdate({
+            snapshot_id: snapId,
+            auto_count: data.snapshot.auto_face_count,
+            verified_count: verCount,
+            boxes: data.snapshot.boxes || [],
+            image_url: data.snapshot.raw_image_url,
+            verdict: data.verdict,
+          });
+        }
+      }
       const tbody = document.getElementById("attendance-tbody");
       if (!tbody) return;
       if (!data.rows || data.rows.length === 0) {
@@ -950,7 +1130,7 @@
     const resp = await fetch(`/api/sessions/${SESSION_ID}/headcount`, { method: "POST", body: fd });
     const data = await resp.json();
     statusEl.textContent = `Detected ${data.auto_count} faces!`;
-    if (editor) editor.loadSnapshot(data);
+    applyIncomingHeadcountUpdate(data);
   }
 
   async function runSamplePhoto() {
@@ -963,7 +1143,7 @@
     });
     const data = await resp.json();
     statusEl.textContent = `Detected ${data.auto_count} faces on Ariel sample!`;
-    if (editor) editor.loadSnapshot(data);
+    applyIncomingHeadcountUpdate(data);
   }
 
   // Polls & Chat JS
@@ -1560,6 +1740,14 @@
     if (res.ok) loadAssignments();
   }
 
+  socket.on("headcount:phone_connected", payload => {
+    if (!payload || payload.session_code !== SESSION_CODE) return;
+    handlePhoneConnected(payload.nonce);
+  });
+  socket.on("headcount:updated", payload => {
+    if (!payload || payload.session_code !== SESSION_CODE) return;
+    applyIncomingHeadcountUpdate(payload);
+  });
   socket.on("lecture:status", payload => {
     const statusEl = document.getElementById("lecture-ai-status");
     if (statusEl && payload && payload.status) {
