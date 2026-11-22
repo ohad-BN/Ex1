@@ -2198,6 +2198,99 @@ def run_tier3(
     else:
         results.fail("First-time student onboarding failed to open Full Student App with Attendance Verified!")
 
+    # 6b. Mobile Student Fix Verifications (390x844): Back button, Home sign-in guard, no Join/Loading, date-grouped timeline
+    if onboard_ok:
+        home_guard = cdp.eval_js(
+            """(() => {
+                const backBtn = document.getElementById("student-back-btn");
+                const hiddenOnHome = Boolean(backBtn && backBtn.hidden && getComputedStyle(backBtn).display === "none");
+                const noJoin = !document.getElementById("join-code-input");
+                return { hiddenOnHome, noJoin };
+            })()"""
+        )
+        if home_guard["hiddenOnHome"] and home_guard["noJoin"]:
+            results.ok("Mobile Student App hides Back button on Home and omits + Join bar")
+        else:
+            results.fail(f"Mobile Student Home/Join check failed: {home_guard}")
+
+        # Pressing browser/hardware Back on Home right after sign-in must NOT return to sign-in
+        cdp.eval_js("window.history.back()")
+        time.sleep(0.35)
+        stayed_on_home = cdp.eval_js(
+            "window.location.pathname === '/student' && document.getElementById('view-live').classList.contains('active')"
+        )
+        if stayed_on_home:
+            results.ok("Mobile hardware/browser Back on Home stays on Live Class (never returns to sign-in)")
+        else:
+            results.fail("Browser Back on Home left Student App or navigated back to sign-in!")
+
+        # Multi-tab navigation: Live -> Courses -> Study -> Back (Courses) -> Drawer+Back (closes drawer) -> Back (Live)
+        cdp.eval_js("document.getElementById('tab-btn-classes').click()")
+        time.sleep(0.2)
+        classes_state = cdp.eval_js(
+            """(() => {
+                const backBtn = document.getElementById("student-back-btn");
+                const backVisible = Boolean(backBtn && !backBtn.hidden && getComputedStyle(backBtn).display !== "none");
+                const acc = document.querySelector("#courses-list details.cp-m-accordion");
+                if (acc) acc.open = true;
+                const groups = Array.from(document.querySelectorAll("#courses-list .cp-m-date-group")).map(g => g.dataset.dateKey);
+                const codes = Array.from(document.querySelectorAll("#courses-list .cp-m-lecture-row")).map(r => r.dataset.sessionCode);
+                const uniqueCodes = new Set(codes).size === codes.length;
+                const sortedDesc = groups.every((k, i) => i === 0 || groups[i - 1] >= k);
+                return { backVisible, groupCount: groups.length, rowCount: codes.length, uniqueCodes, sortedDesc };
+            })()"""
+        )
+        if (
+            classes_state["backVisible"]
+            and classes_state["groupCount"] >= 1
+            and classes_state["rowCount"] >= 1
+            and classes_state["uniqueCodes"]
+            and classes_state["sortedDesc"]
+        ):
+            results.ok(f"Mobile Courses & Logs renders unified date-grouped list ({classes_state['rowCount']} lectures, {classes_state['groupCount']} date groups)")
+        else:
+            results.fail(f"Mobile Courses & Logs timeline/back check failed: {classes_state}")
+
+        cdp.eval_js("document.getElementById('tab-btn-study').click()")
+        time.sleep(0.3)
+        no_loading_txt = cdp.eval_js(
+            """(() => {
+                const txt = document.body.innerText || "";
+                return !txt.includes("Loading course assignments...") && !txt.includes("Loading lecture summaries...");
+            })()"""
+        )
+        if no_loading_txt:
+            results.ok("Mobile AI Study Hub displays zero 'Loading ...' placeholder text")
+        else:
+            results.fail("Found 'Loading ...' placeholder text on Mobile AI Study Hub!")
+
+        # Click Back from Study -> returns to Courses
+        cdp.eval_js("document.getElementById('student-back-btn').click()")
+        time.sleep(0.2)
+        back_to_classes = cdp.eval_js("document.getElementById('view-classes').classList.contains('active')")
+
+        # Open drawer on Courses and trigger Back -> closes drawer without leaving Courses
+        cdp.eval_js("document.getElementById('student-drawer-toggle').click()")
+        time.sleep(0.15)
+        cdp.eval_js("handleStudentBack()")
+        time.sleep(0.15)
+        drawer_closed_stayed = cdp.eval_js(
+            "!document.getElementById('student-nav-drawer').classList.contains('open') && document.getElementById('view-classes').classList.contains('active')"
+        )
+
+        # Click Back again -> returns to Live (Home) and hides Back button
+        cdp.eval_js("document.getElementById('student-back-btn').click()")
+        time.sleep(0.2)
+        back_to_home = cdp.eval_js(
+            "document.getElementById('view-live').classList.contains('active') && document.getElementById('student-back-btn').hidden"
+        )
+        if back_to_classes and drawer_closed_stayed and back_to_home:
+            results.ok("Mobile Back button traverses Study -> Courses -> Drawer close -> Home cleanly")
+        else:
+            results.fail(
+                f"Mobile Back stack traversal failed (back_to_classes={back_to_classes}, drawer_closed_stayed={drawer_closed_stayed}, back_to_home={back_to_home})"
+            )
+
     # 7. Remaining views theme & R2 audit: portal_home & projector
     cdp.set_viewport("desktop")
     cdp.set_role_cookies("anonymous", seed)
@@ -2331,6 +2424,9 @@ def run_tier4(
     ):
         cdp.eval_js(f"document.getElementById('{btn_id}').click()")
         time.sleep(0.2)
+        if btn_id == "tab-btn-classes":
+            cdp.eval_js("const a = document.querySelector('#courses-list details.cp-m-accordion'); if (a) a.open = true;")
+            time.sleep(0.15)
         cdp.capture_png(shots_dir / fname, (390, 844), results)
 
     cdp.eval_js("document.getElementById('tab-btn-live').click()")
