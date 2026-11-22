@@ -234,14 +234,6 @@
 
     <!-- VIEW 2: MY ENROLLED COURSES & ATTENDANCE LOGS -->
     <section id="view-classes" class="cp-view-pane view-pane">
-      <div class="cp-input-action" style="grid-template-columns:minmax(0, 1fr) auto;">
-        <input type="text" id="join-code-input" class="cp-input" placeholder="Join course by code (e.g. CS204)" />
-        <button type="button" class="cp-btn cp-btn--primary cp-btn--sm" style="width:auto;" onclick="joinCourseByCode()">
-          {{ cp_icon('plus', 14) }}
-          <span>Join</span>
-        </button>
-      </div>
-
       <div id="courses-list" class="cp-stack-sm"></div>
     </section>
 
@@ -270,15 +262,11 @@
       </div>
 
       <div id="study-pane-summaries" class="cp-m-subpane active">
-        <div id="student-lecture-summaries" class="cp-stack-sm cp-muted" style="font-size:13px;">
-          Loading lecture summaries...
-        </div>
+        <div id="student-lecture-summaries" class="cp-stack-sm cp-muted" style="font-size:13px;"></div>
       </div>
 
       <div id="study-pane-homework" class="cp-m-subpane">
-        <div id="student-assignments-list" class="cp-stack-sm cp-muted" style="font-size:13px;">
-          Loading course assignments...
-        </div>
+        <div id="student-assignments-list" class="cp-stack-sm cp-muted" style="font-size:13px;"></div>
       </div>
     </section>
   </main>
@@ -556,22 +544,9 @@
     window.location.reload();
   }
 
-  async function joinCourseByCode() {
-    const code = document.getElementById("join-code-input").value.trim();
-    if (!code) return;
-    if (!STATE.authenticated) {
-      return alert("Please sign in with your name and email first.");
-    }
-    const res = await fetch("/api/student/enroll", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ course_code: code }),
-    });
-    const data = await res.json();
-    if (!res.ok) return alert(data.error || "Could not join course");
-    STATE = data.dashboard;
-    document.getElementById("join-code-input").value = "";
-    renderCourses();
+  function findFullCourseById(courseId) {
+    const pools = [...(STATE.my_courses || []), ...(STATE.all_courses || [])];
+    return pools.find(c => Number(c.id) === Number(courseId)) || null;
   }
 
   function selectSession(sessionObj, courseObj) {
@@ -610,6 +585,14 @@
       }
     }
 
+    const fullCourse = findFullCourseById(courseObj.id) || courseObj;
+    if (Array.isArray(fullCourse.lecture_summaries)) {
+      renderStudyLectures(fullCourse.lecture_summaries);
+    }
+    if (Array.isArray(fullCourse.assignments)) {
+      renderStudyAssignments(fullCourse.assignments);
+    }
+
     socket.emit("join_session", {
       session_code: sessionObj.session_code,
       student_id: STATE.student ? STATE.student.id : null,
@@ -626,7 +609,7 @@
     const myCourses = STATE.my_courses || [];
     const courses = myCourses.length > 0 ? myCourses : (STATE.all_courses || []);
     if (!courses.length) {
-      listEl.innerHTML = `<div class="cp-card cp-muted" style="font-size:13px; text-align:center;">No courses yet. Scan a classroom QR code or join above!</div>`;
+      listEl.innerHTML = `<div class="cp-card cp-muted" style="font-size:13px; text-align:center;">No courses yet. Scan a classroom QR code to get started!</div>`;
       return;
     }
 
@@ -999,12 +982,19 @@
   }
 
   async function loadAssignmentsOnly() {
-    if (!ACTIVE_SESSION || !ACTIVE_SESSION.course_id) return;
+    if (!ACTIVE_SESSION || !ACTIVE_SESSION.course_id) {
+      renderStudyAssignments([]);
+      return;
+    }
     const cid = ACTIVE_SESSION.course_id;
     const stQuery = STATE.student && STATE.student.id ? `?student_id=${STATE.student.id}&_ts=${Date.now()}` : `?_ts=${Date.now()}`;
     try {
       const hwRes = await fetch(`/api/courses/${cid}/assignments${stQuery}`, { cache: "no-store" });
-      if (!hwRes.ok) return;
+      if (!hwRes.ok) {
+        const el = document.getElementById("student-assignments-list");
+        if (el && !el.children.length) renderStudyAssignments([]);
+        return;
+      }
       const hwData = await hwRes.json();
       const assignments = hwData.assignments || [];
       const isFirstLoad = HW_INITIALIZED_COURSE_ID !== cid;
@@ -1033,11 +1023,17 @@
       }
     } catch (err) {
       console.error("loadAssignmentsOnly error:", err);
+      const el = document.getElementById("student-assignments-list");
+      if (el && !el.children.length) renderStudyAssignments([]);
     }
   }
 
   async function loadStudyHub() {
-    if (!ACTIVE_SESSION || !ACTIVE_SESSION.course_id) return;
+    if (!ACTIVE_SESSION || !ACTIVE_SESSION.course_id) {
+      renderStudyLectures([]);
+      renderStudyAssignments([]);
+      return;
+    }
     const cid = ACTIVE_SESSION.course_id;
     try {
       const [lecRes] = await Promise.all([
@@ -1047,9 +1043,14 @@
       if (lecRes.ok) {
         const lecData = await lecRes.json();
         renderStudyLectures(lecData.artifacts || []);
+      } else {
+        const el = document.getElementById("student-lecture-summaries");
+        if (el && !el.children.length) renderStudyLectures([]);
       }
     } catch (err) {
       console.error("loadStudyHub error:", err);
+      const el = document.getElementById("student-lecture-summaries");
+      if (el && !el.children.length) renderStudyLectures([]);
     }
   }
 

@@ -196,3 +196,24 @@ def test_student_app_renders_mobile_back_button_and_history_guard(mobile_app) ->
     assert ".cp-m-back-btn" in css_text
     assert "@media (min-width: 769px)" in css_text
 
+
+def test_student_app_removes_join_button_and_loading_text(mobile_app) -> None:
+    """Mobile Student App must omit the + Join bar and all 'Loading ...' placeholder text."""
+    client = mobile_app.test_client()
+    _sign_in_student(client, email="cleanui@ariel.ac.il")
+
+    resp = client.get("/student")
+    assert resp.status_code == 200
+    html = resp.data.decode("utf-8")
+
+    assert 'id="join-code-input"' not in html
+    assert "joinCourseByCode" not in html
+    assert "Join course by code" not in html
+    assert "Loading course assignments..." not in html
+    assert "Loading lecture summaries..." not in html
+
+    # Backend /api/student/enroll remains available for API compatibility.
+    enroll_resp = client.post("/api/student/enroll", json={"course_code": "CS204"})
+    assert enroll_resp.status_code == 200
+
+
