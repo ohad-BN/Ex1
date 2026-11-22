@@ -134,7 +134,7 @@
     </div>
   </aside>
 
-  <!-- Minimal Sticky App Bar (Hamburger + Active Screen Title + Compact Status) -->
+  <!-- Minimal Sticky App Bar (Hamburger + Mobile Back + Active Screen Title + Compact Status) -->
   <header class="cp-m-appbar">
     <button type="button"
             id="student-drawer-toggle"
@@ -144,6 +144,14 @@
             aria-controls="student-nav-drawer"
             onclick="toggleStudentDrawer()">
       {{ cp_icon('menu', 20) }}
+    </button>
+    <button type="button"
+            id="student-back-btn"
+            class="cp-m-menu-btn cp-m-back-btn"
+            aria-label="Go back to previous tab"
+            onclick="handleStudentBack()"
+            hidden>
+      {{ cp_icon('arrow-left', 19) }}
     </button>
     <div class="cp-m-title-wrap">
       <h1 id="m-topbar-title" class="cp-m-title">Live Class</h1>
@@ -302,6 +310,91 @@
 
   const socket = window.cpCreateSocket({ transports: ["websocket", "polling"] });
   let activeViewId = "view-live";
+  const STUDENT_NAV_STACK = ["view-live"];
+  let STUDENT_CLEAN_URL = "/student";
+  let STUDENT_HISTORY_GUARD_INSTALLED = false;
+
+  function updateBackButtonVisibility() {
+    const backBtn = document.getElementById("student-back-btn");
+    if (!backBtn) return;
+    backBtn.hidden = activeViewId === "view-live";
+  }
+
+  function handleStudentBack() {
+    const drawer = document.getElementById("student-nav-drawer");
+    if (drawer && drawer.classList.contains("open")) {
+      closeStudentDrawer();
+      return;
+    }
+    if (activeViewId === "view-live") return;
+    if (STUDENT_NAV_STACK.length > 1) {
+      STUDENT_NAV_STACK.pop();
+    }
+    const prevView = STUDENT_NAV_STACK[STUDENT_NAV_STACK.length - 1] || "view-live";
+    switchView(prevView, null, { fromHistory: true });
+    if (window.history && window.history.replaceState) {
+      window.history.replaceState(
+        { cpStudentView: prevView, cpGuard: prevView === "view-live" },
+        "",
+        STUDENT_CLEAN_URL
+      );
+    }
+  }
+
+  function initStudentHistoryGuard(cleanUrl) {
+    STUDENT_CLEAN_URL = cleanUrl || "/student";
+    if (window.history && window.history.replaceState && window.history.pushState) {
+      window.history.replaceState(
+        { cpStudentView: "view-live", cpRoot: true },
+        "",
+        STUDENT_CLEAN_URL
+      );
+      window.history.pushState(
+        { cpStudentView: "view-live", cpGuard: true },
+        "",
+        STUDENT_CLEAN_URL
+      );
+    }
+    if (STUDENT_HISTORY_GUARD_INSTALLED) return;
+    STUDENT_HISTORY_GUARD_INSTALLED = true;
+    window.addEventListener("popstate", () => {
+      const drawer = document.getElementById("student-nav-drawer");
+      if (drawer && drawer.classList.contains("open")) {
+        closeStudentDrawer();
+        if (window.history && window.history.pushState) {
+          window.history.pushState(
+            { cpStudentView: activeViewId, cpGuard: activeViewId === "view-live" },
+            "",
+            STUDENT_CLEAN_URL
+          );
+        }
+        return;
+      }
+      if (activeViewId !== "view-live") {
+        if (STUDENT_NAV_STACK.length > 1) {
+          STUDENT_NAV_STACK.pop();
+        }
+        const prevView = STUDENT_NAV_STACK[STUDENT_NAV_STACK.length - 1] || "view-live";
+        switchView(prevView, null, { fromHistory: true });
+        if (prevView === "view-live" && window.history && window.history.pushState) {
+          window.history.pushState(
+            { cpStudentView: "view-live", cpGuard: true },
+            "",
+            STUDENT_CLEAN_URL
+          );
+        }
+        return;
+      }
+      // On Home ("view-live"): keep the student inside the app and never return to sign-in.
+      if (window.history && window.history.pushState) {
+        window.history.pushState(
+          { cpStudentView: "view-live", cpGuard: true },
+          "",
+          STUDENT_CLEAN_URL
+        );
+      }
+    });
+  }
 
   function escapeHtml(str) {
     return String(str == null ? "" : str)
@@ -402,8 +495,19 @@
     });
   }
 
-  function switchView(viewId, btnEl) {
+  function switchView(viewId, btnEl, opts = {}) {
+    const prevViewId = activeViewId;
     activeViewId = viewId;
+    if (!opts.fromHistory && viewId !== prevViewId) {
+      if (viewId === "view-live") {
+        STUDENT_NAV_STACK.splice(0, STUDENT_NAV_STACK.length, "view-live");
+      } else if (STUDENT_NAV_STACK[STUDENT_NAV_STACK.length - 1] !== viewId) {
+        STUDENT_NAV_STACK.push(viewId);
+        if (window.history && window.history.pushState) {
+          window.history.pushState({ cpStudentView: viewId }, "", STUDENT_CLEAN_URL);
+        }
+      }
+    }
     document.querySelectorAll(".view-pane").forEach(el => el.classList.remove("active"));
     document.querySelectorAll(".mode-tab").forEach(el => el.classList.remove("active"));
     const target = document.getElementById(viewId);
@@ -421,6 +525,7 @@
     }
     const titleEl = document.getElementById("m-topbar-title");
     if (titleEl) titleEl.textContent = VIEW_TITLES[viewId] || "Student App";
+    updateBackButtonVisibility();
     closeStudentDrawer();
 
     if (viewId === "view-live" && window.ClassPulseNotify) window.ClassPulseNotify.clearUnread();
@@ -1402,10 +1507,13 @@
   (function initStudentApp() {
     renderCourses();
     const targetCode = {{ initial_session_code | tojson }};
-    if (FROM_QR_ROUTE && window.history && window.history.replaceState) {
-      const nextUrl = targetCode ? `/student?session=${encodeURIComponent(targetCode)}` : "/student";
-      window.history.replaceState(null, "", nextUrl);
-    }
+    const nextUrl = FROM_QR_ROUTE
+      ? (targetCode ? `/student?session=${encodeURIComponent(targetCode)}` : "/student")
+      : (window.location.pathname === "/student"
+          ? `${window.location.pathname}${window.location.search}`
+          : (targetCode ? `/student?session=${encodeURIComponent(targetCode)}` : "/student"));
+    initStudentHistoryGuard(nextUrl);
+    updateBackButtonVisibility();
     const myCourses = STATE.my_courses || [];
     const searchPool = myCourses.length > 0 ? myCourses : (STATE.all_courses || []);
     const allCourses = STATE.all_courses || [];

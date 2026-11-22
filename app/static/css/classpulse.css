@@ -2063,6 +2063,16 @@ canvas#headcount-canvas {
   border-color: var(--cp-border-strong);
 }
 
+.cp-m-back-btn[hidden] {
+  display: none;
+}
+
+@media (min-width: 769px) {
+  .cp-m-back-btn {
+    display: none !important;
+  }
+}
+
 .cp-m-title-wrap {
   flex: 1 1 auto;
   min-width: 0;

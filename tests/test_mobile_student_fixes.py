@@ -176,3 +176,23 @@ def test_sessions_sorted_newest_first_with_tie_breaker(mobile_app) -> None:
         "S_TIE_A",
         "S_OLD",
     ]
+
+
+def test_student_app_renders_mobile_back_button_and_history_guard(mobile_app) -> None:
+    """Student App renders mobile-only #student-back-btn (hidden on Home) and popstate sign-in guard."""
+    client = mobile_app.test_client()
+    resp = client.get("/student")
+    assert resp.status_code == 200
+    html = resp.data.decode("utf-8")
+
+    assert 'id="student-back-btn"' in html
+    assert 'onclick="handleStudentBack()"' in html
+    assert "cp-m-back-btn" in html
+    assert 'addEventListener("popstate"' in html
+    assert "initStudentHistoryGuard" in html
+
+    css_path = Path(__file__).resolve().parents[1] / "app" / "static" / "css" / "classpulse.css"
+    css_text = css_path.read_text(encoding="utf-8")
+    assert ".cp-m-back-btn" in css_text
+    assert "@media (min-width: 769px)" in css_text
+
