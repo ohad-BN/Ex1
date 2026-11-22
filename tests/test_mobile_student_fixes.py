@@ -217,3 +217,19 @@ def test_student_app_removes_join_button_and_loading_text(mobile_app) -> None:
     assert enroll_resp.status_code == 200
 
 
+def test_student_app_uses_unified_date_grouped_lecture_list(mobile_app) -> None:
+    """Courses & Logs accordion must render one date-grouped list (newest->oldest), not duplicated chips + logs."""
+    client = mobile_app.test_client()
+    resp = client.get("/student")
+    assert resp.status_code == 200
+    html = resp.data.decode("utf-8")
+
+    assert "sortCoursesByRecentLecture" in html
+    assert "sortSessionsNewestFirst" in html
+    assert "cp-m-date-group" in html
+    assert "cp-m-lecture-row" in html
+    # The old second duplicate log list loop must be gone from renderCourses().
+    assert "c.my_attendance_logs" not in html
+
+
+

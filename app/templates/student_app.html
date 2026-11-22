@@ -604,43 +604,142 @@
     renderCourses();
   }
 
+  function getSessionSortStamp(s) {
+    return String((s && (s.started_at_iso || s.started_at)) || "");
+  }
+
+  function sortSessionsNewestFirst(sessions) {
+    return [...(sessions || [])].sort((a, b) => {
+      const cmp = getSessionSortStamp(b).localeCompare(getSessionSortStamp(a));
+      if (cmp !== 0) return cmp;
+      return Number(b.id || 0) - Number(a.id || 0);
+    });
+  }
+
+  function getCourseLatestStamp(c) {
+    if (c && c.latest_lecture_at) return String(c.latest_lecture_at);
+    const sorted = sortSessionsNewestFirst(c && c.sessions);
+    return sorted.length ? getSessionSortStamp(sorted[0]) : "";
+  }
+
+  function sortCoursesByRecentLecture(courses) {
+    return [...(courses || [])].sort((a, b) => {
+      const stampA = getCourseLatestStamp(a);
+      const stampB = getCourseLatestStamp(b);
+      if (Boolean(stampB) !== Boolean(stampA)) return stampB ? 1 : -1;
+      const cmp = stampB.localeCompare(stampA);
+      if (cmp !== 0) return cmp;
+      return Number(b.id || 0) - Number(a.id || 0);
+    });
+  }
+
+  function formatLectureDateHeading(rawDate) {
+    const str = String(rawDate || "").trim();
+    const m = str.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}:\d{2}))?/);
+    if (!m) {
+      return { key: "undated", label: "Other Dates", time: "" };
+    }
+    const year = Number(m[1]);
+    const month = Number(m[2]);
+    const day = Number(m[3]);
+    const time = m[4] || "";
+    const key = `${m[1]}-${m[2]}-${m[3]}`;
+
+    const d = new Date(year, month - 1, day);
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const diffDays = Math.round((todayStart.getTime() - d.getTime()) / 86400000);
+
+    const monthShort = d.toLocaleString("en-US", { month: "short" });
+    const weekdayShort = d.toLocaleString("en-US", { weekday: "short" });
+    const fullDate = `${monthShort} ${day}, ${year}`;
+
+    let label = `${weekdayShort}, ${fullDate}`;
+    if (diffDays === 0) label = `Today · ${fullDate}`;
+    else if (diffDays === 1) label = `Yesterday · ${fullDate}`;
+    return { key, label, time };
+  }
+
+  function formatAttendanceBadge(sessionObj, isEnrolled) {
+    const status = String((sessionObj && sessionObj.attendance_status) || (sessionObj && sessionObj.checked_in ? "PRESENT" : "ABSENT")).toUpperCase();
+    if (status === "PRESENT") return { label: "Present", badgeClass: "cp-badge--green" };
+    if (status === "LATE") return { label: "Late", badgeClass: "cp-badge--amber" };
+    if (!isEnrolled) return { label: "Open", badgeClass: "cp-badge--neutral" };
+    return { label: "Absent", badgeClass: "cp-badge--red" };
+  }
+
+  function openStudentLecture(courseId, sessionCode) {
+    const course = findFullCourseById(courseId);
+    if (!course) return;
+    const sess = (course.sessions || []).find(s => s.session_code === sessionCode);
+    if (!sess) return;
+    selectSession(sess, course);
+    switchView("view-live");
+  }
+
   function renderCourses() {
     const listEl = document.getElementById("courses-list");
     const myCourses = STATE.my_courses || [];
-    const courses = myCourses.length > 0 ? myCourses : (STATE.all_courses || []);
+    const rawCourses = myCourses.length > 0 ? myCourses : (STATE.all_courses || []);
+    const courses = sortCoursesByRecentLecture(rawCourses);
     if (!courses.length) {
       listEl.innerHTML = `<div class="cp-card cp-muted" style="font-size:13px; text-align:center;">No courses yet. Scan a classroom QR code to get started!</div>`;
       return;
     }
 
     listEl.innerHTML = courses.map(c => {
-      const sessions = c.sessions || [];
+      const sessions = sortSessionsNewestFirst(c.sessions || []);
       const primarySession = sessions.find(s => ACTIVE_SESSION && ACTIVE_SESSION.session_code === s.session_code) || sessions[0] || null;
-      const sessionsHtml = sessions.map(s => {
-        const isSelected = ACTIVE_SESSION && ACTIVE_SESSION.session_code === s.session_code;
+      const courseSelected = ACTIVE_SESSION && ACTIVE_SESSION.course_code === c.course_code;
+
+      const dateGroups = [];
+      const groupByKey = new Map();
+      for (const s of sessions) {
+        const info = formatLectureDateHeading(s.started_at_iso || s.started_at);
+        let group = groupByKey.get(info.key);
+        if (!group) {
+          group = { key: info.key, label: info.label, items: [] };
+          groupByKey.set(info.key, group);
+          dateGroups.push(group);
+        }
+        group.items.push({ session: s, time: info.time });
+      }
+
+      const timelineHtml = dateGroups.map(group => {
+        const rowsHtml = group.items.map(({ session: s, time }) => {
+          const isSelected = ACTIVE_SESSION && ACTIVE_SESSION.session_code === s.session_code;
+          const badge = formatAttendanceBadge(s, c.is_enrolled);
+          return `
+            <button type="button"
+                    class="cp-m-lecture-row ${isSelected ? 'active' : ''}"
+                    data-session-code="${escapeHtml(s.session_code)}"
+                    onclick="event.stopPropagation(); openStudentLecture(${Number(c.id)}, '${escapeHtml(s.session_code)}');">
+              <div class="cp-m-lecture-main">
+                <div class="cp-m-lecture-title">${escapeHtml(s.title)}</div>
+                <div class="cp-m-lecture-meta cp-tabular">
+                  ${time ? `<span>${escapeHtml(time)}</span><span>&bull;</span>` : ''}
+                  <span class="cp-m-lecture-code">${escapeHtml(s.session_code)}</span>
+                  ${isSelected ? '<span class="cp-m-lecture-active-dot">Active</span>' : ''}
+                </div>
+              </div>
+              <div class="cp-m-lecture-right">
+                <span class="cp-badge ${badge.badgeClass}">${escapeHtml(badge.label)}</span>
+                <span class="cp-m-lecture-chev" aria-hidden="true">&#8250;</span>
+              </div>
+            </button>
+          `;
+        }).join("");
+
         return `
-          <button type="button"
-                  class="cp-session-chip session-chip ${isSelected ? 'active' : ''}"
-                  onclick='event.stopPropagation(); selectSession(${JSON.stringify(s)}, ${JSON.stringify({id: c.id, course_code: c.course_code, name: c.name})}); switchView("view-live");'>
-            ${s.checked_in ? '&#10003;' : '&#9679;'} ${escapeHtml(s.title)} (${escapeHtml(s.session_code)})
-          </button>
+          <div class="cp-m-date-group" data-date-key="${escapeHtml(group.key)}">
+            <div class="cp-m-date-heading">${escapeHtml(group.label)}</div>
+            <div class="cp-m-lecture-list">${rowsHtml}</div>
+          </div>
         `;
       }).join("");
 
-      const logs = c.my_attendance_logs || [];
-      const logsHtml = logs.map(log => `
-        <div class="cp-m-hairline-row">
-          <span style="color:var(--cp-ink); min-width:0; overflow-wrap:anywhere;">${escapeHtml(log.lecture_title)} (<code>${escapeHtml(log.session_code)}</code>)</span>
-          <span class="cp-badge cp-tabular ${log.status !== 'ABSENT' ? 'cp-badge--green' : 'cp-badge--red'}" style="flex-shrink:0;">
-            ${escapeHtml(log.status)} &bull; ${escapeHtml(log.checked_in_at)}
-          </span>
-        </div>
-      `).join("");
-
-      const courseSelected = ACTIVE_SESSION && ACTIVE_SESSION.course_code === c.course_code;
-
       return `
-        <div class="cp-m-course-card course-card ${courseSelected ? 'selected' : ''}">
+        <div class="cp-m-course-card course-card ${courseSelected ? 'selected' : ''}" data-course-code="${escapeHtml(c.course_code)}">
           <div class="cp-row-between" style="margin-bottom:4px; align-items:flex-start;">
             <div style="min-width:0; flex:1;">
               <div class="cp-row-wrap" style="gap:6px; margin-bottom:4px;">
@@ -658,7 +757,7 @@
             <button type="button"
                     class="cp-m-live-room-cta"
                     style="margin-top:10px;"
-                    onclick='selectSession(${JSON.stringify(primarySession)}, ${JSON.stringify({id: c.id, course_code: c.course_code, name: c.name})}); switchView("view-live");'>
+                    onclick="openStudentLecture(${Number(c.id)}, '${escapeHtml(primarySession.session_code)}');">
               <span style="min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
                 Open ${escapeHtml(primarySession.title)} (${escapeHtml(primarySession.session_code)})
               </span>
@@ -666,14 +765,13 @@
             </button>
           ` : ''}
 
-          ${(sessions.length > 1 || (c.is_enrolled && logsHtml)) ? `
+          ${sessions.length > 0 ? `
             <details class="cp-m-accordion">
               <summary>
                 <span>All Lectures &amp; Attendance (${sessions.length})</span>
                 <span class="cp-muted">&#9662;</span>
               </summary>
-              ${sessions.length ? `<div style="margin-top:8px;">${sessionsHtml}</div>` : ''}
-              ${c.is_enrolled && logsHtml ? `<div style="margin-top:10px;">${logsHtml}</div>` : ''}
+              <div class="cp-m-timeline">${timelineHtml}</div>
             </details>
           ` : ''}
         </div>
@@ -1516,19 +1614,24 @@
     initStudentHistoryGuard(nextUrl);
     updateBackButtonVisibility();
     const myCourses = STATE.my_courses || [];
-    const searchPool = myCourses.length > 0 ? myCourses : (STATE.all_courses || []);
+    const searchPool = sortCoursesByRecentLecture(myCourses.length > 0 ? myCourses : (STATE.all_courses || []));
     const allCourses = STATE.all_courses || [];
 
     for (const c of allCourses) {
-      for (const s of (c.sessions || [])) {
+      for (const s of sortSessionsNewestFirst(c.sessions || [])) {
         if (targetCode && s.session_code === targetCode) {
           selectSession(s, c);
           return;
         }
       }
     }
-    if (searchPool.length && searchPool[0].sessions && searchPool[0].sessions.length) {
-      selectSession(searchPool[0].sessions[0], searchPool[0]);
+    const firstWithSessions = searchPool.find(c => (c.sessions || []).length > 0);
+    if (firstWithSessions) {
+      const sortedSessions = sortSessionsNewestFirst(firstWithSessions.sessions);
+      selectSession(sortedSessions[0], firstWithSessions);
+    } else {
+      renderStudyLectures([]);
+      renderStudyAssignments([]);
     }
   })();
 

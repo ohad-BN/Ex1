@@ -2422,6 +2422,120 @@ canvas#headcount-canvas {
   border-color: var(--cp-indigo);
 }
 
+/* Unified Date-Grouped Mobile Lecture Timeline */
+.cp-m-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.cp-m-date-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cp-m-date-heading {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--cp-ink-muted);
+  padding: 2px 2px 2px 2px;
+}
+
+.cp-m-lecture-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cp-m-lecture-row {
+  width: 100%;
+  min-height: 54px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 13px;
+  border: 1px solid var(--cp-border);
+  background: var(--cp-well);
+  color: var(--cp-ink);
+  font-family: var(--cp-font-sans);
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.14s ease, border-color 0.14s ease, box-shadow 0.14s ease;
+}
+
+.cp-m-lecture-row:hover {
+  background: var(--cp-surface-solid);
+  border-color: var(--cp-border-strong);
+}
+
+.cp-m-lecture-row.active {
+  background: var(--cp-surface-solid);
+  border-color: rgba(91, 95, 239, 0.42);
+  box-shadow: var(--cp-pill-shadow);
+}
+
+.cp-m-lecture-main {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.cp-m-lecture-title {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--cp-ink);
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.cp-m-lecture-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  font-size: 11.5px;
+  color: var(--cp-ink-muted);
+}
+
+.cp-m-lecture-code {
+  font-family: var(--cp-font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--cp-ink-secondary);
+  background: var(--cp-surface-solid);
+  border: 1px solid var(--cp-border);
+  border-radius: 6px;
+  padding: 1px 6px;
+}
+
+.cp-m-lecture-active-dot {
+  font-size: 10.5px;
+  font-weight: 800;
+  color: var(--cp-indigo-ink);
+}
+
+.cp-m-lecture-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.cp-m-lecture-chev {
+  font-size: 18px;
+  line-height: 1;
+  color: var(--cp-ink-muted);
+  font-weight: 600;
+}
+
 @media (max-width: 640px) {
   .cp-shell--mobile {
     width: 100%;
