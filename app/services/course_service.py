@@ -997,14 +997,14 @@ class CourseService:
                 if sess and sess.course_id:
                     enrolled_course_ids.add(sess.course_id)
 
-        my_courses = []
-        catalog_courses = []
+        my_courses_ranked: list[tuple[tuple[int, datetime, int, int], dict[str, Any]]] = []
+        catalog_courses_ranked: list[tuple[tuple[int, datetime, int, int], dict[str, Any]]] = []
 
         for c in all_courses:
             sessions = (
                 self.db.query(ClassSession)
                 .filter_by(course_id=c.id)
-                .order_by(ClassSession.id.desc())
+                .order_by(ClassSession.started_at.desc(), ClassSession.id.desc())
                 .all()
             )
             session_ids = [s.id for s in sessions]
@@ -1037,11 +1037,14 @@ class CourseService:
                     if rec is not None
                     else None
                 )
+                started_str = s.started_at.strftime("%Y-%m-%d %H:%M") if s.started_at else ""
+                started_iso = s.started_at.isoformat() if s.started_at else ""
                 s_card = {
                     "id": s.id,
                     "session_code": s.session_code,
                     "title": s.title,
-                    "started_at": s.started_at.strftime("%Y-%m-%d %H:%M"),
+                    "started_at": started_str,
+                    "started_at_iso": started_iso,
                     "attendance_open": s.attendance_open,
                     "checked_in": checked_in,
                     "attendance_status": status_label,
@@ -1064,11 +1067,23 @@ class CourseService:
                         "session_id": s.id,
                         "session_code": s.session_code,
                         "lecture_title": s.title,
-                        "lecture_date": s.started_at.strftime("%Y-%m-%d %H:%M"),
+                        "lecture_date": started_str,
                         "status": status_label,
                         "checked_in_at": checked_in_time or "Not checked in",
                     }
                 )
+
+            latest_session = sessions[0] if sessions else None
+            latest_dt = (
+                latest_session.started_at.replace(tzinfo=None)
+                if (latest_session is not None and latest_session.started_at is not None)
+                else None
+            )
+            latest_lecture_at = (
+                latest_session.started_at.isoformat()
+                if (latest_session is not None and latest_session.started_at is not None)
+                else ""
+            )
 
             course_card = {
                 "id": c.id,
@@ -1085,6 +1100,7 @@ class CourseService:
                     if sessions
                     else 0.0
                 ),
+                "latest_lecture_at": latest_lecture_at,
                 "sessions": session_cards,
                 "my_attendance_logs": attendance_logs,
                 "lecture_summaries": LectureSummarizerService(self.db).list_course_artifacts(
@@ -1096,9 +1112,20 @@ class CourseService:
                     include_submissions=False,
                 ),
             }
+            sort_key = (
+                1 if latest_dt is not None else 0,
+                latest_dt if latest_dt is not None else datetime.min,
+                latest_session.id if latest_session is not None else 0,
+                c.id,
+            )
             if c.id in enrolled_course_ids:
-                my_courses.append(course_card)
-            catalog_courses.append(course_card)
+                my_courses_ranked.append((sort_key, course_card))
+            catalog_courses_ranked.append((sort_key, course_card))
+
+        my_courses_ranked.sort(key=lambda item: item[0], reverse=True)
+        catalog_courses_ranked.sort(key=lambda item: item[0], reverse=True)
+        my_courses = [card for _, card in my_courses_ranked]
+        catalog_courses = [card for _, card in catalog_courses_ranked]
 
         return {
             "authenticated": student is not None,
