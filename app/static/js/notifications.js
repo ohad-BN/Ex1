@@ -9,6 +9,102 @@
   };
   let _unreadCount = 0;
   const _seenNotifyIds = new Set();
+  const _unreadMap = new Map();
+
+  function _storageKey() {
+    const uid =
+      _cfg.role === "lecturer"
+        ? _cfg.currentLecturerId || "anon"
+        : _cfg.currentStudentId || "anon";
+    return `cp_unread_v2_${_cfg.role}_${uid}`;
+  }
+
+  function _loadUnreadStore() {
+    _unreadMap.clear();
+    try {
+      const raw = window.localStorage.getItem(_storageKey());
+      if (!raw) return;
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr)) {
+        arr.forEach((item) => {
+          if (item && item.key) _unreadMap.set(String(item.key), item);
+        });
+      }
+    } catch (_err) {}
+  }
+
+  function _saveUnreadStore() {
+    try {
+      const items = Array.from(_unreadMap.values()).slice(-80);
+      window.localStorage.setItem(_storageKey(), JSON.stringify(items));
+    } catch (_err) {}
+    _notifyUnreadListeners();
+  }
+
+  function _notifyUnreadListeners() {
+    setUnreadCount(_unreadMap.size);
+    if (typeof _cfg.onUnreadChange === "function") {
+      try {
+        _cfg.onUnreadChange(getUnreadSummary());
+      } catch (_err) {}
+    }
+  }
+
+  function markUnread(entry) {
+    if (!entry || !entry.key) return;
+    const key = String(entry.key);
+    _unreadMap.set(key, {
+      key,
+      kind: String(entry.kind || "qa"),
+      courseId: entry.courseId != null ? Number(entry.courseId) : null,
+      sessionCode: entry.sessionCode ? String(entry.sessionCode) : "",
+      itemId: entry.itemId != null ? String(entry.itemId) : "",
+    });
+    _saveUnreadStore();
+  }
+
+  function clearUnreadWhere(predFn) {
+    if (typeof predFn !== "function") return;
+    let changed = false;
+    for (const [key, item] of _unreadMap.entries()) {
+      if (predFn(item)) {
+        _unreadMap.delete(key);
+        changed = true;
+      }
+    }
+    if (changed) {
+      _saveUnreadStore();
+    }
+  }
+
+  function getUnreadSummary() {
+    const courses = new Set();
+    const sections = new Set();
+    const items = new Set();
+    const byKind = {};
+    for (const item of _unreadMap.values()) {
+      const k = item.kind;
+      byKind[k] = (byKind[k] || 0) + 1;
+      if (item.courseId != null) {
+        courses.add(item.courseId);
+        if (k === "assignment") sections.add(`${item.courseId}:assignments`);
+        else if (k === "summary") sections.add(`${item.courseId}:summaries`);
+        else if (k === "qa" || k === "poll") sections.add(`${item.courseId}:lectures`);
+        if (k === "qa") sections.add(`${item.courseId}:qa`);
+      }
+      if (item.itemId) items.add(`${k}:${item.itemId}`);
+      if (item.sessionCode) items.add(`${k}:sess:${item.sessionCode}`);
+    }
+    return {
+      total: _unreadMap.size,
+      byKind,
+      hasUnreadCourse: (cid) => courses.has(Number(cid)),
+      hasUnreadSection: (cid, sec) => sections.has(`${Number(cid)}:${sec}`),
+      hasUnreadItem: (kind, idOrCode) =>
+        items.has(`${kind}:${idOrCode}`) || items.has(`${kind}:sess:${idOrCode}`),
+      hasUnreadAny: (kind) => (kind ? (byKind[kind] || 0) > 0 : _unreadMap.size > 0),
+    };
+  }
 
   function _ensureStylesAndContainers() {
     if (!document.getElementById("cp-notify-styles")) {
@@ -195,6 +291,8 @@
   }
 
   function clearUnread() {
+    _unreadMap.clear();
+    _saveUnreadStore();
     setUnreadCount(0);
   }
 
@@ -241,7 +339,13 @@
       Boolean(_cfg.isChatVisibleFn(payload));
 
     if (!viewingSameChatNow) {
-      setUnreadCount(_unreadCount + 1);
+      markUnread({
+        key: `qa:${payload.course_id || ""}:${msgId || Date.now()}`,
+        kind: "qa",
+        courseId: payload.course_id,
+        sessionCode: payload.session_code,
+        itemId: msgId,
+      });
     }
 
     const stack = document.getElementById("cp-toast-stack");
@@ -304,11 +408,13 @@
   function init(options) {
     _cfg = { ..._cfg, ...(options || {}) };
     _ensureStylesAndContainers();
-    _drawFavicon(0);
+    _loadUnreadStore();
+    _drawFavicon(_unreadMap.size);
+    _notifyUnreadListeners();
 
     document.addEventListener("visibilitychange", () => {
       if (!document.hidden && typeof _cfg.isChatVisibleFn === "function" && _cfg.isChatVisibleFn(null)) {
-        clearUnread();
+        setUnreadCount(0);
       }
     });
   }
@@ -317,6 +423,9 @@
     init,
     setUnreadCount,
     clearUnread,
+    markUnread,
+    clearUnreadWhere,
+    getUnreadSummary,
     pushChatNotification,
     highlightMessage,
   };

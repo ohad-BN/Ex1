@@ -33,7 +33,11 @@ from app.models import (
     HeadcountSnapshot,
     Student,
 )
-from app.routes.guards import get_current_lecturer, require_session_access
+from app.routes.guards import (
+    get_current_lecturer,
+    require_session_access,
+    verify_session_read_access,
+)
 from app.services.attendance_service import (
     AttendanceError,
     AttendanceService,
@@ -327,8 +331,20 @@ def create_or_update_session():
     title = str(data.get("title", "New Classroom Lecture")).strip()
     code = str(data.get("session_code", "")).strip() or None
     tolerance = int(data.get("headcount_tolerance", 2))
+    raw_course_id = data.get("course_id")
+    course_id_val: Optional[int] = None
+    if raw_course_id is not None and str(raw_course_id).strip() != "":
+        course_id_val = int(raw_course_id)
+        from app.routes.guards import require_course_access
+
+        _c, _lec, c_err = require_course_access(course_id_val)
+        if c_err is not None:
+            return c_err
     session = att_service.create_session(
-        title=title, session_code=code, headcount_tolerance=tolerance
+        title=title,
+        session_code=code,
+        headcount_tolerance=tolerance,
+        course_id=course_id_val,
     )
     if request.is_json:
         return jsonify(
@@ -350,6 +366,9 @@ def get_rotating_qr(session_code: str):
     session = db.query(ClassSession).filter_by(session_code=code).one_or_none()
     if session is None:
         return jsonify({"error": "Session not found"}), 404
+    _sess, _lec, _stu, err = verify_session_read_access(session.id, allow_open_attendance=True)
+    if err is not None:
+        return err
     payload = qr_service.build_qr_payload(_resolve_base_url(), code)
     payload["attendance_open"] = session.attendance_open
     return jsonify(payload)
@@ -765,11 +784,12 @@ def get_headcount_image(session_id: int, kind: str):
 @attendance_bp.get("/api/sessions/<int:session_id>/status")
 @attendance_bp.get("/api/sessions/<int:session_id>/overview")
 def get_session_live_status(session_id: int):
+    session, _lec, _stu, err = verify_session_read_access(session_id, allow_open_attendance=True)
+    if err is not None:
+        return err
+    assert session is not None
     att_service, _qr_service, _device_mgr, _exporter = _get_services()
     db = current_app.extensions["db_session"]
-    session = db.get(ClassSession, session_id)
-    if session is None:
-        return jsonify({"error": "Session not found"}), 404
 
     verdict = att_service.get_audit_summary(session.id)
     rows = att_service.get_attendance_rows(session.id)

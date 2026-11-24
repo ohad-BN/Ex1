@@ -6,7 +6,12 @@ from flask import Blueprint, Response, current_app, jsonify, redirect, render_te
 
 from app import socketio
 from app.models import ChatMessage, ClassSession, Course, Student
-from app.routes.guards import get_current_lecturer, is_lecturer_authorized_for_course, require_session_access
+from app.routes.guards import (
+    get_current_lecturer,
+    is_lecturer_authorized_for_course,
+    require_session_access,
+    verify_session_read_access,
+)
 from app.services.chat_service import ChatError, ChatService
 from app.services.qr_service import DeviceBindingManager
 
@@ -50,6 +55,9 @@ def _resolve_student_from_cookie() -> Optional[Student]:
 
 @chat_bp.get("/api/sessions/<int:session_id>/chat")
 def list_chat_messages(session_id: int):
+    _sess, _lec, _stu, err = verify_session_read_access(session_id, allow_open_attendance=True)
+    if err is not None:
+        return err
     svc = _get_chat_service()
     return jsonify({"messages": svc.list_messages(session_id)})
 
@@ -155,10 +163,10 @@ def pin_chat_message(message_id: int):
 
 @chat_bp.get("/api/sessions/<int:session_id>/chat/export")
 def export_chat_timeline(session_id: int):
-    db = current_app.extensions["db_session"]
-    session = db.get(ClassSession, session_id)
-    if session is None:
-        return jsonify({"error": "Session not found"}), 404
+    session, _lec, _stu, err = verify_session_read_access(session_id, allow_open_attendance=True)
+    if err is not None:
+        return err
+    assert session is not None
 
     svc = _get_chat_service()
     text_out = svc.export_timeline_text(session_id)

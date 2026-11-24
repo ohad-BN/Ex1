@@ -13,6 +13,7 @@ from typing import Any, Optional
 
 import requests
 from pydantic import BaseModel, Field, field_validator
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models import (
@@ -22,6 +23,7 @@ from app.models import (
     HomeworkSubmission,
     Student,
 )
+from app.services.identity_helpers import is_synthetic_student_email
 from app.services.llm_client import GeminiStudioClient
 
 logger = logging.getLogger(__name__)
@@ -696,8 +698,22 @@ class HomeworkReviewService:
             )
         clean_topics = [str(t).strip() for t in (topics or []) if str(t).strip()]
 
+        max_num = (
+            self.db.query(func.max(Assignment.assignment_number))
+            .filter_by(course_id=course.id)
+            .scalar()
+        )
+        if max_num is not None:
+            next_num = int(max_num) + 1
+        else:
+            existing_cnt = (
+                self.db.query(Assignment).filter_by(course_id=course.id).count()
+            )
+            next_num = existing_cnt + 1
+
         assignment = Assignment(
             course_id=course.id,
+            assignment_number=next_num,
             title=clean_title,
             rubric_text=clean_rubric,
             topics_json=json.dumps(clean_topics),
@@ -757,7 +773,11 @@ class HomeworkReviewService:
             "assignment_id": sub.assignment_id,
             "student_id": sub.student_id,
             "student_name": student.full_name if student else f"Student #{sub.student_id}",
-            "student_email": student.email if student else "",
+            "student_email": (
+                ""
+                if (student and is_synthetic_student_email(student.email))
+                else (student.email if student else "")
+            ),
             "version": sub.version,
             "source_type": sub.source_type,
             "source_ref": sub.source_ref,
@@ -794,9 +814,16 @@ class HomeworkReviewService:
             if sub_row is not None:
                 my_sub = self.serialize_submission(sub_row, stats=stats)
 
+        course = (
+            self.db.get(Course, assignment.course_id)
+            if assignment.course_id is not None
+            else None
+        )
         payload: dict[str, Any] = {
             "id": assignment.id,
             "course_id": assignment.course_id,
+            "course_name": course.name if course is not None else "",
+            "assignment_number": int(assignment.assignment_number or 1),
             "title": assignment.title,
             "rubric_text": assignment.rubric_text,
             "topics": topics,
@@ -820,7 +847,7 @@ class HomeworkReviewService:
         rows = (
             self.db.query(Assignment)
             .filter_by(course_id=course_id)
-            .order_by(Assignment.id.desc())
+            .order_by(Assignment.assignment_number.asc(), Assignment.id.asc())
             .all()
         )
         return [

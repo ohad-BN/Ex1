@@ -9,7 +9,12 @@ from werkzeug.utils import secure_filename
 
 from app import socketio
 from app.models import ClassSession, Course, CourseEnrollment, LectureArtifact
-from app.routes.guards import get_current_student, require_course_access, require_session_access
+from app.routes.guards import (
+    require_course_access,
+    require_session_access,
+    verify_course_read_access,
+    verify_session_read_access,
+)
 from app.services.lecture_pipeline import LecturePipelineError, LectureSummarizerService
 
 lectures_bp = Blueprint("lectures", __name__)
@@ -41,28 +46,16 @@ def integration_status():
 
 @lectures_bp.get("/api/sessions/<int:session_id>/lectures")
 def list_session_lectures(session_id: int):
+    _sess, _lec, _stu, err = verify_session_read_access(session_id, allow_open_attendance=True)
+    if err is not None:
+        return err
     svc = _get_lecture_service()
     return jsonify({"artifacts": svc.list_session_artifacts(session_id)})
 
 
 @lectures_bp.get("/api/courses/<int:course_id>/lectures")
 def list_course_lectures(course_id: int):
-    db = current_app.extensions["db_session"]
-    student = get_current_student()
-    if student is not None:
-        course = db.get(Course, course_id)
-        if course is None:
-            return jsonify({"error": "Course not found."}), 404
-        enrolled = (
-            db.query(CourseEnrollment)
-            .filter_by(course_id=course_id, student_id=student.id)
-            .first()
-            is not None
-        )
-        if enrolled:
-            svc = _get_lecture_service()
-            return jsonify({"artifacts": svc.list_course_artifacts(course_id)})
-    _course, _lec, err = require_course_access(course_id)
+    _course, _lec, _stu, _all_subs, err = verify_course_read_access(course_id)
     if err is not None:
         return err
     svc = _get_lecture_service()
@@ -71,6 +64,15 @@ def list_course_lectures(course_id: int):
 
 @lectures_bp.get("/api/lectures/<int:artifact_id>/download/summary.md")
 def download_lecture_summary_md(artifact_id: int):
+    db = current_app.extensions["db_session"]
+    artifact = db.get(LectureArtifact, artifact_id)
+    if artifact is None:
+        return jsonify({"error": "Lecture artifact not found."}), 404
+    _sess, _lec, _stu, err = verify_session_read_access(
+        artifact.session_id, allow_open_attendance=True
+    )
+    if err is not None:
+        return err
     svc = _get_lecture_service()
     try:
         filename, content = svc.build_summary_download(artifact_id)
@@ -85,6 +87,15 @@ def download_lecture_summary_md(artifact_id: int):
 
 @lectures_bp.get("/api/lectures/<int:artifact_id>/download/transcript.txt")
 def download_lecture_transcript_txt(artifact_id: int):
+    db = current_app.extensions["db_session"]
+    artifact = db.get(LectureArtifact, artifact_id)
+    if artifact is None:
+        return jsonify({"error": "Lecture artifact not found."}), 404
+    _sess, _lec, _stu, err = verify_session_read_access(
+        artifact.session_id, allow_open_attendance=True
+    )
+    if err is not None:
+        return err
     svc = _get_lecture_service()
     try:
         filename, content = svc.build_transcript_download(artifact_id)
@@ -144,6 +155,9 @@ def summarize_session_lecture(session_id: int):
         dest_dir.mkdir(parents=True, exist_ok=True)
         saved_path = dest_dir / clean_name
         file_storage.save(str(saved_path))
+        if not saved_path.exists() or saved_path.stat().st_size == 0:
+            saved_path.unlink(missing_ok=True)
+            return jsonify({"error": "Selected summary or recording file is empty."}), 400
         if not async_mode:
             async_mode = str(request.form.get("async", "")).lower() in ("1", "true", "yes")
     else:
@@ -155,14 +169,20 @@ def summarize_session_lecture(session_id: int):
 
     if not use_sample and not (transcript_text and transcript_text.strip()) and saved_path is None:
         return (
-            jsonify({"error": "Provide a media/transcript file, transcript_text, or set use_sample=true."}),
+            jsonify({"error": "Please select a summary or recording file (or enter notes) before uploading."}),
             400,
         )
 
     room = f"session_{session.session_code}"
+    course_room = f"course_notify_{session.course_id}" if session.course_id is not None else None
 
     def _emit_status(payload_dict: dict[str, Any]) -> None:
         socketio.emit("lecture:status", payload_dict, to=room)
+
+    def _emit_summary_ready(payload_dict: dict[str, Any]) -> None:
+        socketio.emit("lecture:summary_ready", payload_dict, to=room)
+        if course_room is not None:
+            socketio.emit("lecture:summary_ready", payload_dict, to=course_room)
 
     if async_mode and saved_path is not None:
         provisional = LectureArtifact(
@@ -192,7 +212,7 @@ def summarize_session_lecture(session_id: int):
                     on_status=_emit_status,
                 )
                 serialized_bg = bg_svc.serialize_artifact(artifact)
-                socketio.emit("lecture:summary_ready", serialized_bg, to=room)
+                _emit_summary_ready(serialized_bg)
                 return serialized_bg
 
         job_id = current_app.extensions["task_manager"].submit(
@@ -212,5 +232,5 @@ def summarize_session_lecture(session_id: int):
         return jsonify({"error": exc.message}), exc.status_code
 
     serialized = svc.serialize_artifact(artifact)
-    socketio.emit("lecture:summary_ready", serialized, to=room)
+    _emit_summary_ready(serialized)
     return jsonify(serialized), 201

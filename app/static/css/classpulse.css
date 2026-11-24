@@ -2081,7 +2081,7 @@ canvas#headcount-canvas {
 
 .cp-student-shell {
   width: 100%;
-  max-width: 1220px;
+  max-width: 1520px;
   min-height: calc(100vh - 28px);
   min-height: calc(100dvh - 28px);
   margin: 14px auto;
@@ -2732,14 +2732,55 @@ canvas#headcount-canvas {
 
 .cp-course-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px;
 }
 
 .cp-hub-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 16px;
+}
+
+@media (min-width: 1120px) {
+  .cp-hub-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 18px;
+  }
+  .cp-hub-grid--student {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .cp-hub-tile {
+    min-height: 154px;
+    padding: 22px;
+  }
+}
+
+.cp-notif-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--cp-red, #DC2626);
+  box-shadow: 0 0 0 2px #FFFFFF;
+  flex-shrink: 0;
+}
+
+.cp-notif-dot[hidden] {
+  display: none !important;
+}
+
+.cp-login-row-id {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
+@media (max-width: 720px) {
+  .cp-login-row-id {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .cp-hub-tile {

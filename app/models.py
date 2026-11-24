@@ -477,6 +477,7 @@ class Assignment(Base):
     course_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("courses.id", ondelete="SET NULL"), index=True, nullable=True
     )
+    assignment_number: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     rubric_text: Mapped[str] = mapped_column(Text, nullable=False)
     topics_json: Mapped[str] = mapped_column(Text, default="[]", nullable=False)
@@ -567,6 +568,7 @@ def _migrate_sqlite_columns(engine: Engine) -> None:
         ("class_sessions", "course_id", "INTEGER REFERENCES courses(id) ON DELETE SET NULL"),
         ("class_sessions", "lecture_number", "INTEGER"),
         ("assignments", "course_id", "INTEGER REFERENCES courses(id) ON DELETE SET NULL"),
+        ("assignments", "assignment_number", "INTEGER"),
         ("courses", "lecturer_id", "INTEGER REFERENCES lecturers(id) ON DELETE SET NULL"),
         ("lecture_artifacts", "error_message", "TEXT"),
         ("lecturers", "username", "VARCHAR(40)"),
@@ -664,6 +666,28 @@ def _migrate_sqlite_columns(engine: Engine) -> None:
                     conn.exec_driver_sql(
                         "UPDATE class_sessions SET lecture_number = ? WHERE id = ?;",
                         (next_num, sid),
+                    )
+
+        asgn_cols = {
+            r[1]
+            for r in conn.exec_driver_sql("PRAGMA table_info(assignments);").fetchall()
+        }
+        if "assignment_number" in asgn_cols:
+            all_asgns = conn.exec_driver_sql(
+                "SELECT id, course_id, assignment_number FROM assignments "
+                "ORDER BY COALESCE(course_id, 0) ASC, created_at ASC, id ASC;"
+            ).fetchall()
+            asgn_max: dict[Optional[int], int] = {}
+            for _aid, cid, anum in all_asgns:
+                if anum is not None:
+                    asgn_max[cid] = max(asgn_max.get(cid, 0), int(anum))
+            for aid, cid, anum in all_asgns:
+                if anum is None:
+                    next_anum = asgn_max.get(cid, 0) + 1
+                    asgn_max[cid] = next_anum
+                    conn.exec_driver_sql(
+                        "UPDATE assignments SET assignment_number = ? WHERE id = ?;",
+                        (next_anum, aid),
                     )
 
 

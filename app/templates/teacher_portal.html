@@ -202,8 +202,10 @@
       </div>
       {% for c in courses %}
         <a class="cp-nav-item course-item {% if c.id == selected_course.id %}active{% endif %}"
+           data-course-id="{{ c.id }}"
            href="/teacher?course_id={{ c.id }}">
           <span class="cp-nav-label">{{ c.name }}</span>
+          <span class="cp-notif-dot" data-course-dot="{{ c.id }}" hidden></span>
         </a>
       {% endfor %}
     </div>
@@ -238,7 +240,7 @@
 
   <!-- Right Main Modular Workspace -->
   <main class="cp-workspace workspace">
-    <!-- Top Header with Persistent In-App Back Button -->
+    <!-- Top Header (Single Course Name + Active Lecture beneath, zero duplication) -->
     <header class="cp-topbar topbar">
       <div class="cp-row-wrap" style="min-width:0; flex:1 1 300px; gap:12px;">
         <button type="button"
@@ -251,16 +253,23 @@
           <span>Back</span>
         </button>
         <div style="min-width:0;">
-          <h2 id="lecturer-header-course" style="margin:0; font-size:20px; font-weight:800; color:var(--cp-ink); overflow-wrap:anywhere;">
+          <h2 id="lecturer-header-course" style="margin:0; font-size:21px; font-weight:800; color:var(--cp-ink); overflow-wrap:anywhere;">
             {{ selected_course.name }}
           </h2>
-          <div id="lecturer-header-sub" class="cp-muted" style="font-size:13.5px; margin-top:2px;">
-            {% if session.lecture_number and not session.title.lower().startswith('lecture') %}Lecture {{ session.lecture_number }} &mdash; {% endif %}{{ session.title }}
+          <div id="lecturer-header-sub" class="cp-muted" style="font-size:14px; font-weight:600; margin-top:2px;">
+            Active Lecture: {% if session.lecture_number and not session.title.lower().startswith('lecture') %}Lecture {{ session.lecture_number }} &mdash; {% endif %}{{ session.title }}
           </div>
         </div>
       </div>
 
       <div class="cp-row-wrap">
+        <button type="button" class="cp-btn cp-btn--secondary cp-btn--sm" onclick="switchTab('tab-lectures')">
+          <span>Switch Lecture</span>
+        </button>
+        <button type="button" class="cp-btn cp-btn--green cp-btn--sm" onclick="openModal('modal-new-lecture')">
+          {{ cp_icon('plus', 14) }}
+          <span>New Lecture</span>
+        </button>
         <a class="cp-btn cp-btn--primary cp-btn--sm" href="/projector/{{ session.session_code }}?ptok={{ projector_token }}" target="_blank">
           {{ cp_icon('monitor', 15) }}
           <span>Projector QR</span>
@@ -274,26 +283,6 @@
 
     <!-- HUB: Course Overview Tiles (Default) -->
     <section id="tab-overview" class="cp-tab-pane tab-pane active">
-      <div class="cp-card cp-card--compact" style="margin-bottom:16px;">
-        <div class="cp-row-between">
-          <div>
-            <div class="cp-eyebrow">Active Lecture</div>
-            <div style="font-size:18px; font-weight:800; color:var(--cp-ink); margin-top:2px;">
-              {% if session.lecture_number and not session.title.lower().startswith('lecture') %}Lecture {{ session.lecture_number }} &mdash; {% endif %}{{ session.title }}
-            </div>
-          </div>
-          <div class="cp-row-wrap">
-            <button type="button" class="cp-btn cp-btn--secondary cp-btn--sm" onclick="switchTab('tab-lectures')">
-              <span>Switch Lecture</span>
-            </button>
-            <button type="button" class="cp-btn cp-btn--green cp-btn--sm" onclick="openModal('modal-new-lecture')">
-              {{ cp_icon('plus', 14) }}
-              <span>New Lecture</span>
-            </button>
-          </div>
-        </div>
-      </div>
-
       <div class="cp-hub-grid">
         <button type="button" class="cp-hub-tile" onclick="switchTab('tab-lectures')">
           <div class="cp-tile-head">
@@ -328,6 +317,7 @@
         <button type="button" class="cp-hub-tile" onclick="switchTab('tab-chat')">
           <div class="cp-tile-head">
             <span class="cp-tile-icon cp-tile-icon--amber">{{ cp_icon('message-square', 20) }}</span>
+            <span id="overview-qa-dot" class="cp-notif-dot" hidden></span>
           </div>
           <div>
             <div class="cp-tile-title">Q&amp;A</div>
@@ -931,7 +921,9 @@
     closeMobileSidebar();
 
     if (tabId === "tab-chat" && window.ClassPulseNotify) {
-      window.ClassPulseNotify.clearUnread();
+      window.ClassPulseNotify.clearUnreadWhere(
+        (item) => item.kind === "qa" && (!item.sessionCode || item.sessionCode === SESSION_CODE)
+      );
     }
   }
 
@@ -1829,6 +1821,18 @@
   async function upvoteChat(id) { await fetch(`/api/chat/${id}/upvote`, { method: "POST" }); }
   async function pinChat(id) { await fetch(`/api/chat/${id}/pin`, { method: "POST" }); }
 
+  function renderLecturerNotifications(summary) {
+    if (!summary) return;
+    document.querySelectorAll("[data-course-dot]").forEach((dot) => {
+      const cid = Number(dot.getAttribute("data-course-dot"));
+      dot.hidden = !summary.hasUnreadCourse(cid);
+    });
+    const ovDot = document.getElementById("overview-qa-dot");
+    if (ovDot) {
+      ovDot.hidden = !summary.hasUnreadSection(COURSE_ID, "qa");
+    }
+  }
+
   if (window.ClassPulseNotify) {
     window.ClassPulseNotify.init({
       role: "lecturer",
@@ -1836,6 +1840,7 @@
       currentLecturerId: LECTURER_ID,
       isChatVisibleFn: (payload) =>
         activeTabId === "tab-chat" && (!payload || payload.session_code === SESSION_CODE),
+      onUnreadChange: renderLecturerNotifications,
       onOpenMessage: (payload) => {
         const msgId = payload.message_id || payload.id;
         if (payload.session_code === SESSION_CODE) {
@@ -1981,12 +1986,34 @@
 
   async function summarizeLecture(useSample) {
     const statusEl = document.getElementById("lecture-ai-status");
-    statusEl.textContent = "Uploading & processing with Google Gemini AI...";
+    const errEl = document.getElementById("lecture-ai-error");
+    const fileInput = document.getElementById("lecture-media-input");
+    const textInput = document.getElementById("lecture-transcript-input");
+    const rawText = textInput ? textInput.value.trim() : "";
+    const hasFile = Boolean(fileInput && fileInput.files && fileInput.files.length > 0);
+
+    if (errEl) {
+      errEl.style.display = "none";
+      errEl.textContent = "";
+    }
+
+    if (!useSample && !hasFile && !rawText) {
+      if (errEl) {
+        errEl.textContent = "Please select a summary or recording file (or enter lecture notes) before uploading.";
+        errEl.style.display = "block";
+      }
+      if (statusEl) statusEl.textContent = "";
+      return;
+    }
+
+    if (statusEl) {
+      statusEl.textContent = useSample
+        ? "Loading sample lecture summary..."
+        : "Uploading & processing lecture summary...";
+    }
     try {
       let res;
-      const fileInput = document.getElementById("lecture-media-input");
-      const rawText = document.getElementById("lecture-transcript-input").value.trim();
-      if (!useSample && fileInput && fileInput.files.length > 0) {
+      if (!useSample && hasFile) {
         const fd = new FormData();
         fd.append("media", fileInput.files[0]);
         fd.append("async", "1");
@@ -1995,24 +2022,34 @@
         res = await fetch(`/api/sessions/${SESSION_ID}/lectures/summarize`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ use_sample: useSample || !rawText, transcript_text: rawText }),
+          body: JSON.stringify({ use_sample: Boolean(useSample), transcript_text: rawText }),
         });
       }
       const data = await res.json();
       if (!res.ok) {
-        statusEl.textContent = data.error || "Failed";
+        if (errEl) {
+          errEl.textContent = data.error || "Upload failed.";
+          errEl.style.display = "block";
+        }
+        if (statusEl) statusEl.textContent = "";
         return;
       }
+      if (!useSample && hasFile && fileInput) fileInput.value = "";
+      if (!useSample && rawText && textInput) textInput.value = "";
       if (data.job_id) {
-        statusEl.textContent = "Google Gemini: Transcribing recording in background...";
+        if (statusEl) statusEl.textContent = "Processing summary in background...";
         loadLectureArtifacts();
         pollLectureJob(data.job_id);
         return;
       }
-      statusEl.textContent = "Completed!";
+      if (statusEl) statusEl.textContent = "Summary uploaded!";
       loadLectureArtifacts();
     } catch (err) {
-      statusEl.textContent = "Error: " + err.message;
+      if (errEl) {
+        errEl.textContent = "Error: " + err.message;
+        errEl.style.display = "block";
+      }
+      if (statusEl) statusEl.textContent = "";
     }
   }
 
@@ -2057,7 +2094,7 @@
     const topicCount = Object.keys(stats.topic_averages || {}).length;
     kpiEl.innerHTML = `
       <div class="cp-kpi"><div class="cp-kpi-num cp-kpi-num--indigo cp-tabular" style="font-size:22px;">${stats.submission_count || 0}</div><div class="cp-kpi-lbl">Submissions</div></div>
-      <div class="cp-kpi"><div class="cp-kpi-num cp-kpi-num--green cp-tabular" style="font-size:22px;">${stats.mean_overall_score || 0}</div><div class="cp-kpi-lbl">O(1) Mean Score</div></div>
+      <div class="cp-kpi"><div class="cp-kpi-num cp-kpi-num--green cp-tabular" style="font-size:22px;">${stats.mean_overall_score || 0}</div><div class="cp-kpi-lbl">Mean Score</div></div>
       <div class="cp-kpi"><div class="cp-kpi-num cp-kpi-num--coral cp-tabular" style="font-size:22px;">${topicCount}</div><div class="cp-kpi-lbl">Tracked Topics</div></div>
     `;
     const catAvgs = Object.entries(stats.category_averages || {}).map(

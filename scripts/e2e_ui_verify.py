@@ -2217,7 +2217,6 @@ def run_tier3(
         """(() => {
             document.getElementById("full_name").value = "Ohad Ben Nun";
             document.getElementById("student_id_number").value = "208444444";
-            document.getElementById("email").value = "ohad@ariel.ac.il";
             document.querySelector('form[action="/api/attendance/checkin"] button[type="submit"]').click();
         })()"""
     )

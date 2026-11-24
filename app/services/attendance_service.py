@@ -23,6 +23,8 @@ from app.models import (
 )
 from app.services.identity_helpers import (
     generate_deterministic_session_code,
+    is_synthetic_student_email,
+    normalize_student_id,
     parse_roster_csv_rows,
     resolve_or_upsert_student,
 )
@@ -243,23 +245,36 @@ class AttendanceService:
         if device_record is not None:
             bound_student = self.db.get(Student, device_record.student_id)
             norm_email = (email or "").strip().lower()
+            norm_sid = normalize_student_id(student_id_number)
             if bound_student is not None:
-                if norm_email and norm_email != bound_student.email:
+                if (
+                    norm_email
+                    and not is_synthetic_student_email(bound_student.email)
+                    and norm_email != bound_student.email
+                ):
+                    raise ProxyAttendanceBlockedError()
+                if (
+                    norm_sid
+                    and bound_student.student_id_number
+                    and norm_sid != bound_student.student_id_number
+                ):
                     raise ProxyAttendanceBlockedError()
                 if (
                     (existing_student_id and existing_student_id == bound_student.id)
                     or (norm_email and norm_email == bound_student.email)
-                    or (not norm_email and not full_name)
+                    or (norm_sid and norm_sid == bound_student.student_id_number)
+                    or (not norm_email and not norm_sid and not full_name)
                 ):
                     return device_record, bound_student, False
             raise ProxyAttendanceBlockedError()
 
-        # 2. Resolve Student (by existing cookie student_id or by Name + Email + optional Student ID)
+        # 2. Resolve Student (by existing cookie student_id or by Name + ID/Email)
         student: Optional[Student] = None
         norm_email = (email or "").strip().lower()
+        norm_sid = normalize_student_id(student_id_number)
         clean_name = (full_name or "").strip()
 
-        if existing_student_id and not norm_email:
+        if existing_student_id and not norm_email and not norm_sid:
             student = self.db.get(Student, existing_student_id)
 
         if student is None:
@@ -370,26 +385,31 @@ class AttendanceService:
         )
 
         rec_by_email: dict[str, tuple[AttendanceRecord, Student]] = {}
+        rec_by_sid: dict[str, tuple[AttendanceRecord, Student]] = {}
         for rec in records:
             st = self.db.get(Student, rec.student_id)
             if st is not None:
                 rec_by_email[st.email.lower()] = (rec, st)
+                if st.student_id_number:
+                    rec_by_sid[st.student_id_number.upper()] = (rec, st)
 
         rows: list[dict[str, Any]] = []
-        seen_emails: set[str] = set()
+        seen_student_ids: set[int] = set()
 
         for r_entry in roster_list:
             em = r_entry.email.lower()
-            seen_emails.add(em)
-            matched = rec_by_email.get(em)
+            r_sid = (r_entry.student_id_number or "").strip().upper()
+            matched = rec_by_email.get(em) or (rec_by_sid.get(r_sid) if r_sid else None)
             if matched is not None:
                 rec, st = matched
+                seen_student_ids.add(st.id)
+                disp_email = "-" if is_synthetic_student_email(st.email) else st.email
                 rows.append(
                     {
                         "student_id": st.id,
                         "student_id_number": st.student_id_number or r_entry.student_id_number or "-",
                         "full_name": st.full_name,
-                        "email": st.email,
+                        "email": disp_email,
                         "roster_status": "Registered",
                         "attendance_status": "Present",
                         "checked_in_at": rec.checked_in_at.strftime("%Y-%m-%d %H:%M:%S UTC"),
@@ -398,12 +418,13 @@ class AttendanceService:
                     }
                 )
             else:
+                disp_email = "-" if is_synthetic_student_email(r_entry.email) else r_entry.email
                 rows.append(
                     {
                         "student_id": None,
                         "student_id_number": r_entry.student_id_number or "-",
                         "full_name": r_entry.full_name,
-                        "email": r_entry.email,
+                        "email": disp_email,
                         "roster_status": "Registered",
                         "attendance_status": "Absent",
                         "checked_in_at": "-",
@@ -413,14 +434,15 @@ class AttendanceService:
                 )
 
         # Include checked-in students who were not pre-listed on the optional roster
-        for em, (rec, st) in rec_by_email.items():
-            if em not in seen_emails:
+        for _em, (rec, st) in rec_by_email.items():
+            if st.id not in seen_student_ids:
+                disp_email = "-" if is_synthetic_student_email(st.email) else st.email
                 rows.append(
                     {
                         "student_id": st.id,
                         "student_id_number": st.student_id_number or "-",
                         "full_name": st.full_name,
-                        "email": st.email,
+                        "email": disp_email,
                         "roster_status": "Walk-In / Unlisted" if roster_list else "Registered (Self)",
                         "attendance_status": "Present",
                         "checked_in_at": rec.checked_in_at.strftime("%Y-%m-%d %H:%M:%S UTC"),

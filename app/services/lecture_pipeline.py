@@ -5,6 +5,8 @@ import logging
 import re
 import subprocess
 import tempfile
+import xml.etree.ElementTree as ET
+import zipfile
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -116,7 +118,10 @@ class LectureSummarizerService:
             "id": artifact.id,
             "session_id": artifact.session_id,
             "session_code": session.session_code if session else "",
+            "course_id": course.id if course else None,
             "course_code": course.course_code if course else "",
+            "course_name": course.name if course else "",
+            "lecture_number": session.lecture_number if session else None,
             "lecture_title": session.title if session else "",
             "source_type": artifact.source_type,
             "media_path": artifact.media_path,
@@ -141,9 +146,10 @@ class LectureSummarizerService:
         sessions = (
             self.db.query(ClassSession)
             .filter_by(course_id=course_id)
-            .order_by(ClassSession.id.desc())
+            .order_by(ClassSession.lecture_number.asc(), ClassSession.id.asc())
             .all()
         )
+        session_order = {s.id: idx for idx, s in enumerate(sessions)}
         session_ids = [s.id for s in sessions]
         if not session_ids:
             return []
@@ -156,6 +162,7 @@ class LectureSummarizerService:
             .order_by(LectureArtifact.id.desc())
             .all()
         )
+        rows.sort(key=lambda r: (session_order.get(r.session_id, 9999), -r.id))
         return [self.serialize_artifact(r) for r in rows]
 
     def parse_transcript_text(self, text: str) -> list[dict[str, str]]:
@@ -256,11 +263,47 @@ class LectureSummarizerService:
                 except OSError:
                     pass
 
+    def _extract_document_text(self, media_path: Path) -> str:
+        """Extract clean UTF-8 text from .md, .txt, .vtt, .srt, .pdf, or .docx files."""
+        ext = media_path.suffix.lower()
+        if ext in (".txt", ".vtt", ".srt", ".md"):
+            return media_path.read_text(encoding="utf-8", errors="ignore").strip()
+        if ext == ".pdf":
+            from pypdf import PdfReader
+
+            try:
+                reader = PdfReader(str(media_path))
+                return "\n".join(page.extract_text() or "" for page in reader.pages).strip()
+            except Exception as exc:
+                raise LecturePipelineError(f"Could not read PDF file: {exc}", status_code=400) from exc
+        if ext == ".docx":
+            try:
+                with zipfile.ZipFile(str(media_path)) as zf:
+                    doc_xml = zf.read("word/document.xml")
+                root = ET.fromstring(doc_xml)
+            except Exception as exc:
+                raise LecturePipelineError("Could not read .docx file.", status_code=400) from exc
+            w_ns = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+            paragraphs: list[str] = []
+            for p_node in root.iter(f"{w_ns}p"):
+                texts = [t_node.text for t_node in p_node.iter(f"{w_ns}t") if t_node.text]
+                line = "".join(texts).strip()
+                if line:
+                    paragraphs.append(line)
+            return "\n".join(paragraphs).strip()
+        return ""
+
     def transcribe_media_file(self, media_path: Path) -> list[dict[str, str]]:
         """Transcribe uploaded lecture media via Google Gemini API (with local faster-whisper fallback)."""
         ext = media_path.suffix.lower()
-        if ext in (".txt", ".vtt", ".srt", ".md"):
-            return self.parse_transcript_text(media_path.read_text(encoding="utf-8", errors="ignore"))
+        if ext in (".txt", ".vtt", ".srt", ".md", ".pdf", ".docx"):
+            doc_text = self._extract_document_text(media_path)
+            if not doc_text:
+                raise LecturePipelineError(
+                    f"The uploaded file '{media_path.name}' contained no readable text.",
+                    status_code=400,
+                )
+            return self.parse_transcript_text(doc_text)
 
         self.upload_dir.mkdir(parents=True, exist_ok=True)
 
@@ -555,6 +598,21 @@ class LectureSummarizerService:
                 raw_segments = self.parse_transcript_text(transcript_text)
             else:
                 assert media_path is not None
+                ext = media_path.suffix.lower()
+                # If lecturer uploaded a ready Markdown summary (.md), preserve it directly cleanly!
+                if ext == ".md":
+                    raw_md = self._extract_document_text(media_path)
+                    if not raw_md:
+                        raise LecturePipelineError(
+                            "Uploaded summary file is empty.", status_code=400
+                        )
+                    raw_segments = self.parse_transcript_text(raw_md)
+                    artifact.raw_transcript_json = json.dumps(raw_segments)
+                    artifact.corrected_transcript_json = json.dumps(raw_segments)
+                    artifact.summary_markdown = raw_md
+                    artifact.error_message = None
+                    self._set_artifact_stage(artifact, "COMPLETED", on_status=on_status)
+                    return artifact
                 self._set_artifact_stage(artifact, "TRANSCRIBING", on_status=on_status)
                 raw_segments = self.transcribe_media_file(media_path)
 
@@ -579,6 +637,8 @@ class LectureSummarizerService:
         artifact = self.db.get(LectureArtifact, artifact_id)
         if artifact is None:
             raise LecturePipelineError("Lecture artifact not found.", status_code=404)
+        if artifact.status != "COMPLETED" or not (artifact.summary_markdown or "").strip():
+            raise LecturePipelineError("Lecture summary is not ready for download.", status_code=400)
         session = self.db.get(ClassSession, artifact.session_id)
         course = (
             self.db.get(Course, session.course_id)
@@ -602,6 +662,8 @@ class LectureSummarizerService:
         artifact = self.db.get(LectureArtifact, artifact_id)
         if artifact is None:
             raise LecturePipelineError("Lecture artifact not found.", status_code=404)
+        if artifact.status != "COMPLETED":
+            raise LecturePipelineError("Lecture transcript is not ready for download.", status_code=400)
         session = self.db.get(ClassSession, artifact.session_id)
         course = (
             self.db.get(Course, session.course_id)

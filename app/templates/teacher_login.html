@@ -152,32 +152,17 @@
         </div>
 
         <div class="cp-auth-field">
-          <label class="cp-label" for="reg-username">Username</label>
-          <input class="cp-input" type="text" id="reg-username" autocomplete="username" placeholder="e.g. daniel.levi (lowercase letters, digits, ._-)" />
-        </div>
-
-        <div class="cp-auth-field">
           <label class="cp-label" for="reg-email">University Email</label>
           <input class="cp-input" type="email" id="reg-email" autocomplete="email" placeholder="e.g. daniel@ariel.ac.il" />
         </div>
 
         <div class="cp-auth-field">
-          <label class="cp-label" for="reg-dept">Department / Faculty</label>
-          <input class="cp-input" type="text" id="reg-dept" value="Computer Science" placeholder="e.g. Computer Science" />
-        </div>
-
-        <div class="cp-auth-field">
           <label class="cp-label" for="reg-password">Password</label>
-          <input class="cp-input" type="password" id="reg-password" autocomplete="new-password" placeholder="At least 8 chars (letter + number/symbol)" />
-        </div>
-
-        <div class="cp-auth-field">
-          <label class="cp-label" for="reg-confirm">Confirm Password</label>
-          <input class="cp-input" type="password" id="reg-confirm" autocomplete="new-password" placeholder="Repeat password" onkeydown="if(event.key==='Enter') handleLecturerRegister()" />
+          <input class="cp-input" type="password" id="reg-password" autocomplete="new-password" placeholder="At least 8 chars (letter + number/symbol)" onkeydown="if(event.key==='Enter') handleLecturerRegister()" />
         </div>
 
         <button type="button" id="btn-lecturer-register" class="cp-btn cp-btn--green cp-btn--block" onclick="handleLecturerRegister()">
-          <span>Register Professor Account</span>
+          <span>Create Account</span>
           {{ cp_icon('arrow-right', 16) }}
         </button>
       </div>
@@ -393,19 +378,11 @@
     okEl.style.display = "none";
 
     const full_name = document.getElementById("reg-name").value.trim();
-    const username = document.getElementById("reg-username").value.trim();
     const email = document.getElementById("reg-email").value.trim();
-    const department = document.getElementById("reg-dept").value.trim() || "Computer Science";
     const password = document.getElementById("reg-password").value;
-    const confirm_password = document.getElementById("reg-confirm").value;
 
-    if (!full_name || !username || !email || !password) {
-      errEl.textContent = "Please complete all registration fields.";
-      errEl.style.display = "block";
-      return;
-    }
-    if (confirm_password && password !== confirm_password) {
-      errEl.textContent = "Passwords do not match.";
+    if (!full_name || !email || !password) {
+      errEl.textContent = "Please enter your full name, email, and password.";
       errEl.style.display = "block";
       return;
     }
@@ -415,7 +392,7 @@
         const res = await fetch("/api/auth/lecturer/register", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ full_name, username, email, department, password, confirm_password }),
+          body: JSON.stringify({ full_name, email, password }),
         });
         const data = await parseJsonSafe(res);
         if (!res.ok) {

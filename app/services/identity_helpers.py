@@ -14,9 +14,20 @@ from app.models import AuditLog, Student
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 USERNAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{2,31}$")
 STUDENT_ID_RE = re.compile(r"^[A-Za-z0-9]{4,32}$")
+SYNTHETIC_STUDENT_EMAIL_DOMAIN = "@student.classpulse.local"
 RESERVED_USERNAMES = frozenset(
     {"admin", "administrator", "root", "system", "support", "teacher", "student", "api"}
 )
+
+
+def is_synthetic_student_email(email: Optional[str]) -> bool:
+    """Return True if email is an internal synthetic placeholder generated from student ID."""
+    return bool(email and str(email).strip().lower().endswith(SYNTHETIC_STUDENT_EMAIL_DOMAIN))
+
+
+def make_synthetic_student_email(norm_sid: str) -> str:
+    """Build deterministic unique placeholder email for ID-only student accounts."""
+    return f"id.{norm_sid.lower()}{SYNTHETIC_STUDENT_EMAIL_DOMAIN}"
 
 
 def normalize_student_id(raw_id: Optional[str]) -> Optional[str]:
@@ -58,31 +69,27 @@ def resolve_or_upsert_student(
     db: Session,
     *,
     full_name: str,
-    email: str,
+    email: str = "",
     student_id_number: Optional[str] = None,
     device_id: Optional[str] = None,
 ) -> tuple[Student, Optional[tuple[str, int]]]:
-    """Resolve or register Student strictly enforcing (student_id_number, email) consistency.
+    """Resolve or register Student by (Full Name + Student ID) or legacy Email.
 
-    Returns (Student, None) on success or (None, (error_message, http_status)) on validation/conflict.
+    Supports both ID-only entry (Full Name + Student ID, omitting email) and explicit email
+    for backward compatibility. Returns (Student, None) or (None, (error_message, http_status)).
     """
     norm_email = (email or "").strip().lower()
     clean_name = (full_name or "").strip()
+    raw_sid = (student_id_number or "").strip()
     norm_sid = normalize_student_id(student_id_number)
 
-    if not clean_name or not norm_email:
-        return None, ("Full name and email are required.", 400)  # type: ignore[return-value]
-    if not EMAIL_RE.match(norm_email):
+    if raw_sid and (norm_sid is None or not validate_student_id_format(norm_sid)):
+        return None, ("ID number must be 4-32 letters or digits.", 400)  # type: ignore[return-value]
+    if norm_email and not EMAIL_RE.match(norm_email):
         return None, ("Please enter a valid university or personal email address.", 400)  # type: ignore[return-value]
-    if norm_sid is not None and not validate_student_id_format(norm_sid):
-        return None, ("Student ID must be 4-32 letters or digits.", 400)  # type: ignore[return-value]
+    if not norm_email and not norm_sid:
+        return None, ("Full name and ID number are required.", 400)  # type: ignore[return-value]
 
-    by_email = (
-        db.query(Student)
-        .filter(func.lower(Student.email) == norm_email)
-        .order_by(Student.id.asc())
-        .first()
-    )
     by_sid = (
         db.query(Student)
         .filter_by(student_id_number=norm_sid)
@@ -91,13 +98,35 @@ def resolve_or_upsert_student(
         if norm_sid is not None
         else None
     )
+    by_email = (
+        db.query(Student)
+        .filter(func.lower(Student.email) == norm_email)
+        .order_by(Student.id.asc())
+        .first()
+        if norm_email
+        else None
+    )
+
+    # For ID-only logins where the student hasn't registered yet, require full_name
+    if by_sid is None and by_email is None and not clean_name:
+        return None, ("Full name and ID number are required.", 400)  # type: ignore[return-value]
+    if not clean_name:
+        existing_ref = by_sid or by_email
+        clean_name = existing_ref.full_name if existing_ref else ""
+    if not clean_name:
+        return None, ("Full name is required.", 400)  # type: ignore[return-value]
 
     if by_email is not None and by_sid is not None and by_email.id != by_sid.id:
         return None, (  # type: ignore[return-value]
             "Student ID and Email belong to different registered accounts.",
             409,
         )
-    if by_sid is not None and by_sid.email.lower() != norm_email:
+    if (
+        by_sid is not None
+        and norm_email
+        and not is_synthetic_student_email(by_sid.email)
+        and by_sid.email.lower() != norm_email
+    ):
         return None, (  # type: ignore[return-value]
             f"Student ID '{norm_sid}' is already registered with a different email address.",
             409,
@@ -113,12 +142,15 @@ def resolve_or_upsert_student(
             409,
         )
 
+    effective_email = norm_email or (
+        by_sid.email if by_sid is not None else make_synthetic_student_email(norm_sid or "")
+    )
     student = by_email or by_sid
     now_dt = datetime.now(timezone.utc)
     if student is None:
         student = Student(
             full_name=clean_name,
-            email=norm_email,
+            email=effective_email,
             student_id_number=norm_sid,
             primary_device_id=device_id,
             device_bound_at=now_dt if device_id else None,
@@ -129,6 +161,8 @@ def resolve_or_upsert_student(
         student.full_name = clean_name
         if norm_sid is not None and not student.student_id_number:
             student.student_id_number = norm_sid
+        if norm_email and is_synthetic_student_email(student.email):
+            student.email = norm_email
         if device_id and not student.primary_device_id:
             student.primary_device_id = device_id
             student.device_bound_at = now_dt
@@ -158,7 +192,28 @@ def _parse_roster_table_rows(
             continue
         email_idx = next((i for i, c in enumerate(cols) if EMAIL_RE.match(c)), None)
         if email_idx is None:
-            # Header row or malformed row without valid email
+            # Support 2-column (Student ID, Full Name) rosters without an Email column
+            sid_idx = next(
+                (i for i, c in enumerate(cols) if " " not in c and any(ch.isdigit() for ch in c)),
+                None,
+            )
+            if sid_idx is None:
+                continue
+            cand_sid = normalize_student_id(cols[sid_idx])
+            if not cand_sid or not validate_student_id_format(cand_sid):
+                continue
+            name_candidates = [c for i, c in enumerate(cols) if i != sid_idx]
+            name_val = name_candidates[0] if name_candidates else ""
+            if not name_val or name_val.lower() in (
+                "name",
+                "full name",
+                "full_name",
+                "student name",
+                "id",
+                "student id",
+            ):
+                continue
+            parsed.append((cand_sid, name_val, make_synthetic_student_email(cand_sid)))
             continue
         email_val = cols[email_idx].lower()
         others = [c for i, c in enumerate(cols) if i != email_idx]

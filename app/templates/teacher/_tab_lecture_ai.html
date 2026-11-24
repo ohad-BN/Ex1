@@ -1,30 +1,36 @@
 {% from "macros/icons.html" import cp_icon %}
-<!-- TAB 4: Dedicated AI Lecture Summarizer (Feature 4) -->
+<!-- TAB 4: Dedicated AI Lecture Summarizer & Summary Upload (Feature 4) -->
 <section id="tab-ai-lectures" class="cp-tab-pane tab-pane">
   <div class="cp-card" style="margin-bottom:16px;">
     <div class="cp-card-header">
       <h2>
         {{ cp_icon('sparkles', 18) }}
-        <span>AI Lecture Recording &amp; Summarizer</span>
+        <span>Lecture Summaries &amp; Recordings</span>
       </h2>
+      <button type="button" id="btn-sample-lecture-summary" class="cp-btn cp-btn--secondary cp-btn--sm" onclick="summarizeLecture(true)">
+        {{ cp_icon('zap', 14) }}
+        <span>Load Demo Sample</span>
+      </button>
     </div>
+
+    <div id="lecture-ai-error" class="cp-alert cp-alert--err" style="display:none; margin-bottom:12px;" role="alert"></div>
 
     <div class="cp-grid-2">
       <div class="cp-well">
-        <label class="cp-label" for="lecture-media-input">Upload Audio / Video Recording</label>
+        <label class="cp-label" for="lecture-media-input">Upload Summary (.md, .pdf, .docx, .txt) or Recording</label>
         <div class="cp-row-wrap">
-          <input type="file" id="lecture-media-input" class="cp-file-input" accept=".mp4,.wav,.mp3,.m4a,.ogg,.webm,.vtt,.srt,.txt" />
-          <button type="button" class="cp-btn cp-btn--green cp-btn--sm" onclick="summarizeLecture(false)">
+          <input type="file" id="lecture-media-input" class="cp-file-input" accept=".md,.txt,.pdf,.docx,.vtt,.srt,.mp4,.wav,.mp3,.m4a,.ogg,.webm" />
+          <button type="button" id="btn-upload-lecture-summary" class="cp-btn cp-btn--green cp-btn--sm" onclick="summarizeLecture(false)">
             {{ cp_icon('upload', 14) }}
-            <span>Upload, Transcribe &amp; Summarize</span>
+            <span>Upload Summary</span>
           </button>
         </div>
-        <div id="lecture-ai-status" style="font-size:12px; font-weight:700; color:var(--cp-indigo-ink); margin-top:8px;"></div>
+        <div id="lecture-ai-status" style="font-size:12.5px; font-weight:700; color:var(--cp-indigo-ink); margin-top:8px;"></div>
       </div>
 
       <div class="cp-well">
-        <label class="cp-label" for="lecture-transcript-input">Or Paste Transcript / Notes Manually (Optional)</label>
-        <textarea id="lecture-transcript-input" class="cp-textarea" rows="3" placeholder="Paste raw lecture transcript lines here..."></textarea>
+        <label class="cp-label" for="lecture-transcript-input">Or Paste Lecture Notes / Transcript (Optional)</label>
+        <textarea id="lecture-transcript-input" class="cp-textarea" rows="3" placeholder="Paste lecture notes or transcript lines here..."></textarea>
       </div>
     </div>
   </div>

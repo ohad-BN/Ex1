@@ -6,7 +6,7 @@ from flask import Blueprint, current_app, jsonify, request
 
 from app import socketio
 from app.models import ClassSession, Poll, Student
-from app.routes.guards import require_session_access
+from app.routes.guards import require_session_access, verify_session_read_access
 from app.services.poll_service import PollError, PollService
 from app.services.qr_service import DeviceBindingManager
 
@@ -27,9 +27,13 @@ def _resolve_student_id_from_request() -> Optional[int]:
 
 @polls_bp.get("/api/sessions/<int:session_id>/polls")
 def list_polls(session_id: int):
+    sess, _lec, stu, err = verify_session_read_access(session_id, allow_open_attendance=True)
+    if err is not None:
+        return err
+    assert sess is not None
     db = current_app.extensions["db_session"]
     svc = PollService(db)
-    student_id = _resolve_student_id_from_request()
+    student_id = stu.id if stu is not None else _resolve_student_id_from_request()
     return jsonify(
         {
             "polls": svc.list_session_polls(session_id, student_id=student_id),
@@ -81,6 +85,20 @@ def create_poll(session_id: int):
                 room = f"session_{session.session_code}"
                 socketio.emit("poll:activated", serialized, to=room)
                 socketio.emit("poll:opened", serialized, to=room)
+                if session.course_id is not None:
+                    socketio.emit(
+                        "poll:notify",
+                        {
+                            "poll_id": serialized["id"],
+                            "question": serialized["question"],
+                            "course_id": session.course_id,
+                            "session_id": session.id,
+                            "session_code": session.session_code,
+                            "lecture_number": session.lecture_number,
+                            "lecture_title": session.title,
+                        },
+                        to=f"course_notify_{session.course_id}",
+                    )
             return jsonify(serialized), 201
 
         serialized = svc.serialize_poll(poll)
@@ -111,6 +129,20 @@ def launch_poll(poll_id: int):
         room = f"session_{session.session_code}"
         socketio.emit("poll:activated", serialized, to=room)
         socketio.emit("poll:opened", serialized, to=room)
+        if session.course_id is not None:
+            socketio.emit(
+                "poll:notify",
+                {
+                    "poll_id": serialized["id"],
+                    "question": serialized["question"],
+                    "course_id": session.course_id,
+                    "session_id": session.id,
+                    "session_code": session.session_code,
+                    "lecture_number": session.lecture_number,
+                    "lecture_title": session.title,
+                },
+                to=f"course_notify_{session.course_id}",
+            )
     return jsonify(serialized)
 
 

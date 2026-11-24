@@ -73,7 +73,7 @@
       </div>
       {% if dashboard.authenticated %}
       <div class="cp-muted cp-tabular" style="font-size:13px; overflow-wrap:anywhere;">
-        {% if dashboard.student.student_id_number %}ID {{ dashboard.student.student_id_number }} &bull; {% endif %}{{ dashboard.student.email or '' }}
+        {% if dashboard.student.student_id_number %}ID {{ dashboard.student.student_id_number }}{% endif %}{% if dashboard.student.email %} &bull; {{ dashboard.student.email }}{% endif %}
       </div>
       {% else %}
       <button type="button" class="cp-btn cp-btn--primary cp-btn--sm" style="margin-top:8px;" onclick="closeStudentDrawer(); focusStudentSignIn();">
@@ -88,15 +88,17 @@
         <button type="button" id="nav-student-courses" class="cp-mode-tab mode-tab active" onclick="openSidebarSection('courses')">
           {{ cp_icon('book-open', 17) }}
           <span style="flex:1; text-align:left;">Courses</span>
+          <span id="courses-new-dot" class="cp-notif-dot" hidden></span>
         </button>
         <button type="button" id="nav-student-assignments" class="cp-mode-tab mode-tab" onclick="openSidebarSection('course-assignments')">
           {{ cp_icon('award', 17) }}
           <span style="flex:1; text-align:left;">Assignments</span>
-          <span id="study-new-dot" class="cp-live-dot live-dot" style="display:none;"></span>
+          <span id="study-new-dot" class="cp-notif-dot" style="display:none;"></span>
         </button>
         <button type="button" id="nav-student-summaries" class="cp-mode-tab mode-tab" onclick="openSidebarSection('course-summaries')">
           {{ cp_icon('file-text', 17) }}
           <span style="flex:1; text-align:left;">Summaries</span>
+          <span id="summaries-new-dot" class="cp-notif-dot" hidden></span>
         </button>
       </nav>
     </div>
@@ -147,25 +149,23 @@
       <section id="screen-courses" class="cp-view-pane view-pane active">
         {% if not dashboard.authenticated %}
         <div class="cp-card cp-card--compact" id="login-card">
-          <div class="cp-row-wrap" style="margin-bottom:10px;">
+          <div class="cp-row-wrap" style="margin-bottom:8px;">
             <span class="cp-badge cp-badge--coral">{{ cp_icon('user-check', 14) }} <span>Student Sign-In</span></span>
           </div>
+          <p class="cp-muted" style="font-size:13.5px; margin:0 0 10px 0;">
+            Sign in with your full name and ID number to access your courses, summaries, assignments, and offline questions from anywhere.
+          </p>
           <div id="student-login-error" class="cp-alert cp-alert--err" style="display:none; margin-bottom:10px;" role="alert"></div>
-          <div class="cp-stack-xs">
-            <div class="cp-grid-2-tight">
-              <input type="text" id="login-name" class="cp-input" placeholder="Full Name" />
-              <input type="text" id="login-sid" class="cp-input" placeholder="Student ID" />
-            </div>
-            <div class="cp-login-row-2">
-              <input type="email" id="login-email" class="cp-input" placeholder="University Email" />
-              <input type="text" id="login-course" class="cp-input" placeholder="Course Code (optional)" />
-              <button type="button" id="btn-student-signin" class="cp-btn cp-btn--primary" onclick="signInStudent()">Sign In</button>
-            </div>
+          <div class="cp-login-row-id">
+            <input type="text" id="login-name" class="cp-input" placeholder="Full Name" />
+            <input type="text" id="login-sid" class="cp-input" placeholder="ID Number" onkeydown="if(event.key==='Enter') signInStudent()" />
+            <button type="button" id="btn-student-signin" class="cp-btn cp-btn--primary" onclick="signInStudent()">Sign In</button>
           </div>
         </div>
         {% endif %}
 
         <div id="courses-list" class="cp-course-grid"></div>
+        <div id="available-courses-wrap" style="margin-top:16px;"></div>
       </section>
 
       <!-- LEVEL 1: Course Hub -->
@@ -351,8 +351,37 @@
 
   function getStudentCoursesPool() {
     const myCourses = STATE.my_courses || [];
-    const raw = myCourses.length > 0 ? myCourses : (STATE.all_courses || []);
-    return sortCoursesByRecentLecture(raw);
+    return sortCoursesByRecentLecture(myCourses);
+  }
+
+  function getUnreadSummarySafe() {
+    if (window.ClassPulseNotify && typeof window.ClassPulseNotify.getUnreadSummary === "function") {
+      return window.ClassPulseNotify.getUnreadSummary();
+    }
+    return {
+      total: 0,
+      hasUnreadCourse: () => false,
+      hasUnreadSection: () => false,
+      hasUnreadItem: () => false,
+      hasUnreadAny: () => false,
+    };
+  }
+
+  function renderStudentNotificationDots(summary) {
+    const s = summary || getUnreadSummarySafe();
+    const coursesDot = document.getElementById("courses-new-dot");
+    if (coursesDot) coursesDot.hidden = !(s.hasUnreadAny("qa") || s.hasUnreadAny("poll"));
+    const assignDot = document.getElementById("study-new-dot");
+    if (assignDot) assignDot.style.display = s.hasUnreadAny("assignment") ? "inline-block" : "none";
+    const sumDot = document.getElementById("summaries-new-dot");
+    if (sumDot) sumDot.hidden = !s.hasUnreadAny("summary");
+
+    const cur = currentScreenState();
+    if (cur.screen === "courses") renderCourses();
+    else if (cur.screen === "course-hub") renderCourseHub(cur.courseId);
+    else if (cur.screen === "course-lectures") renderCourseLectures(cur.courseId);
+    else if (cur.screen === "course-assignments") renderAssignmentsListScreen(cur.courseId, cur.scope);
+    else if (cur.screen === "course-summaries") renderSummariesScreen(cur.courseId, cur.scope);
   }
 
   function findFullCourseById(courseId) {
@@ -423,20 +452,25 @@
       if (subEl) subEl.textContent = course ? course.name : "Lecture attendance breakdown";
       renderCourseAttendance(st.courseId);
     } else if (st.screen === "course-assignments") {
-      CURRENT_COURSE_ID = st.courseId;
+      const scope = st.scope === "global" ? "global" : "course";
+      if (scope === "course" && st.courseId) CURRENT_COURSE_ID = st.courseId;
       if (titleEl) titleEl.textContent = "Assignments";
-      if (subEl) subEl.textContent = course ? course.name : "Coursework & uploads";
-      const dot = document.getElementById("study-new-dot");
-      if (dot) {
-        dot.classList.remove("hot");
-        dot.style.display = "none";
-      }
+      if (subEl) subEl.textContent = scope === "global" ? "All enrolled courses" : (course ? course.name : "Coursework & uploads");
       document.getElementById("study-toast-banner")?.remove();
-      renderAssignmentsListScreen(st.courseId);
-      loadAssignmentsForCourse(st.courseId);
+      renderAssignmentsListScreen(st.courseId, scope);
+      if (scope === "global") {
+        loadAllEnrolledAssignments();
+      } else {
+        loadAssignmentsForCourse(st.courseId);
+      }
     } else if (st.screen === "assignment-detail") {
       CURRENT_COURSE_ID = st.courseId;
       CURRENT_ASSIGNMENT_ID = st.assignmentId;
+      if (window.ClassPulseNotify && st.assignmentId) {
+        window.ClassPulseNotify.clearUnreadWhere(
+          (it) => it.kind === "assignment" && String(it.itemId) === String(st.assignmentId)
+        );
+      }
       const aList = getCourseAssignments(st.courseId);
       const a = aList.find(x => Number(x.id) === Number(st.assignmentId));
       if (titleEl) titleEl.textContent = a ? a.title : "Assignment";
@@ -444,11 +478,25 @@
       renderAssignmentDetailScreen(st.courseId, st.assignmentId);
       loadAssignmentsForCourse(st.courseId);
     } else if (st.screen === "course-summaries") {
-      CURRENT_COURSE_ID = st.courseId;
+      const scope = st.scope === "global" ? "global" : "course";
+      if (scope === "course" && st.courseId) CURRENT_COURSE_ID = st.courseId;
       if (titleEl) titleEl.textContent = "Summaries";
-      if (subEl) subEl.textContent = course ? course.name : "AI lecture study guides";
-      renderStudyLectures(getCourseSummaries(st.courseId));
-      loadSummariesForCourse(st.courseId);
+      if (subEl) subEl.textContent = scope === "global" ? "Grouped by course" : (course ? course.name : "AI lecture study guides");
+      if (window.ClassPulseNotify) {
+        if (scope === "global") {
+          window.ClassPulseNotify.clearUnreadWhere((it) => it.kind === "summary");
+        } else if (st.courseId) {
+          window.ClassPulseNotify.clearUnreadWhere(
+            (it) => it.kind === "summary" && Number(it.courseId) === Number(st.courseId)
+          );
+        }
+      }
+      renderSummariesScreen(st.courseId, scope);
+      if (scope === "global") {
+        loadAllEnrolledSummaries();
+      } else {
+        loadSummariesForCourse(st.courseId);
+      }
     } else if (st.screen === "course-info") {
       CURRENT_COURSE_ID = st.courseId;
       if (titleEl) titleEl.textContent = "Course Info";
@@ -459,7 +507,13 @@
       if (titleEl) titleEl.textContent = lTitle;
       if (subEl) subEl.textContent = course ? course.name : (ACTIVE_SESSION ? ACTIVE_SESSION.course_name : "Lecture");
       renderLectureContextBanner();
-      if (window.ClassPulseNotify) window.ClassPulseNotify.clearUnread();
+      if (window.ClassPulseNotify && ACTIVE_SESSION) {
+        window.ClassPulseNotify.clearUnreadWhere(
+          (it) =>
+            (it.kind === "qa" || it.kind === "poll") &&
+            (!it.sessionCode || it.sessionCode === ACTIVE_SESSION.session_code)
+        );
+      }
     }
   }
 
@@ -544,14 +598,9 @@
       return;
     }
     const pool = getStudentCoursesPool();
-    const courseId = CURRENT_COURSE_ID || (ACTIVE_SESSION && ACTIVE_SESSION.course_id) || (pool[0] && pool[0].id);
-    if (!courseId) {
-      navigateStudent({ screen: "courses" });
-      return;
-    }
-    CURRENT_COURSE_ID = courseId;
-    STUDENT_STACK.splice(0, STUDENT_STACK.length, { screen: "courses" }, { screen: "course-hub", courseId });
-    navigateStudent({ screen: targetScreen, courseId });
+    const firstCourseId = CURRENT_COURSE_ID || (ACTIVE_SESSION && ACTIVE_SESSION.course_id) || (pool[0] && pool[0].id) || null;
+    STUDENT_STACK.splice(0, STUDENT_STACK.length, { screen: "courses" });
+    navigateStudent({ screen: targetScreen, courseId: firstCourseId, scope: "global" });
   }
 
   function openStudentDrawer() {
@@ -605,6 +654,7 @@
       isChatVisibleFn: (payload) =>
         currentScreenState().screen === "lecture" &&
         (!payload || !ACTIVE_SESSION || payload.session_code === ACTIVE_SESSION.session_code),
+      onUnreadChange: renderStudentNotificationDots,
       onOpenMessage: (payload) => {
         const msgId = payload.message_id || payload.id;
         const allCourses = STATE.all_courses || [];
@@ -646,14 +696,12 @@
     const btn = document.getElementById("btn-student-signin");
     if (errEl) errEl.style.display = "none";
 
-    const full_name = document.getElementById("login-name").value.trim();
+    const full_name = (document.getElementById("login-name")?.value || "").trim();
     const student_id_number = (document.getElementById("login-sid")?.value || "").trim();
-    const email = document.getElementById("login-email").value.trim();
-    const course_code = document.getElementById("login-course").value.trim();
 
-    if (!email && !student_id_number) {
+    if (!full_name || !student_id_number) {
       if (errEl) {
-        errEl.textContent = "Please enter your Email or Student ID to sign in.";
+        errEl.textContent = "Please enter both your Full Name and ID Number to sign in.";
         errEl.style.display = "block";
       }
       return;
@@ -668,7 +716,7 @@
       const res = await fetch("/api/student/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ full_name, student_id_number, email, course_code }),
+        body: JSON.stringify({ full_name, student_id_number }),
       });
       const rawText = await res.text();
       let data = {};
@@ -695,6 +743,49 @@
         btn.disabled = false;
         btn.textContent = origText;
       }
+    }
+  }
+
+  async function enrollInCourseById(courseId, btnEl) {
+    if (!STATE.authenticated) {
+      focusStudentSignIn();
+      const errEl = document.getElementById("student-login-error");
+      if (errEl) {
+        errEl.textContent = "Sign in with your Full Name and ID Number first to enroll in a course.";
+        errEl.style.display = "block";
+      }
+      return;
+    }
+    if (btnEl) {
+      btnEl.disabled = true;
+      btnEl.textContent = "Enrolling...";
+    }
+    try {
+      const res = await fetch("/api/student/enroll", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ course_id: courseId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (btnEl) {
+          btnEl.disabled = false;
+          btnEl.textContent = "Enroll";
+        }
+        return alert(data.error || "Could not enroll in course.");
+      }
+      if (data.dashboard) {
+        STATE = data.dashboard;
+        renderCourses();
+      } else {
+        window.location.reload();
+      }
+    } catch (_err) {
+      if (btnEl) {
+        btnEl.disabled = false;
+        btnEl.textContent = "Enroll";
+      }
+      alert("Network error while enrolling.");
     }
   }
 
@@ -769,38 +860,78 @@
     return { label: "Absent", badgeClass: "cp-badge--red" };
   }
 
-  // LEVEL 0: Courses Home (Course Name + Lecturer + Attendance %)
+  // LEVEL 0: Courses Home (Enrolled Courses + Remote Available Courses)
   function renderCourses() {
     const listEl = document.getElementById("courses-list");
+    const availEl = document.getElementById("available-courses-wrap");
     if (!listEl) return;
-    const courses = getStudentCoursesPool();
-    if (!courses.length) {
-      listEl.innerHTML = `<div class="cp-card cp-muted" style="font-size:14px; text-align:center; grid-column:1 / -1;">No courses available yet. Scan a classroom QR code or sign in to get started.</div>`;
-      return;
+
+    const unread = getUnreadSummarySafe();
+    const myCourses = getStudentCoursesPool();
+    const enrolledIds = new Set(myCourses.map(c => Number(c.id)));
+    const availableCourses = sortCoursesByRecentLecture(
+      (STATE.all_courses || []).filter(c => !enrolledIds.has(Number(c.id)))
+    );
+
+    if (!myCourses.length) {
+      listEl.innerHTML = `<div class="cp-card cp-muted" style="font-size:14px; text-align:center; grid-column:1 / -1;">${
+        STATE.authenticated
+          ? "You are not enrolled in any courses yet. Enroll in an available course below or scan a classroom QR code."
+          : "Sign in above with your Full Name and ID Number to view your courses, summaries, assignments, and offline questions."
+      }</div>`;
+    } else {
+      listEl.innerHTML = myCourses.map(c => {
+        const pct = Number(c.attendance_pct || 0);
+        const badgeClass = pct >= 75 ? "cp-badge--green" : "cp-badge--amber";
+        const hasDot = unread.hasUnreadCourse(c.id);
+        return `
+          <button type="button"
+                  class="cp-hub-tile cp-course-tile"
+                  data-course-id="${Number(c.id)}"
+                  onclick="openCourseHub(${Number(c.id)})">
+            <div class="cp-tile-head">
+              <span class="cp-tile-icon cp-tile-icon--coral">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+              </span>
+              <div style="display:inline-flex; align-items:center; gap:8px;">
+                <span class="cp-badge cp-tabular ${badgeClass}">Attendance: ${pct}%</span>
+                ${hasDot ? '<span class="cp-notif-dot" aria-label="Unread update"></span>' : ''}
+              </div>
+            </div>
+            <div>
+              <div class="cp-tile-title">${escapeHtml(c.name)}</div>
+              <div class="cp-tile-sub" style="margin-top:4px;">${escapeHtml(c.lecturer_name)}</div>
+            </div>
+          </button>
+        `;
+      }).join("");
     }
 
-    listEl.innerHTML = courses.map(c => {
-      const pct = Number(c.attendance_pct || 0);
-      const badgeClass = c.is_enrolled ? (pct >= 75 ? "cp-badge--green" : "cp-badge--amber") : "cp-badge--neutral";
-      const pctLabel = c.is_enrolled ? `Attendance: ${pct}%` : "Not Enrolled";
-      return `
-        <button type="button"
-                class="cp-hub-tile cp-course-tile"
-                data-course-id="${Number(c.id)}"
-                onclick="openCourseHub(${Number(c.id)})">
-          <div class="cp-tile-head">
-            <span class="cp-tile-icon cp-tile-icon--coral">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
-            </span>
-            <span class="cp-badge cp-tabular ${badgeClass}">${escapeHtml(pctLabel)}</span>
+    if (availEl) {
+      if (!availableCourses.length) {
+        availEl.innerHTML = "";
+      } else {
+        availEl.innerHTML = `
+          <div class="cp-eyebrow" style="margin-bottom:10px;">Available School Courses</div>
+          <div class="cp-course-grid">
+            ${availableCourses.map(c => `
+              <div class="cp-hub-tile" style="cursor:default;">
+                <div class="cp-tile-head">
+                  <span class="cp-tile-icon cp-tile-icon--indigo">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+                  </span>
+                  <button type="button" class="cp-btn cp-btn--green cp-btn--sm" onclick="enrollInCourseById(${Number(c.id)}, this)">Enroll</button>
+                </div>
+                <div>
+                  <div class="cp-tile-title">${escapeHtml(c.name)}</div>
+                  <div class="cp-tile-sub" style="margin-top:4px;">${escapeHtml(c.lecturer_name)}</div>
+                </div>
+              </div>
+            `).join("")}
           </div>
-          <div>
-            <div class="cp-tile-title">${escapeHtml(c.name)}</div>
-            <div class="cp-tile-sub" style="margin-top:4px;">${escapeHtml(c.lecturer_name)}</div>
-          </div>
-        </button>
-      `;
-    }).join("");
+        `;
+      }
+    }
   }
 
   function openCourseHub(courseId) {
@@ -808,12 +939,13 @@
     navigateStudent({ screen: "course-hub", courseId });
   }
 
-  // LEVEL 1: Course Hub (5 Clear Clickable Tiles)
+  // LEVEL 1: Course Hub (5 Clear Clickable Tiles + Level 3a Unread Dots)
   function renderCourseHub(courseId) {
     const container = document.getElementById("screen-course-hub");
     const c = findFullCourseById(courseId);
     if (!container || !c) return;
 
+    const unread = getUnreadSummarySafe();
     const lecCount = (c.sessions || []).length;
     const assignCount = getCourseAssignments(courseId).length;
     const sumCount = getCourseSummaries(courseId).length;
@@ -830,12 +962,13 @@
         </div>
       </div>
 
-      <div class="cp-hub-grid">
+      <div class="cp-hub-grid cp-hub-grid--student">
         <button type="button" id="hub-tile-lectures" class="cp-hub-tile" onclick="navigateStudent({ screen: 'course-lectures', courseId: ${Number(courseId)} })">
           <div class="cp-tile-head">
             <span class="cp-tile-icon cp-tile-icon--indigo">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="6 3 20 12 6 21 6 3"/></svg>
             </span>
+            ${unread.hasUnreadSection(courseId, "lectures") ? '<span class="cp-notif-dot" aria-label="Unread lecture update"></span>' : ''}
           </div>
           <div>
             <div class="cp-tile-title">Lectures</div>
@@ -855,11 +988,12 @@
           </div>
         </button>
 
-        <button type="button" id="hub-tile-assignments" class="cp-hub-tile" onclick="navigateStudent({ screen: 'course-assignments', courseId: ${Number(courseId)} })">
+        <button type="button" id="hub-tile-assignments" class="cp-hub-tile" onclick="navigateStudent({ screen: 'course-assignments', courseId: ${Number(courseId)}, scope: 'course' })">
           <div class="cp-tile-head">
             <span class="cp-tile-icon cp-tile-icon--coral">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
             </span>
+            ${unread.hasUnreadSection(courseId, "assignments") ? '<span class="cp-notif-dot" aria-label="Unread assignment"></span>' : ''}
           </div>
           <div>
             <div class="cp-tile-title">Assignments</div>
@@ -867,11 +1001,12 @@
           </div>
         </button>
 
-        <button type="button" id="hub-tile-summaries" class="cp-hub-tile" onclick="navigateStudent({ screen: 'course-summaries', courseId: ${Number(courseId)} })">
+        <button type="button" id="hub-tile-summaries" class="cp-hub-tile" onclick="navigateStudent({ screen: 'course-summaries', courseId: ${Number(courseId)}, scope: 'course' })">
           <div class="cp-tile-head">
             <span class="cp-tile-icon cp-tile-icon--purple">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M16 13H8"/><path d="M16 17H8"/></svg>
             </span>
+            ${unread.hasUnreadSection(courseId, "summaries") ? '<span class="cp-notif-dot" aria-label="Unread summary"></span>' : ''}
           </div>
           <div>
             <div class="cp-tile-title">Summaries</div>
@@ -894,7 +1029,7 @@
     `;
   }
 
-  // LEVEL 2A: Lectures List (Date-grouped, newest first, zero raw codes)
+  // LEVEL 2A: Lectures List (Date-grouped, newest first, zero raw codes + Level 3b unread dot)
   function renderCourseLectures(courseId) {
     const container = document.getElementById("screen-course-lectures");
     const c = findFullCourseById(courseId);
@@ -905,6 +1040,7 @@
       return;
     }
 
+    const unread = getUnreadSummarySafe();
     const dateGroups = [];
     const groupByKey = new Map();
     for (const s of sessions) {
@@ -922,6 +1058,7 @@
       const rowsHtml = group.items.map(({ session: s, time }) => {
         const isSelected = ACTIVE_SESSION && ACTIVE_SESSION.session_code === s.session_code;
         const badge = formatAttendanceBadge(s, c.is_enrolled);
+        const hasUnread = unread.hasUnreadItem("qa", s.session_code) || unread.hasUnreadItem("poll", s.session_code);
         return `
           <button type="button"
                   class="cp-m-lecture-row ${isSelected ? 'active' : ''}"
@@ -934,6 +1071,7 @@
               </div>
             </div>
             <div class="cp-m-lecture-right">
+              ${hasUnread ? '<span class="cp-notif-dot" aria-label="New message or poll"></span>' : ''}
               <span class="cp-badge ${badge.badgeClass}">${escapeHtml(badge.label)}</span>
               <span class="cp-m-lecture-chev" aria-hidden="true">&#8250;</span>
             </div>
@@ -1040,17 +1178,39 @@
     `;
   }
 
-  // LEVEL 2D & LEVEL 3: Assignments List + Prominent Upload & Review Detail
-  function renderAssignmentsListScreen(courseId) {
+  // LEVEL 2D & LEVEL 3: Assignments List (Course-Scoped vs Global) + Upload & Review Detail
+  function renderAssignmentsListScreen(courseId, scope) {
     const el = document.getElementById("student-assignments-list");
     if (!el) return;
-    const assignments = getCourseAssignments(courseId);
-    if (!assignments.length) {
-      el.innerHTML = `<div class="cp-card cp-muted" style="text-align:center; padding:22px;">No assignments posted yet for this course.</div>`;
+    const isGlobal = scope === "global" || !courseId;
+    const unread = getUnreadSummarySafe();
+
+    let items = [];
+    if (isGlobal) {
+      for (const c of getStudentCoursesPool()) {
+        for (const a of getCourseAssignments(c.id)) {
+          items.push({ ...a, course_id: c.id, course_name: a.course_name || c.name });
+        }
+      }
+    } else {
+      const c = findFullCourseById(courseId);
+      items = getCourseAssignments(courseId).map(a => ({
+        ...a,
+        course_id: courseId,
+        course_name: a.course_name || (c ? c.name : ""),
+      }));
+    }
+
+    if (!items.length) {
+      el.innerHTML = `<div class="cp-card cp-muted" style="text-align:center; padding:22px;">${
+        isGlobal
+          ? "No assignments posted yet across your enrolled courses."
+          : "No assignments posted yet for this course."
+      }</div>`;
       return;
     }
 
-    el.innerHTML = `<div class="cp-course-grid">` + assignments.map(a => {
+    el.innerHTML = `<div class="cp-course-grid">` + items.map(a => {
       const sub = a.my_submission;
       const myScore = sub
         ? (sub.ai_rubric_grade !== undefined ? sub.ai_rubric_grade : (sub.metrics ? sub.metrics.overall_score : null))
@@ -1058,18 +1218,25 @@
       const statusBadge = myScore !== null
         ? `<span class="cp-badge cp-badge--green cp-tabular">Submitted \u00b7 ${escapeHtml(myScore)}/100</span>`
         : `<span class="cp-badge cp-badge--indigo">Ready to Upload</span>`;
+      const assignNum = a.assignment_number || 1;
+      const hasDot = unread.hasUnreadItem("assignment", a.id);
       return `
         <button type="button"
                 class="cp-hub-tile"
                 data-assignment-id="${Number(a.id)}"
-                onclick="openAssignmentDetail(${Number(courseId)}, ${Number(a.id)})">
+                onclick="openAssignmentDetail(${Number(a.course_id)}, ${Number(a.id)})">
           <div class="cp-tile-head">
             <span class="cp-tile-icon cp-tile-icon--coral">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
             </span>
-            ${statusBadge}
+            <div style="display:inline-flex; align-items:center; gap:8px;">
+              ${statusBadge}
+              ${hasDot ? '<span class="cp-notif-dot" aria-label="New assignment"></span>' : ''}
+            </div>
           </div>
           <div>
+            ${isGlobal ? `<div class="cp-badge cp-badge--neutral" style="margin-bottom:6px; max-width:100%; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(a.course_name)}</div>` : ""}
+            <div class="cp-eyebrow" style="color:var(--cp-coral-ink); margin-bottom:2px;">Assignment ${Number(assignNum)}</div>
             <div class="cp-tile-title">${escapeHtml(a.title)}</div>
             <div class="cp-tile-sub" style="margin-top:4px;">${escapeHtml((a.rubric_text || "Upload file or submit code").slice(0, 88))}</div>
           </div>
@@ -1333,6 +1500,11 @@
     el.textContent = message || "";
   }
 
+  async function loadAllEnrolledAssignments() {
+    const courses = getStudentCoursesPool();
+    await Promise.all(courses.map(c => loadAssignmentsForCourse(c.id)));
+  }
+
   async function loadAssignmentsForCourse(courseId) {
     if (!courseId) return;
     const stQuery = STATE.student && STATE.student.id ? `?student_id=${STATE.student.id}&_ts=${Date.now()}` : `?_ts=${Date.now()}`;
@@ -1344,10 +1516,10 @@
       ASSIGNMENTS_BY_COURSE[courseId] = assignments;
 
       const isFirstLoad = HW_INITIALIZED_COURSE_ID !== courseId;
-      let newlyDiscoveredTitle = null;
+      let newlyDiscovered = null;
       for (const a of assignments) {
         if (!KNOWN_ASSIGNMENT_IDS.has(a.id)) {
-          if (!isFirstLoad) newlyDiscoveredTitle = a.title;
+          if (!isFirstLoad) newlyDiscovered = { id: a.id, title: a.title };
           KNOWN_ASSIGNMENT_IDS.add(a.id);
         }
         if (a.my_submission && PENDING_REVIEWS.has(a.id)) {
@@ -1365,17 +1537,22 @@
       HW_INITIALIZED_COURSE_ID = courseId;
 
       const st = currentScreenState();
-      if (st.screen === "course-assignments" && Number(st.courseId) === Number(courseId)) {
-        renderAssignmentsListScreen(courseId);
+      if (st.screen === "course-assignments" && (st.scope === "global" || Number(st.courseId) === Number(courseId))) {
+        renderAssignmentsListScreen(st.courseId, st.scope);
       } else if (st.screen === "assignment-detail" && Number(st.courseId) === Number(courseId)) {
         renderAssignmentDetailScreen(courseId, st.assignmentId);
       }
-      if (newlyDiscoveredTitle) {
-        notifyNewAssignment(newlyDiscoveredTitle, courseId);
+      if (newlyDiscovered) {
+        notifyNewAssignment(newlyDiscovered.title, courseId, newlyDiscovered.id);
       }
     } catch (err) {
       console.error("loadAssignmentsForCourse error:", err);
     }
+  }
+
+  async function loadAllEnrolledSummaries() {
+    const courses = getStudentCoursesPool();
+    await Promise.all(courses.map(c => loadSummariesForCourse(c.id)));
   }
 
   async function loadSummariesForCourse(courseId) {
@@ -1386,56 +1563,96 @@
       const data = await res.json();
       const artifacts = data.artifacts || [];
       SUMMARIES_BY_COURSE[courseId] = artifacts;
-      if (currentScreenState().screen === "course-summaries" && Number(currentScreenState().courseId) === Number(courseId)) {
-        renderStudyLectures(artifacts);
+      const st = currentScreenState();
+      if (st.screen === "course-summaries" && (st.scope === "global" || Number(st.courseId) === Number(courseId))) {
+        renderSummariesScreen(st.courseId, st.scope);
       }
     } catch (err) {
       console.error("loadSummariesForCourse error:", err);
     }
   }
 
+  function renderSummaryCardHtml(a, idx) {
+    const segHtml = (a.corrected_transcript || []).map(seg =>
+      `<div class="cp-m-hairline-row" style="justify-content:flex-start;"><span class="cp-ts ts">[${escapeHtml(seg.offset_mmss)}]</span> <span style="color:var(--cp-ink); overflow-wrap:anywhere;">${escapeHtml(seg.text)}</span></div>`
+    ).join("");
+    const lecHeading = a.lecture_number && !/^lecture\b/i.test(a.lecture_title || "")
+      ? `Lecture ${a.lecture_number} \u2014 ${a.lecture_title || "Summary"}`
+      : (a.lecture_title || (a.lecture_number ? `Lecture ${a.lecture_number}` : "Lecture Summary"));
+    return `
+      <div class="cp-card" data-artifact-id="${Number(a.id)}">
+        <div class="cp-row-between" style="margin-bottom:10px;">
+          <strong style="font-size:16px; color:var(--cp-ink); overflow-wrap:anywhere;">${escapeHtml(lecHeading)}</strong>
+        </div>
+        <div class="cp-row-wrap" style="margin-bottom:10px; gap:8px;">
+          <a class="cp-btn cp-btn--green cp-btn--sm" href="/api/lectures/${Number(a.id)}/download/summary.md">Summary (.md)</a>
+          <a class="cp-btn cp-btn--secondary cp-btn--sm" href="/api/lectures/${Number(a.id)}/download/transcript.txt">Transcript (.txt)</a>
+        </div>
+        <details class="cp-m-accordion" ${idx === 0 ? "open" : ""}>
+          <summary>
+            <span>AI Summary</span>
+            <span class="cp-muted">&#9662;</span>
+          </summary>
+          <div class="cp-review-md" style="margin:8px 0 0 0; background:var(--cp-well);">${renderSimpleReviewHtml(a.summary_markdown)}</div>
+        </details>
+        <details class="cp-m-accordion">
+          <summary>
+            <span>Corrected Transcript</span>
+            <span class="cp-muted">&#9662;</span>
+          </summary>
+          <div style="margin-top:6px;">${segHtml}</div>
+        </details>
+      </div>
+    `;
+  }
+
+  function renderSummariesScreen(courseId, scope) {
+    const el = document.getElementById("student-lecture-summaries");
+    if (!el) return;
+    const isGlobal = scope === "global" || !courseId;
+    if (!isGlobal) {
+      renderStudyLectures(getCourseSummaries(courseId));
+      return;
+    }
+
+    const courses = getStudentCoursesPool();
+    if (!courses.length) {
+      el.innerHTML = `<div class="cp-card cp-muted" style="text-align:center; padding:22px;">Enroll in a course to view lecture summaries grouped by course.</div>`;
+      return;
+    }
+
+    const groupsHtml = courses.map(c => {
+      const arts = getCourseSummaries(c.id);
+      const countLabel = `${arts.length} summary${arts.length === 1 ? "" : "s"}`.replace("summarys", "summaries");
+      const cardsHtml = arts.length
+        ? arts.map((a, idx) => renderSummaryCardHtml(a, idx)).join("")
+        : `<div class="cp-well cp-muted" style="font-size:13.5px; text-align:center;">No summaries published for this course yet.</div>`;
+      return `
+        <div class="cp-card" data-summary-course-id="${Number(c.id)}">
+          <div class="cp-card-header">
+            <h3>${escapeHtml(c.name)}</h3>
+            <span class="cp-badge cp-badge--purple cp-tabular">${escapeHtml(countLabel)}</span>
+          </div>
+          <div class="cp-stack-sm">${cardsHtml}</div>
+        </div>
+      `;
+    }).join("");
+    el.innerHTML = groupsHtml;
+  }
+
   function renderStudyLectures(artifacts) {
     const el = document.getElementById("student-lecture-summaries");
     if (!el) return;
     if (!artifacts.length) {
-      el.innerHTML = `<div class="cp-card cp-muted" style="text-align:center; padding:22px;">No published AI lecture summaries yet for this course.</div>`;
+      el.innerHTML = `<div class="cp-card cp-muted" style="text-align:center; padding:22px;">No published lecture summaries yet for this course.</div>`;
       return;
     }
-    el.innerHTML = artifacts.map((a, idx) => {
-      const segHtml = (a.corrected_transcript || []).map(seg =>
-        `<div class="cp-m-hairline-row" style="justify-content:flex-start;"><span class="cp-ts ts">[${escapeHtml(seg.offset_mmss)}]</span> <span style="color:var(--cp-ink); overflow-wrap:anywhere;">${escapeHtml(seg.text)}</span></div>`
-      ).join("");
-      return `
-        <div class="cp-card">
-          <div class="cp-row-between" style="margin-bottom:10px;">
-            <strong style="font-size:16px; color:var(--cp-ink); overflow-wrap:anywhere;">${escapeHtml(a.lecture_title || "Lecture Summary")}</strong>
-          </div>
-          <div class="cp-row-wrap" style="margin-bottom:10px; gap:8px;">
-            <a class="cp-btn cp-btn--green cp-btn--sm" href="/api/lectures/${Number(a.id)}/download/summary.md">Summary (.md)</a>
-            <a class="cp-btn cp-btn--secondary cp-btn--sm" href="/api/lectures/${Number(a.id)}/download/transcript.txt">Transcript (.txt)</a>
-          </div>
-          <details class="cp-m-accordion" ${idx === 0 ? "open" : ""}>
-            <summary>
-              <span>AI Summary</span>
-              <span class="cp-muted">&#9662;</span>
-            </summary>
-            <div class="cp-review-md" style="margin:8px 0 0 0; background:var(--cp-well);">${renderSimpleReviewHtml(a.summary_markdown)}</div>
-          </details>
-          <details class="cp-m-accordion">
-            <summary>
-              <span>Corrected Transcript</span>
-              <span class="cp-muted">&#9662;</span>
-            </summary>
-            <div style="margin-top:6px;">${segHtml}</div>
-          </details>
-        </div>
-      `;
-    }).join("");
+    el.innerHTML = artifacts.map((a, idx) => renderSummaryCardHtml(a, idx)).join("");
   }
 
   async function submitStudentHomework(assignId) {
     if (!STATE.student) {
-      setHomeworkStatus(assignId, "Sign in with your Name & Email first.", "error");
+      setHomeworkStatus(assignId, "Sign in with your Full Name & ID Number first.", "error");
       focusStudentSignIn();
       return;
     }
@@ -1537,13 +1754,20 @@
     }
   }
 
-  function notifyNewAssignment(title, courseId) {
+  function notifyNewAssignment(title, courseId, assignmentId) {
     const st = currentScreenState();
-    if (st.screen === "course-assignments" || st.screen === "assignment-detail") return;
+    if (st.screen === "assignment-detail" && Number(st.assignmentId) === Number(assignmentId)) return;
+    if (window.ClassPulseNotify && assignmentId) {
+      window.ClassPulseNotify.markUnread({
+        key: `assignment:${courseId || ""}:${assignmentId}`,
+        kind: "assignment",
+        courseId,
+        itemId: assignmentId,
+      });
+    }
     const dot = document.getElementById("study-new-dot");
     if (dot) {
       dot.style.display = "inline-block";
-      dot.classList.add("hot");
     }
     const existing = document.getElementById("study-toast-banner");
     if (existing) existing.remove();
@@ -1560,7 +1784,7 @@
     banner.onclick = () => {
       const targetCourseId = courseId || CURRENT_COURSE_ID || (ACTIVE_SESSION && ACTIVE_SESSION.course_id);
       if (targetCourseId) {
-        navigateStudent({ screen: "course-assignments", courseId: targetCourseId });
+        navigateStudent({ screen: "course-assignments", courseId: targetCourseId, scope: "course" });
       }
     };
     container.insertBefore(banner, container.firstChild);
@@ -1762,7 +1986,7 @@
     if (!CURRENT_POLL || CURRENT_POLL.status !== "ACTIVE") return;
     const studentId = STATE.student ? STATE.student.id : null;
     if (!studentId) {
-      return alert("Please sign in with your Name & Email first so your vote is counted.");
+      return alert("Please sign in with your Full Name & ID Number first so your vote is counted.");
     }
     MY_VOTE = optionIndex;
     CURRENT_POLL.my_vote_index = optionIndex;
@@ -1944,7 +2168,27 @@
     }
     if (incoming) applyIncomingPoll(incoming);
   });
-  socket.on("poll:activated", (poll) => { MY_VOTE = null; applyIncomingPoll(poll); });
+  socket.on("poll:activated", (poll) => {
+    MY_VOTE = null;
+    applyIncomingPoll(poll);
+  });
+  socket.on("poll:notify", (payload) => {
+    if (!payload) return;
+    const cur = currentScreenState();
+    const inSameLecture =
+      cur.screen === "lecture" &&
+      ACTIVE_SESSION &&
+      ACTIVE_SESSION.session_code === payload.session_code;
+    if (!inSameLecture && window.ClassPulseNotify) {
+      window.ClassPulseNotify.markUnread({
+        key: `poll:${payload.course_id || ""}:${payload.poll_id || payload.session_code}`,
+        kind: "poll",
+        courseId: payload.course_id,
+        sessionCode: payload.session_code,
+        itemId: payload.poll_id || payload.session_code,
+      });
+    }
+  });
   socket.on("poll:opened", (poll) => { MY_VOTE = null; applyIncomingPoll(poll); });
   socket.on("poll:results_update", (poll) => {
     if (!CURRENT_POLL || CURRENT_POLL.id === poll.id) applyIncomingPoll({ ...CURRENT_POLL, ...poll });
@@ -1974,15 +2218,28 @@
 
   socket.on("lecture:summary_ready", (payload) => {
     const cid = payload?.course_id || CURRENT_COURSE_ID || (ACTIVE_SESSION && ACTIVE_SESSION.course_id);
+    const cur = currentScreenState();
+    const viewingSummaries =
+      cur.screen === "course-summaries" &&
+      (cur.scope === "global" || Number(cur.courseId) === Number(cid));
+    if (!viewingSummaries && window.ClassPulseNotify && payload?.id) {
+      window.ClassPulseNotify.markUnread({
+        key: `summary:${cid || ""}:${payload.id}`,
+        kind: "summary",
+        courseId: cid,
+        sessionCode: payload.session_code,
+        itemId: payload.id,
+      });
+    }
     if (cid) loadSummariesForCourse(cid);
   });
   socket.on("assignment:created", (payload) => {
     const cid = payload?.course_id || CURRENT_COURSE_ID || (ACTIVE_SESSION && ACTIVE_SESSION.course_id);
-    if (!cid || Number(payload?.course_id) !== Number(cid)) return;
+    if (!cid) return;
     const isNew = payload?.id && !KNOWN_ASSIGNMENT_IDS.has(payload.id);
     if (payload?.id) KNOWN_ASSIGNMENT_IDS.add(payload.id);
     loadAssignmentsForCourse(cid);
-    if (isNew) notifyNewAssignment(payload?.title || "New Assignment", cid);
+    if (isNew) notifyNewAssignment(payload?.title || "New Assignment", cid, payload?.id);
   });
   socket.on("assignment:review_ready", (payload) => {
     if (!payload) return;

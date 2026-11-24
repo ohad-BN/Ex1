@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 class LecturerRegisterSchema(BaseModel):
     full_name: str = Field(..., min_length=1, max_length=120)
-    username: str = Field(..., min_length=3, max_length=40)
+    username: Optional[str] = Field(default=None, max_length=40)
     email: str = Field(..., min_length=5, max_length=160)
     password: str = Field(..., min_length=8, max_length=128)
     confirm_password: Optional[str] = None

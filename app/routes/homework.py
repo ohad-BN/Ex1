@@ -9,8 +9,14 @@ from sqlalchemy.orm import sessionmaker
 from werkzeug.utils import secure_filename
 
 from app import socketio
-from app.models import Assignment, ClassStatsAggregate, Student
-from app.routes.guards import require_course_access
+from app.models import Assignment, ClassStatsAggregate, Course, HomeworkSubmission, Student
+from app.routes.guards import (
+    get_current_lecturer,
+    is_lecturer_authorized_for_course,
+    is_student_enrolled_in_course,
+    require_course_access,
+    verify_course_read_access,
+)
 from app.services.homework_pipeline import (
     CohortAggregator,
     HomeworkPipelineError,
@@ -53,12 +59,24 @@ def _emit_to_course_rooms(
 @homework_bp.get("/api/courses/<int:course_id>/assignments")
 def list_course_assignments(course_id: int):
     svc = _get_hw_service()
-    student_id = _resolve_student_id({})
+    explicit_student_id = request.args.get("student_id", type=int)
+    _course, lecturer, student, can_view_all_subs, err = verify_course_read_access(
+        course_id, explicit_student_id=explicit_student_id
+    )
+    if err is not None:
+        return err
+
+    student_id = (
+        None
+        if lecturer is not None and explicit_student_id is None
+        else (student.id if student is not None else _resolve_student_id({}))
+    )
     include_subs = str(request.args.get("include_submissions", "")).lower() in ("1", "true", "yes")
+    effective_include_subs = bool(include_subs and can_view_all_subs)
     return jsonify(
         {
             "assignments": svc.list_course_assignments(
-                course_id, student_id=student_id, include_submissions=include_subs
+                course_id, student_id=student_id, include_submissions=effective_include_subs
             )
         }
     )
@@ -130,10 +148,24 @@ def get_assignment_detail(assignment_id: int):
     assignment = db.get(Assignment, assignment_id)
     if assignment is None:
         return jsonify({"error": "Assignment not found."}), 404
+
+    can_view_all_subs = True
     student_id = _resolve_student_id({})
+    if assignment.course_id is not None:
+        explicit_student_id = request.args.get("student_id", type=int)
+        _course, lecturer, student, can_view_all_subs, err = verify_course_read_access(
+            assignment.course_id, explicit_student_id=explicit_student_id
+        )
+        if err is not None:
+            return err
+        if lecturer is not None and explicit_student_id is None:
+            student_id = None
+        elif student is not None:
+            student_id = student.id
+
     return jsonify(
         svc.serialize_assignment(
-            assignment, student_id=student_id, include_submissions=True
+            assignment, student_id=student_id, include_submissions=can_view_all_subs
         )
     )
 
@@ -156,6 +188,21 @@ def submit_assignment_homework(assignment_id: int):
 
     if student_id is None:
         return jsonify({"error": "Student sign-in required before submitting homework."}), 401
+
+    assignment = db.get(Assignment, assignment_id)
+    if assignment is None:
+        return jsonify({"error": "Assignment not found."}), 404
+    if assignment.course_id is not None:
+        parent_course = db.get(Course, assignment.course_id)
+        if (
+            parent_course is not None
+            and parent_course.lecturer_id is not None
+            and not is_student_enrolled_in_course(db, parent_course.id, int(student_id))
+        ):
+            return (
+                jsonify({"error": "You must be enrolled in this course to submit its assignment."}),
+                403,
+            )
 
     saved_file: Path | None = None
     if "file" in request.files and request.files["file"].filename:
@@ -298,13 +345,27 @@ def submit_assignment_homework(assignment_id: int):
 @homework_bp.post("/api/submissions/<int:submission_id>/deep-review")
 def generate_submission_deep_review(submission_id: int):
     db = current_app.extensions["db_session"]
+    sub = db.get(HomeworkSubmission, submission_id)
+    if sub is None:
+        return jsonify({"error": "Submission not found."}), 404
+    assignment = db.get(Assignment, sub.assignment_id)
+    if assignment is not None and assignment.course_id is not None:
+        course = db.get(Course, assignment.course_id)
+        if course is not None and course.lecturer_id is not None:
+            lec = get_current_lecturer()
+            st_id = _resolve_student_id({})
+            allowed = (
+                (lec is not None and is_lecturer_authorized_for_course(db, course, lec.id))
+                or (lec is None and st_id is not None and int(st_id) == int(sub.student_id))
+            )
+            if not allowed:
+                return jsonify({"error": "Access denied for this homework submission."}), 403
+
     svc = _get_hw_service()
     try:
         review_md = svc.generate_deep_review(submission_id)
     except HomeworkPipelineError as exc:
         return jsonify({"error": exc.message}), exc.status_code
-
-    from app.models import HomeworkSubmission
 
     sub = db.get(HomeworkSubmission, submission_id)
     stats = db.get(ClassStatsAggregate, sub.assignment_id) if sub else None

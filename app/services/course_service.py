@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 import hashlib
+import re
 import secrets
 from typing import Any, Optional
 
@@ -32,6 +33,8 @@ from app.services.identity_helpers import (
     RESERVED_USERNAMES,
     USERNAME_RE,
     generate_deterministic_session_code,
+    is_synthetic_student_email,
+    normalize_student_id,
     parse_roster_csv_rows,
     record_audit_event,
     resolve_or_upsert_student,
@@ -89,14 +92,6 @@ class CourseService:
                 if c.lecturer_id is None and c.course_code in ("CS204", "CS101"):
                     c.lecturer_id = demo_lecturer.id
                     changed = True
-            first_course = existing[0]
-            orphans = (
-                self.db.query(ClassSession).filter(ClassSession.course_id.is_(None)).all()
-            )
-            if orphans:
-                for s in orphans:
-                    s.course_id = first_course.id
-                changed = True
             if changed:
                 self.db.commit()
             return existing
@@ -175,11 +170,28 @@ class CourseService:
             raise CourseError(f"Username '{clean}' is reserved.", status_code=400)
         return clean
 
+    def _derive_unique_username_from_email(self, email: str) -> str:
+        local = (email.split("@", 1)[0] if "@" in email else email).strip().lower()
+        base = re.sub(r"[^a-z0-9._-]", "", local).strip("._-")
+        if len(base) < 3:
+            base = f"{base or 'prof'}_u"
+        if not base[0].isalnum():
+            base = f"u{base}"
+        base = base[:26]
+        if base in RESERVED_USERNAMES:
+            base = f"{base}_lec"
+        candidate = base
+        idx = 2
+        while self.db.query(Lecturer).filter(func.lower(Lecturer.username) == candidate).first() is not None:
+            candidate = f"{base}{idx}"
+            idx += 1
+        return candidate
+
     def register_lecturer(
         self,
         *,
         full_name: str,
-        username: str,
+        username: str = "",
         email: str,
         password: str,
         confirm_password: Optional[str] = None,
@@ -195,7 +207,12 @@ class CourseService:
             raise CourseError("Full name is required.", status_code=400)
         if not norm_email or not EMAIL_RE.match(norm_email):
             raise CourseError("Please enter a valid university or personal email address.", status_code=400)
-        norm_username = self._normalize_username(username)
+        raw_username = (username or "").strip()
+        norm_username = (
+            self._normalize_username(raw_username)
+            if raw_username
+            else self._derive_unique_username_from_email(norm_email)
+        )
 
         if confirm_password is not None and password != confirm_password:
             raise CourseError("Passwords do not match.", status_code=400)
@@ -838,7 +855,7 @@ class CourseService:
                     "student_id": st.id,
                     "student_id_number": st.student_id_number or "-",
                     "full_name": st.full_name,
-                    "email": st.email,
+                    "email": "-" if is_synthetic_student_email(st.email) else st.email,
                     "device_bound": bool(st.primary_device_id),
                     "attended_sessions": attended_count,
                     "total_sessions": total_sessions,
@@ -859,29 +876,36 @@ class CourseService:
 
     def enroll_student_by_code(
         self,
-        course_code: str,
-        full_name: str,
-        email: str,
+        course_code: str = "",
+        full_name: str = "",
+        email: str = "",
         student_id_number: Optional[str] = None,
         device_id: Optional[str] = None,
+        course_id: Optional[int] = None,
     ) -> tuple[Course, Student]:
-        code = (course_code or "").strip().upper()
-        course = (
-            self.db.query(Course)
-            .filter((Course.course_code == code) | (Course.join_code == code))
-            .one_or_none()
-        )
-        if course is None:
-            # Also check if the student entered a lecture session_code instead of course_code!
-            sess = (
-                self.db.query(ClassSession).filter_by(session_code=code).one_or_none()
+        course = None
+        if course_id is not None:
+            course = self.db.get(Course, int(course_id))
+            if course is None:
+                raise CourseError("Course not found.", status_code=404)
+        else:
+            code = (course_code or "").strip().upper()
+            course = (
+                self.db.query(Course)
+                .filter((Course.course_code == code) | (Course.join_code == code))
+                .one_or_none()
             )
-            if sess is not None and sess.course_id is not None:
-                course = self.db.get(Course, sess.course_id)
-        if course is None:
-            raise CourseError(
-                f"Course or lecture code '{code}' not found.", status_code=404
-            )
+            if course is None:
+                # Also check if the student entered a lecture session_code instead of course_code
+                sess = (
+                    self.db.query(ClassSession).filter_by(session_code=code).one_or_none()
+                )
+                if sess is not None and sess.course_id is not None:
+                    course = self.db.get(Course, sess.course_id)
+            if course is None:
+                raise CourseError(
+                    f"Course or lecture code '{code}' not found.", status_code=404
+                )
 
         student, err = resolve_or_upsert_student(
             self.db,
@@ -1148,40 +1172,61 @@ class CourseService:
                 else ""
             )
 
-            course_card = {
-                "id": c.id,
-                "course_code": c.course_code,
-                "name": c.name,
-                "department": c.department,
-                "semester": c.semester,
-                "lecturer_name": c.lecturer_name,
-                "is_enrolled": c.id in enrolled_course_ids,
-                "attended_count": len(attended_session_ids),
-                "total_sessions": len(sessions),
-                "attendance_pct": (
-                    round((len(attended_session_ids) / len(sessions)) * 100.0, 1)
-                    if sessions
-                    else 0.0
-                ),
-                "latest_lecture_at": latest_lecture_at,
-                "sessions": session_cards,
-                "my_attendance_logs": attendance_logs,
-                "lecture_summaries": LectureSummarizerService(self.db).list_course_artifacts(
-                    c.id
-                ),
-                "assignments": HomeworkReviewService(self.db).list_course_assignments(
-                    c.id,
-                    student_id=student.id if student is not None else None,
-                    include_submissions=False,
-                ),
-            }
+            is_enrolled = c.id in enrolled_course_ids
+            if is_enrolled:
+                course_card = {
+                    "id": c.id,
+                    "course_code": c.course_code,
+                    "name": c.name,
+                    "department": c.department,
+                    "semester": c.semester,
+                    "lecturer_name": c.lecturer_name,
+                    "is_enrolled": True,
+                    "attended_count": len(attended_session_ids),
+                    "total_sessions": len(sessions),
+                    "attendance_pct": (
+                        round((len(attended_session_ids) / len(sessions)) * 100.0, 1)
+                        if sessions
+                        else 0.0
+                    ),
+                    "latest_lecture_at": latest_lecture_at,
+                    "sessions": session_cards,
+                    "my_attendance_logs": attendance_logs,
+                    "lecture_summaries": LectureSummarizerService(self.db).list_course_artifacts(
+                        c.id
+                    ),
+                    "assignments": HomeworkReviewService(self.db).list_course_assignments(
+                        c.id,
+                        student_id=student.id if student is not None else None,
+                        include_submissions=False,
+                    ),
+                }
+            else:
+                # Strict isolation: unenrolled catalog entries expose only discovery metadata
+                course_card = {
+                    "id": c.id,
+                    "course_code": c.course_code,
+                    "name": c.name,
+                    "department": c.department,
+                    "semester": c.semester,
+                    "lecturer_name": c.lecturer_name,
+                    "is_enrolled": False,
+                    "attended_count": 0,
+                    "total_sessions": len(sessions),
+                    "attendance_pct": 0.0,
+                    "latest_lecture_at": latest_lecture_at,
+                    "sessions": [],
+                    "my_attendance_logs": [],
+                    "lecture_summaries": [],
+                    "assignments": [],
+                }
             sort_key = (
                 1 if latest_dt is not None else 0,
                 latest_dt if latest_dt is not None else datetime.min,
                 latest_session.id if latest_session is not None else 0,
                 c.id,
             )
-            if c.id in enrolled_course_ids:
+            if is_enrolled:
                 my_courses_ranked.append((sort_key, course_card))
             catalog_courses_ranked.append((sort_key, course_card))
 
@@ -1197,7 +1242,11 @@ class CourseService:
                     "id": student.id,
                     "student_id_number": student.student_id_number,
                     "full_name": student.full_name,
-                    "email": student.email,
+                    "email": (
+                        ""
+                        if is_synthetic_student_email(student.email)
+                        else student.email
+                    ),
                 }
                 if student is not None
                 else None

@@ -73,8 +73,8 @@
 
   async function compressToJpeg(file, opts) {
     const cfg = opts || {};
-    const maxEdge = Number(cfg.maxEdge || 1600);
-    const quality = Number(cfg.quality || 0.82);
+    const maxEdge = Number(cfg.maxEdge || 1280);
+    const quality = Number(cfg.quality || 0.80);
     const decodeTimeoutMs = Number(cfg.decodeTimeoutMs || 8000);
 
     if (!file) {
@@ -83,11 +83,11 @@
 
     let decoded = null;
     try {
-      decoded = await decodeViaHtmlImage(file, decodeTimeoutMs);
-    } catch (_htmlErr) {
+      decoded = await decodeViaBitmap(file, decodeTimeoutMs);
+    } catch (_bmpErr) {
       try {
-        decoded = await decodeViaBitmap(file, decodeTimeoutMs);
-      } catch (_bmpErr) {
+        decoded = await decodeViaHtmlImage(file, decodeTimeoutMs);
+      } catch (_htmlErr) {
         if (isHeicLike(file)) {
           throw new Error(
             "This HEIC/HEIF photo could not be decoded in the browser. Please take a photo directly with the camera or choose a JPEG/PNG image."

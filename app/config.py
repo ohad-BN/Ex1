@@ -23,7 +23,7 @@ class Config:
 
     # QR & Attendance settings
     QR_STEP_SECONDS: int = int(os.getenv("QR_STEP_SECONDS", "5"))
-    QR_GRACE_BUCKETS: int = int(os.getenv("QR_GRACE_BUCKETS", "3"))
+    QR_GRACE_BUCKETS: int = int(os.getenv("QR_GRACE_BUCKETS", "6"))
     HEADCOUNT_TOLERANCE: int = int(os.getenv("HEADCOUNT_TOLERANCE", "2"))
     LATE_AFTER_MINUTES: int = int(os.getenv("LATE_AFTER_MINUTES", "15"))
 

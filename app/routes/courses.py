@@ -519,6 +519,7 @@ def student_app():
         initial_course_id=initial_course_id,
         initial_session_id=initial_session_id,
         checked_in_banner=checked_in_banner,
+        from_qr_route=checked_in_param,
     )
 
 
@@ -794,13 +795,14 @@ def api_student_logout():
 
 @courses_bp.post("/api/student/login")
 def api_student_login():
-    """Sign in or register a student with Student ID + Email into the Student App and set cp_device cookie."""
+    """Sign in or register a student with Full Name + ID Number (or Email) without QR."""
     payload: dict[str, Any] = request.get_json(silent=True) or {}
     full_name = str(payload.get("full_name", "")).strip()
     email = str(payload.get("email", "")).strip().lower()
     student_id_number = str(payload.get("student_id_number", "")).strip() or None
     norm_sid = normalize_student_id(student_id_number)
     course_code = str(payload.get("course_code", "")).strip().upper()
+    raw_course_id = payload.get("course_id")
 
     db = current_app.extensions["db_session"]
     device_mgr: DeviceBindingManager = current_app.extensions["device_mgr"]
@@ -840,10 +842,11 @@ def api_student_login():
     else:
         device_id = secrets.token_hex(12)
 
-    if course_code:
+    if raw_course_id is not None or course_code:
         try:
             _course, student = svc.enroll_student_by_code(
                 course_code=course_code,
+                course_id=int(raw_course_id) if raw_course_id is not None else None,
                 full_name=resolved_name,
                 email=resolved_email,
                 student_id_number=student_id_number,
@@ -879,9 +882,16 @@ def api_student_login():
 
 @courses_bp.post("/api/student/enroll")
 def api_student_enroll():
-    """Allow an authenticated student to join a school course by course_code or lecture code."""
+    """Allow an authenticated student to join a school course by course_id or course_code."""
     payload: dict[str, Any] = request.get_json(silent=True) or {}
     course_code = str(payload.get("course_code", "")).strip().upper()
+    raw_course_id = payload.get("course_id")
+    course_id_val: int | None = None
+    if raw_course_id is not None and str(raw_course_id).strip() != "":
+        try:
+            course_id_val = int(raw_course_id)
+        except (TypeError, ValueError):
+            return jsonify({"error": "Invalid course_id."}), 400
 
     db = current_app.extensions["db_session"]
     device_mgr: DeviceBindingManager = current_app.extensions["device_mgr"]
@@ -898,8 +908,10 @@ def api_student_enroll():
     try:
         course, _st = svc.enroll_student_by_code(
             course_code=course_code,
+            course_id=course_id_val,
             full_name=student.full_name,
             email=student.email,
+            student_id_number=student.student_id_number,
             device_id=student.primary_device_id,
         )
     except CourseError as exc:

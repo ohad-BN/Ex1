@@ -253,13 +253,14 @@ class TiledSCRFDDetector(FaceDetector):
         return kept
 
     def _detect_at_threshold_locked(
-        self, image: np.ndarray, threshold: float
+        self, image: np.ndarray, threshold: float, *, include_tiles: bool = True
     ) -> list[BoundingBox]:
-        """Run full-frame + overlapping tiled SCRFD detection on a single working scale."""
+        """Run full-frame + overlapping tiled SCRFD detection on a fast 1280px working scale."""
         orig_h, orig_w = image.shape[:2]
         longest = max(orig_h, orig_w)
-        if longest > 1920:
-            scale = 1920.0 / float(longest)
+        max_work_edge = 1280.0
+        if longest > max_work_edge:
+            scale = max_work_edge / float(longest)
             work_w = max(1, int(round(orig_w * scale)))
             work_h = max(1, int(round(orig_h * scale)))
             work_img = cv2.resize(image, (work_w, work_h), interpolation=cv2.INTER_AREA)
@@ -285,41 +286,89 @@ class TiledSCRFDDetector(FaceDetector):
                 )
             )
 
-        # 2. Overlapping tile detection passes for small back-row faces
-        for tx1, ty1, tx2, ty2 in self._generate_tiles(work_w, work_h):
-            crop = work_img[ty1:ty2, tx1:tx2]
-            for bx1, by1, bx2, by2, score in self._run_scrfd_crop_locked(crop, threshold=threshold):
+        # 2. Overlapping tile detection passes for small back-row faces in wide shots
+        if include_tiles:
+            for tx1, ty1, tx2, ty2 in self._generate_tiles(work_w, work_h):
+                crop = work_img[ty1:ty2, tx1:tx2]
+                for bx1, by1, bx2, by2, score in self._run_scrfd_crop_locked(crop, threshold=threshold):
+                    candidates.append(
+                        BoundingBox(
+                            label_id=0,
+                            x1=max(0.0, (bx1 + tx1) * inv_scale),
+                            y1=max(0.0, (by1 + ty1) * inv_scale),
+                            x2=min(float(orig_w), (bx2 + tx1) * inv_scale),
+                            y2=min(float(orig_h), (by2 + ty1) * inv_scale),
+                            confidence=score,
+                            source="auto",
+                        )
+                    )
+
+        return self._apply_nms(candidates)
+
+    def _detect_padded_closeup_locked(
+        self, image: np.ndarray, threshold: float = 0.20
+    ) -> list[BoundingBox]:
+        """Single fast border-padded pass catching close-up portraits/selfies where face fills frame."""
+        orig_h, orig_w = image.shape[:2]
+        longest = max(orig_h, orig_w, 1)
+        scale = min(1.0, 720.0 / float(longest))
+        work = (
+            cv2.resize(
+                image,
+                (max(1, int(round(orig_w * scale))), max(1, int(round(orig_h * scale)))),
+                interpolation=cv2.INTER_AREA,
+            )
+            if scale < 1.0
+            else image
+        )
+        wh, ww = work.shape[:2]
+        pad_y = max(48, int(round(wh * 0.35)))
+        pad_x = max(48, int(round(ww * 0.35)))
+        padded = cv2.copyMakeBorder(
+            work, pad_y, pad_y, pad_x, pad_x, cv2.BORDER_CONSTANT, value=(128, 128, 128)
+        )
+        inv_scale = 1.0 / scale
+        candidates: list[BoundingBox] = []
+        for x1, y1, x2, y2, score in self._run_scrfd_crop_locked(padded, threshold=threshold):
+            ox1 = max(0.0, (x1 - pad_x) * inv_scale)
+            oy1 = max(0.0, (y1 - pad_y) * inv_scale)
+            ox2 = min(float(orig_w), (x2 - pad_x) * inv_scale)
+            oy2 = min(float(orig_h), (y2 - pad_y) * inv_scale)
+            if ox2 > ox1 + 4.0 and oy2 > oy1 + 4.0:
                 candidates.append(
                     BoundingBox(
                         label_id=0,
-                        x1=max(0.0, (bx1 + tx1) * inv_scale),
-                        y1=max(0.0, (by1 + ty1) * inv_scale),
-                        x2=min(float(orig_w), (bx2 + tx1) * inv_scale),
-                        y2=min(float(orig_h), (by2 + ty1) * inv_scale),
+                        x1=ox1,
+                        y1=oy1,
+                        x2=ox2,
+                        y2=oy2,
                         confidence=score,
                         source="auto",
                     )
                 )
-
         return self._apply_nms(candidates)
 
     def detect(
         self, image: np.ndarray, *, conf_threshold: Optional[float] = None
     ) -> list[BoundingBox]:
-        """Run full-frame + overlapping tiled SCRFD detection and return NMS-merged boxes."""
+        """Run full-frame + overlapping tiled SCRFD detection plus fast close-up recovery."""
         if image is None or image.size == 0:
             return []
         eff_thresh = self.conf_threshold if conf_threshold is None else float(conf_threshold)
         with self._lock:
-            boxes = self._detect_at_threshold_locked(image, eff_thresh)
-            if not boxes and conf_threshold is None and self.fallback_conf_threshold < eff_thresh:
-                boxes = self._detect_at_threshold_locked(image, self.fallback_conf_threshold)
+            boxes = self._detect_at_threshold_locked(image, eff_thresh, include_tiles=True)
+            if not boxes and conf_threshold is None:
+                boxes = self._detect_at_threshold_locked(
+                    image, self.fallback_conf_threshold, include_tiles=False
+                )
+            if not boxes and conf_threshold is None:
+                boxes = self._detect_padded_closeup_locked(image, threshold=0.18)
             return boxes
 
     def detect_with_orientation(
         self, image: np.ndarray
     ) -> tuple[list[BoundingBox], np.ndarray, bool]:
-        """Detect faces upright first; if 0 found, probe 90/270/180 rotations to recover mobile orientation."""
+        """Detect faces upright first; if 0 found, probe 90/270/180 rotations rapidly."""
         if image is None or image.size == 0:
             return [], image, False
 
@@ -337,22 +386,11 @@ class TiledSCRFDDetector(FaceDetector):
             cv2.ROTATE_180,
         ):
             rot_img = cv2.rotate(image, rot_code)
-            rh, rw = rot_img.shape[:2]
-            probe_scale = min(1.0, 1280.0 / float(max(rh, rw, 1)))
-            probe_img = (
-                cv2.resize(
-                    rot_img,
-                    (max(1, int(round(rw * probe_scale))), max(1, int(round(rh * probe_scale)))),
-                    interpolation=cv2.INTER_AREA,
-                )
-                if probe_scale < 1.0
-                else rot_img
-            )
             with self._lock:
-                probe_hits = self._run_scrfd_crop_locked(
-                    probe_img, threshold=min(0.25, self.conf_threshold)
+                probe_boxes = self._detect_padded_closeup_locked(
+                    rot_img, threshold=min(0.22, self.conf_threshold)
                 )
-            if not probe_hits:
+            if not probe_boxes:
                 continue
 
             rot_boxes = self.detect(rot_img)
