@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import hmac
+import os
 import secrets
+import threading
 from typing import Optional
 
-from flask import Flask, Response, jsonify, request
+from flask import Flask, Response, g, jsonify, render_template, request
 from flask_socketio import SocketIO
 from sqlalchemy import text
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -66,7 +68,18 @@ def create_app(
         grace_buckets=cfg.QR_GRACE_BUCKETS,
     )
     flask_app.extensions["device_mgr"] = DeviceBindingManager(secret_key=cfg.SECRET_KEY)
-    flask_app.extensions["face_detector"] = face_detector or TiledSCRFDDetector()
+    detector = face_detector or TiledSCRFDDetector()
+    flask_app.extensions["face_detector"] = detector
+    if (
+        face_detector is None
+        and isinstance(detector, TiledSCRFDDetector)
+        and not os.getenv("PYTEST_CURRENT_TEST")
+    ):
+        threading.Thread(
+            target=detector.warmup,
+            name="classpulse-scrfd-warmup",
+            daemon=True,
+        ).start()
     flask_app.extensions["report_exporter"] = SpreadsheetExporter()
 
     # Initialize Gemini AI Studio Client (Features 4 & 5)
@@ -107,24 +120,43 @@ def create_app(
     flask_app.register_blueprint(lectures_bp)
     flask_app.register_blueprint(homework_bp)
 
+    @flask_app.context_processor
+    def inject_csrf_token():
+        return {"csrf_token": lambda: getattr(g, "csrf_token", "")}
+
     @flask_app.before_request
     def enforce_csrf_when_cookie_present():
+        existing_cookie = request.cookies.get("cp_csrf")
+        g.csrf_token = existing_cookie or secrets.token_urlsafe(24)
         if not cfg.ENABLE_CSRF or request.method in ("GET", "HEAD", "OPTIONS", "TRACE"):
             return None
         if flask_app.config.get("TESTING") and not flask_app.config.get("TEST_ENFORCE_CSRF"):
             return None
-        csrf_cookie = request.cookies.get("cp_csrf")
-        if not csrf_cookie:
+        if not existing_cookie:
             return None
         supplied = request.headers.get("X-CSRF-Token") or request.form.get("csrf_token") or ""
-        if not supplied or not hmac.compare_digest(csrf_cookie, supplied):
+        if not supplied or not hmac.compare_digest(existing_cookie, supplied):
+            if (
+                request.path == "/api/attendance/checkin"
+                and not request.is_json
+                and "text/html" in (request.headers.get("Accept") or "")
+            ):
+                return (
+                    render_template(
+                        "student_checkin.html",
+                        session=None,
+                        error_title="Session Refresh Needed",
+                        error_message="Your check-in page expired before submission. Please scan the QR code again and submit.",
+                    ),
+                    403,
+                )
             return jsonify({"error": "CSRF verification failed. Reload the page and retry."}), 403
         return None
 
     @flask_app.after_request
     def attach_csrf_cookie(response: Response) -> Response:
         if request.method == "GET" and not request.cookies.get("cp_csrf"):
-            token = secrets.token_urlsafe(24)
+            token = getattr(g, "csrf_token", None) or secrets.token_urlsafe(24)
             response.set_cookie(
                 "cp_csrf",
                 token,

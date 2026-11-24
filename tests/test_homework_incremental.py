@@ -406,3 +406,62 @@ def test_dynamic_class_relative_score_and_category_breakdown(hw_app) -> None:
     cat_lists = json.loads(stats_row.category_scores_json)
     assert len(cat_lists["Materials & Details"]) == 2
     sock.disconnect()
+
+
+def test_homework_docx_and_hebrew_filename_upload_preservation(hw_app) -> None:
+    """Phase 4: Uploading .docx and Unicode/Hebrew filenames preserves extension and extracts text cleanly."""
+    client = hw_app.test_client()
+    db = hw_app.extensions["db_session"]
+
+    course = Course(course_code="DOCX1", name="File Upload Course", department="CS")
+    student = Student(full_name="Ohad Ben Nun", email="ohad_docx@ariel.ac.il", primary_device_id="docx-1")
+    db.add_all([course, student])
+    db.commit()
+
+    aid = client.post(
+        f"/api/courses/{course.id}/assignments",
+        json={"title": "HW5 — Word & Hebrew Uploads", "rubric_text": "Algorithm analysis."},
+    ).get_json()["id"]
+
+    # Build valid minimal .docx archive in memory
+    docx_buf = io.BytesIO()
+    doc_xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        "<w:body>"
+        "<w:p><w:r><w:t>def fibonacci(n): return n</w:t></w:r></w:p>"
+        "<w:p><w:r><w:t>פתרון בעברית למטלה</w:t></w:r></w:p>"
+        "</w:body>"
+        "</w:document>"
+    ).encode("utf-8")
+    with zipfile.ZipFile(docx_buf, "w") as zf:
+        zf.writestr("word/document.xml", doc_xml)
+    docx_buf.seek(0)
+
+    r_docx = client.post(
+        f"/api/assignments/{aid}/submissions",
+        data={
+            "student_id": str(student.id),
+            "file": (docx_buf, "מטלה1.docx"),
+        },
+        content_type="multipart/form-data",
+    )
+    assert r_docx.status_code == 201
+    sub_docx = r_docx.get_json()
+    saved_docx = Path(sub_docx["source_ref"])
+    assert saved_docx.suffix == ".docx"
+    extracted_docx = SubmissionExtractor().extract_from_file(saved_docx)
+    assert "def fibonacci" in extracted_docx
+    assert "פתרון בעברית" in extracted_docx
+
+    # Hebrew Python filename also preserves .py extension
+    r_py = client.post(
+        f"/api/assignments/{aid}/submissions",
+        data={
+            "student_id": str(student.id),
+            "file": (io.BytesIO(b"def solve():\n    return 42\n"), "פתרון.py"),
+        },
+        content_type="multipart/form-data",
+    )
+    assert r_py.status_code == 201
+    assert Path(r_py.get_json()["source_ref"]).suffix == ".py"

@@ -221,6 +221,7 @@ class ClassSession(Base):
     course_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("courses.id", ondelete="SET NULL"), index=True, nullable=True
     )
+    lecture_number: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     session_code: Mapped[str] = mapped_column(
         String(16), unique=True, index=True, nullable=False
     )
@@ -564,6 +565,7 @@ def _migrate_sqlite_columns(engine: Engine) -> None:
 
     migrations: tuple[tuple[str, str, str], ...] = (
         ("class_sessions", "course_id", "INTEGER REFERENCES courses(id) ON DELETE SET NULL"),
+        ("class_sessions", "lecture_number", "INTEGER"),
         ("assignments", "course_id", "INTEGER REFERENCES courses(id) ON DELETE SET NULL"),
         ("courses", "lecturer_id", "INTEGER REFERENCES lecturers(id) ON DELETE SET NULL"),
         ("lecture_artifacts", "error_message", "TEXT"),
@@ -632,6 +634,37 @@ def _migrate_sqlite_columns(engine: Engine) -> None:
                     conn.exec_driver_sql(f"ALTER TABLE {tbl} DROP COLUMN {legacy_col};")
                 except Exception:
                     pass
+
+        cs_cols = {
+            r[1]
+            for r in conn.exec_driver_sql("PRAGMA table_info(class_sessions);").fetchall()
+        }
+        if "lecture_number" in cs_cols:
+            has_course_col = "course_id" in cs_cols
+            if has_course_col:
+                all_sess = conn.exec_driver_sql(
+                    "SELECT id, course_id, lecture_number FROM class_sessions "
+                    "ORDER BY COALESCE(course_id, 0) ASC, started_at ASC, id ASC;"
+                ).fetchall()
+            else:
+                all_sess = [
+                    (r[0], None, r[1])
+                    for r in conn.exec_driver_sql(
+                        "SELECT id, lecture_number FROM class_sessions ORDER BY started_at ASC, id ASC;"
+                    ).fetchall()
+                ]
+            per_course_max: dict[Optional[int], int] = {}
+            for _sid, cid, lnum in all_sess:
+                if lnum is not None:
+                    per_course_max[cid] = max(per_course_max.get(cid, 0), int(lnum))
+            for sid, cid, lnum in all_sess:
+                if lnum is None:
+                    next_num = per_course_max.get(cid, 0) + 1
+                    per_course_max[cid] = next_num
+                    conn.exec_driver_sql(
+                        "UPDATE class_sessions SET lecture_number = ? WHERE id = ?;",
+                        (next_num, sid),
+                    )
 
 
 def init_db_engine(database_url: str) -> tuple[Engine, scoped_session[Session]]:

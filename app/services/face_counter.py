@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+import os
 from pathlib import Path
 import shutil
 import tempfile
+import threading
 from typing import Any, Optional
 
 import cv2
@@ -76,7 +78,8 @@ def write_image_unicode(path: str | Path, image: np.ndarray) -> str:
     file_path = Path(path)
     file_path.parent.mkdir(parents=True, exist_ok=True)
     ext = file_path.suffix.lower() or ".jpg"
-    ok, buf = cv2.imencode(ext, image)
+    encode_params = [int(cv2.IMWRITE_JPEG_QUALITY), 85] if ext in (".jpg", ".jpeg") else []
+    ok, buf = cv2.imencode(ext, image, encode_params)
     if not ok:
         raise RuntimeError(f"Failed to encode image for {file_path}")
     buf.tofile(str(file_path))
@@ -105,73 +108,118 @@ class TiledSCRFDDetector(FaceDetector):
         nms_iou_threshold: float = 0.40,
         grid_shape: tuple[int, int] = (3, 2),
         tile_overlap: float = 0.20,
+        fallback_conf_threshold: float = 0.22,
     ) -> None:
         self.model_path = Path(model_path) if model_path else None
         self.conf_threshold = conf_threshold
+        self.fallback_conf_threshold = min(conf_threshold, fallback_conf_threshold)
         self.nms_iou_threshold = nms_iou_threshold
         self.grid_shape = grid_shape
         self.tile_overlap = tile_overlap
         self._detector: Any = None
+        self._lock = threading.Lock()
 
-    def _ensure_detector(self) -> Any:
+    def _ensure_detector_locked(self) -> Any:
         if self._detector is not None:
             return self._detector
 
-        from insightface.model_zoo import get_model
+        import onnxruntime as ort
+        from insightface.model_zoo.scrfd import SCRFD
 
-        candidates = []
+        candidates: list[Path] = []
         if self.model_path:
             candidates.append(self.model_path)
+        env_home = os.getenv("INSIGHTFACE_HOME", "").strip()
+        if env_home:
+            eh = Path(env_home)
+            candidates.extend(
+                [
+                    eh / "det_10g.onnx",
+                    eh / "models" / "buffalo_l" / "det_10g.onnx",
+                ]
+            )
         root_dir = Path(__file__).resolve().parent.parent.parent
         candidates.extend(
             [
                 root_dir / "models_cache" / "det_10g.onnx",
+                root_dir / "models_cache" / "models" / "buffalo_l" / "det_10g.onnx",
                 Path.home() / ".insightface" / "models" / "buffalo_l" / "det_10g.onnx",
             ]
         )
 
         onnx_file: Optional[Path] = next((p for p in candidates if p.exists()), None)
-        if onnx_file is not None:
-            # Copy to an ASCII-safe temp path on Windows in case workspace contains Hebrew chars
-            ascii_model_path = Path(tempfile.gettempdir()) / "classpulse_det_10g.onnx"
-            if not ascii_model_path.exists() or ascii_model_path.stat().st_size != onnx_file.stat().st_size:
-                shutil.copy2(onnx_file, ascii_model_path)
-            det = get_model(str(ascii_model_path), providers=["CPUExecutionProvider"])
-            det.prepare(ctx_id=-1, input_size=(640, 640), det_thresh=self.conf_threshold)
-            self._detector = ("raw_model", det)
-            return self._detector
+        if onnx_file is None:
+            raise FileNotFoundError(
+                "SCRFD face detection model det_10g.onnx not found in models_cache."
+            )
 
-        from insightface.app import FaceAnalysis
+        # Copy to an ASCII-safe temp path on Windows in case workspace contains Hebrew chars
+        ascii_model_path = Path(tempfile.gettempdir()) / "classpulse_det_10g.onnx"
+        if not ascii_model_path.exists() or ascii_model_path.stat().st_size != onnx_file.stat().st_size:
+            shutil.copy2(onnx_file, ascii_model_path)
 
-        fa = FaceAnalysis(
-            name="buffalo_l",
-            root=str(Path.home() / ".insightface"),
-            allowed_modules=["detection"],
+        sess_opts = ort.SessionOptions()
+        sess_opts.intra_op_num_threads = min(4, max(1, os.cpu_count() or 2))
+        sess_opts.inter_op_num_threads = 1
+        sess_opts.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+
+        ort_session = ort.InferenceSession(
+            str(ascii_model_path),
+            sess_options=sess_opts,
             providers=["CPUExecutionProvider"],
         )
-        fa.prepare(ctx_id=-1, det_size=(640, 640))
-        self._detector = ("face_analysis", fa)
+        det = SCRFD(model_file=str(ascii_model_path), session=ort_session)
+        det.prepare(ctx_id=-1, input_size=(640, 640), det_thresh=self.conf_threshold)
+        self._detector = ("raw_model", det)
         return self._detector
 
-    def _run_scrfd_crop(self, crop: np.ndarray) -> list[tuple[float, float, float, float, float]]:
-        mode, det = self._ensure_detector()
+    def _ensure_detector(self) -> Any:
+        with self._lock:
+            return self._ensure_detector_locked()
+
+    def warmup(self) -> bool:
+        """Preload the ONNX SCRFD detector so the first mobile upload has no cold-start lag."""
+        try:
+            with self._lock:
+                self._ensure_detector_locked()
+            return True
+        except Exception:  # noqa: BLE001
+            return False
+
+    def _run_scrfd_crop_locked(
+        self, crop: np.ndarray, threshold: Optional[float] = None
+    ) -> list[tuple[float, float, float, float, float]]:
+        mode, det = self._ensure_detector_locked()
+        eff_thresh = self.conf_threshold if threshold is None else float(threshold)
         results: list[tuple[float, float, float, float, float]] = []
         if mode == "raw_model":
-            bboxes, _kpss = det.detect(crop, input_size=(640, 640), max_num=0, metric="default")
+            bboxes, _kpss = det.detect(
+                crop,
+                input_size=(640, 640),
+                max_num=0,
+                metric="default",
+                det_thresh=eff_thresh,
+            )
             if bboxes is not None:
                 for row in bboxes:
                     score = float(row[4])
-                    if score >= self.conf_threshold:
+                    if score >= eff_thresh:
                         results.append(
                             (float(row[0]), float(row[1]), float(row[2]), float(row[3]), score)
                         )
         else:
             for face in det.get(crop):
                 score = float(face.det_score)
-                if score >= self.conf_threshold:
+                if score >= eff_thresh:
                     b = face.bbox
                     results.append((float(b[0]), float(b[1]), float(b[2]), float(b[3]), score))
         return results
+
+    def _run_scrfd_crop(
+        self, crop: np.ndarray, threshold: Optional[float] = None
+    ) -> list[tuple[float, float, float, float, float]]:
+        with self._lock:
+            return self._run_scrfd_crop_locked(crop, threshold=threshold)
 
     def _generate_tiles(self, width: int, height: int) -> list[tuple[int, int, int, int]]:
         """Generate overlapping spatial tile coordinates (x1, y1, x2, y2)."""
@@ -204,38 +252,50 @@ class TiledSCRFDDetector(FaceDetector):
             box.label_id = idx
         return kept
 
-    def detect(self, image: np.ndarray) -> list[BoundingBox]:
-        """Run full-frame + overlapping tiled SCRFD detection and return NMS-merged boxes."""
-        if image is None or image.size == 0:
-            return []
-        height, width = image.shape[:2]
+    def _detect_at_threshold_locked(
+        self, image: np.ndarray, threshold: float
+    ) -> list[BoundingBox]:
+        """Run full-frame + overlapping tiled SCRFD detection on a single working scale."""
+        orig_h, orig_w = image.shape[:2]
+        longest = max(orig_h, orig_w)
+        if longest > 1920:
+            scale = 1920.0 / float(longest)
+            work_w = max(1, int(round(orig_w * scale)))
+            work_h = max(1, int(round(orig_h * scale)))
+            work_img = cv2.resize(image, (work_w, work_h), interpolation=cv2.INTER_AREA)
+            inv_scale = 1.0 / scale
+        else:
+            work_img = image
+            work_w, work_h = orig_w, orig_h
+            inv_scale = 1.0
+
         candidates: list[BoundingBox] = []
 
         # 1. Full-frame detection pass
-        for x1, y1, x2, y2, score in self._run_scrfd_crop(image):
+        for x1, y1, x2, y2, score in self._run_scrfd_crop_locked(work_img, threshold=threshold):
             candidates.append(
                 BoundingBox(
                     label_id=0,
-                    x1=max(0.0, x1),
-                    y1=max(0.0, y1),
-                    x2=min(float(width), x2),
-                    y2=min(float(height), y2),
+                    x1=max(0.0, x1 * inv_scale),
+                    y1=max(0.0, y1 * inv_scale),
+                    x2=min(float(orig_w), x2 * inv_scale),
+                    y2=min(float(orig_h), y2 * inv_scale),
                     confidence=score,
                     source="auto",
                 )
             )
 
         # 2. Overlapping tile detection passes for small back-row faces
-        for tx1, ty1, tx2, ty2 in self._generate_tiles(width, height):
-            crop = image[ty1:ty2, tx1:tx2]
-            for bx1, by1, bx2, by2, score in self._run_scrfd_crop(crop):
+        for tx1, ty1, tx2, ty2 in self._generate_tiles(work_w, work_h):
+            crop = work_img[ty1:ty2, tx1:tx2]
+            for bx1, by1, bx2, by2, score in self._run_scrfd_crop_locked(crop, threshold=threshold):
                 candidates.append(
                     BoundingBox(
                         label_id=0,
-                        x1=max(0.0, bx1 + tx1),
-                        y1=max(0.0, by1 + ty1),
-                        x2=min(float(width), bx2 + tx1),
-                        y2=min(float(height), by2 + ty1),
+                        x1=max(0.0, (bx1 + tx1) * inv_scale),
+                        y1=max(0.0, (by1 + ty1) * inv_scale),
+                        x2=min(float(orig_w), (bx2 + tx1) * inv_scale),
+                        y2=min(float(orig_h), (by2 + ty1) * inv_scale),
                         confidence=score,
                         source="auto",
                     )
@@ -243,14 +303,78 @@ class TiledSCRFDDetector(FaceDetector):
 
         return self._apply_nms(candidates)
 
+    def detect(
+        self, image: np.ndarray, *, conf_threshold: Optional[float] = None
+    ) -> list[BoundingBox]:
+        """Run full-frame + overlapping tiled SCRFD detection and return NMS-merged boxes."""
+        if image is None or image.size == 0:
+            return []
+        eff_thresh = self.conf_threshold if conf_threshold is None else float(conf_threshold)
+        with self._lock:
+            boxes = self._detect_at_threshold_locked(image, eff_thresh)
+            if not boxes and conf_threshold is None and self.fallback_conf_threshold < eff_thresh:
+                boxes = self._detect_at_threshold_locked(image, self.fallback_conf_threshold)
+            return boxes
+
+    def detect_with_orientation(
+        self, image: np.ndarray
+    ) -> tuple[list[BoundingBox], np.ndarray, bool]:
+        """Detect faces upright first; if 0 found, probe 90/270/180 rotations to recover mobile orientation."""
+        if image is None or image.size == 0:
+            return [], image, False
+
+        boxes = self.detect(image)
+        if boxes:
+            return boxes, image, False
+
+        best_boxes: list[BoundingBox] = []
+        best_img: np.ndarray = image
+        best_score: tuple[int, float] = (0, 0.0)
+
+        for rot_code in (
+            cv2.ROTATE_90_CLOCKWISE,
+            cv2.ROTATE_90_COUNTERCLOCKWISE,
+            cv2.ROTATE_180,
+        ):
+            rot_img = cv2.rotate(image, rot_code)
+            rh, rw = rot_img.shape[:2]
+            probe_scale = min(1.0, 1280.0 / float(max(rh, rw, 1)))
+            probe_img = (
+                cv2.resize(
+                    rot_img,
+                    (max(1, int(round(rw * probe_scale))), max(1, int(round(rh * probe_scale)))),
+                    interpolation=cv2.INTER_AREA,
+                )
+                if probe_scale < 1.0
+                else rot_img
+            )
+            with self._lock:
+                probe_hits = self._run_scrfd_crop_locked(
+                    probe_img, threshold=min(0.25, self.conf_threshold)
+                )
+            if not probe_hits:
+                continue
+
+            rot_boxes = self.detect(rot_img)
+            score_key = (len(rot_boxes), sum(b.confidence for b in rot_boxes))
+            if score_key > best_score:
+                best_score = score_key
+                best_boxes = rot_boxes
+                best_img = rot_img
+
+        if best_boxes:
+            return best_boxes, best_img, True
+        return [], image, False
+
     @staticmethod
     def render_annotated_image(
         image_path: str | Path,
         boxes: list[BoundingBox],
         out_path: str | Path,
+        image: Optional[np.ndarray] = None,
     ) -> str:
         """Render numbered bounding boxes onto the classroom image and save to out_path."""
-        img = read_image_unicode(image_path)
+        img = image if image is not None else read_image_unicode(image_path)
         canvas = img.copy()
         for idx, box in enumerate(boxes, start=1):
             box.label_id = idx

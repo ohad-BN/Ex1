@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.models import ChatMessage, ClassSession, Course, CourseStaff
 
-VALID_CATEGORIES = ("Question", "Comment", "Suggestion")
+VALID_CATEGORIES = ("Question", "Comment", "Suggestion", "Offline Question")
 
 
 class ChatError(Exception):
@@ -46,9 +46,11 @@ class ChatService:
             "id": msg.id,
             "session_id": msg.session_id,
             "session_code": session.session_code if session else "",
+            "lecture_number": session.lecture_number if session else None,
             "lecture_title": session.title if session else "",
             "course_id": course.id if course else None,
             "course_code": course.course_code if course else "",
+            "course_name": course.name if course else "",
             "student_id": msg.student_id,
             "author_name": msg.author_name,
             "sender_role": "student" if msg.student_id is not None else "lecturer",

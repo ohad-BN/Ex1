@@ -453,3 +453,92 @@ def test_course_staff_join_code_csrf_upload_magic_and_retention(auth_app, tmp_pa
     with pytest.raises(RuntimeError):
         Config(CLASSPULSE_ENV="production", SECRET_KEY="short").validate_production_safety()
 
+
+def test_legacy_lecturer_activation_and_student_login_device_isolation(auth_app) -> None:
+    """Phase 1: Legacy NULL-password lecturer activation preserves courses; student login/logout isolates device IDs."""
+    from app.models import Course, Lecturer
+
+    with auth_app.app_context():
+        db = auth_app.extensions["db_session"]
+        legacy = Lecturer(
+            full_name="Legacy Lecturer",
+            email="legacy@ariel.ac.il",
+            username=None,
+            password_hash=None,
+            department="Math",
+        )
+        db.add(legacy)
+        db.flush()
+        db.add(
+            Course(
+                lecturer_id=legacy.id,
+                course_code="LEG101",
+                name="Legacy Course",
+                lecturer_name="Legacy Lecturer",
+            )
+        )
+        db.commit()
+
+    client = auth_app.test_client()
+    # Repeated login attempts on unclaimed legacy account do NOT trigger 429 lockout
+    for _ in range(6):
+        r_login = client.post(
+            "/api/auth/lecturer/login",
+            json={"identifier": "legacy@ariel.ac.il", "password": "SomePassword1!"},
+        )
+        assert r_login.status_code == 401
+        assert "Create Account" in r_login.get_json()["error"]
+
+    # Registering with that email activates the legacy account in-place and preserves LEG101
+    act = client.post(
+        "/api/auth/lecturer/register",
+        json={
+            "full_name": "Legacy Lecturer",
+            "username": "legacy.prof",
+            "email": "legacy@ariel.ac.il",
+            "password": "NewStrongPass1!",
+            "confirm_password": "NewStrongPass1!",
+        },
+    )
+    assert act.status_code == 201
+    assert [c["course_code"] for c in act.get_json()["courses"]] == ["LEG101"]
+
+    # Student login, logout, and second student on same client gets isolated device_id (no 409 proxy block)
+    qr: RollingQRService = auth_app.extensions["qr_service"]
+    sess_resp = client.post(
+        f"/api/courses/{act.get_json()['courses'][0]['id']}/sessions",
+        json={"title": "Lecture 1"},
+    )
+    assert sess_resp.status_code == 201
+    scode = sess_resp.get_json()["session_code"]
+
+    st_client = auth_app.test_client()
+    s1 = st_client.post(
+        "/api/student/login",
+        json={"full_name": "Student One", "student_id_number": "11112222", "email": "s1@ariel.ac.il"},
+    )
+    assert s1.status_code == 200
+    # Returning login with course_code and blank full_name works
+    s1_ret = st_client.post(
+        "/api/student/login",
+        json={"email": "S1@ariel.ac.il", "course_code": "LEG101"},
+    )
+    assert s1_ret.status_code == 200
+    assert s1_ret.get_json()["student"]["full_name"] == "Student One"
+
+    b = qr.compute_bucket()
+    sig = qr.sign_token(scode, b)
+    ck1 = st_client.get(f"/s/{scode}?t={b}&sig={sig}")
+    assert ck1.status_code == 200
+
+    # Sign out student 1 and sign in student 2 on same browser client -> fresh device_id avoids 409
+    assert st_client.post("/api/student/logout").status_code == 200
+    s2 = st_client.post(
+        "/api/student/login",
+        json={"full_name": "Student Two", "student_id_number": "33334444", "email": "s2@ariel.ac.il"},
+    )
+    assert s2.status_code == 200
+    ck2 = st_client.get(f"/s/{scode}?t={b}&sig={sig}")
+    assert ck2.status_code == 200
+    assert b"Student Two" in ck2.data
+

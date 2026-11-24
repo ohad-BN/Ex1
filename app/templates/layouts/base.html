@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='css/classpulse.css') }}">
   {% block styles %}{% endblock %}
   {% block head_csrf %}{% if cp_use_csrf is defined and cp_use_csrf %}<script src="/static/js/csrf.js"></script>{% endif %}{% endblock %}
+  {% block head_image_compress %}{% if cp_use_image_compress is defined and cp_use_image_compress %}<script src="/static/js/image_compress.js"></script>{% endif %}{% endblock %}
   {% block head_notifications %}{% if cp_use_notifications is defined and cp_use_notifications %}<script src="/static/js/notifications.js"></script>{% endif %}{% endblock %}
   {% block head_socketio %}{% if cp_use_socketio is defined and cp_use_socketio %}<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>{% endif %}{% endblock %}
   <script>

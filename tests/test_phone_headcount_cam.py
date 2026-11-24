@@ -136,6 +136,8 @@ def test_phone_pairing_auto_connect_upload_and_stepper_adjust(phone_cam_app) -> 
     assert cam_page.status_code == 200
     assert b"Take Classroom Photo" in cam_page.data
     assert b'capture="environment"' in cam_page.data
+    assert b"/static/js/image_compress.js" in cam_page.data
+    assert b"fetchWithTimeout" in cam_page.data
     phone_csrf = phone.get_cookie("cp_csrf")
     assert phone_csrf is not None
     phone_headers = {"X-Headcount-Token": ctok, "X-CSRF-Token": phone_csrf.value}

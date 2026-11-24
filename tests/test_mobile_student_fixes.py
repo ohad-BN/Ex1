@@ -179,7 +179,7 @@ def test_sessions_sorted_newest_first_with_tie_breaker(mobile_app) -> None:
 
 
 def test_student_app_renders_mobile_back_button_and_history_guard(mobile_app) -> None:
-    """Student App renders mobile-only #student-back-btn (hidden on Home) and popstate sign-in guard."""
+    """Student App renders persistent #student-back-btn (Web + Mobile) and popstate sign-in guard."""
     client = mobile_app.test_client()
     resp = client.get("/student")
     assert resp.status_code == 200
@@ -194,7 +194,7 @@ def test_student_app_renders_mobile_back_button_and_history_guard(mobile_app) ->
     css_path = Path(__file__).resolve().parents[1] / "app" / "static" / "css" / "classpulse.css"
     css_text = css_path.read_text(encoding="utf-8")
     assert ".cp-m-back-btn" in css_text
-    assert "@media (min-width: 769px)" in css_text
+    assert "@media (min-width: 769px)" not in css_text
 
 
 def test_student_app_removes_join_button_and_loading_text(mobile_app) -> None:
@@ -218,18 +218,54 @@ def test_student_app_removes_join_button_and_loading_text(mobile_app) -> None:
 
 
 def test_student_app_uses_unified_date_grouped_lecture_list(mobile_app) -> None:
-    """Courses & Logs accordion must render one date-grouped list (newest->oldest), not duplicated chips + logs."""
+    """Student App must render card-based progressive disclosure screens & date-grouped lectures."""
     client = mobile_app.test_client()
     resp = client.get("/student")
     assert resp.status_code == 200
     html = resp.data.decode("utf-8")
 
+    for screen_id in (
+        'id="screen-courses"',
+        'id="screen-course-hub"',
+        'id="screen-course-lectures"',
+        'id="screen-course-attendance"',
+        'id="screen-course-assignments"',
+        'id="screen-assignment-detail"',
+        'id="screen-course-summaries"',
+        'id="screen-course-info"',
+        'id="screen-lecture"',
+    ):
+        assert screen_id in html
+
     assert "sortCoursesByRecentLecture" in html
     assert "sortSessionsNewestFirst" in html
     assert "cp-m-date-group" in html
     assert "cp-m-lecture-row" in html
-    # The old second duplicate log list loop must be gone from renderCourses().
+    # The old second duplicate log list loop must be gone.
     assert "c.my_attendance_logs" not in html
+
+
+def test_student_app_decluttered_offline_question_and_upload_ui(mobile_app) -> None:
+    """Student App omits LIVE clutter, supports Offline Questions & prominent assignment upload UI."""
+    client = mobile_app.test_client()
+    _sign_in_student(client, email="decluttered@ariel.ac.il")
+    html = client.get("/student").data.decode("utf-8")
+
+    for forbidden in (
+        "LIVE SESSION",
+        "LIVE CLASS",
+        "Live Class",
+        "Vote Recorded • Live",
+        "LIVE — Tap to Vote",
+        "LIVE &mdash; Tap to Vote",
+    ):
+        assert forbidden not in html
+
+    assert "sendOfflineQuestion" in html
+    assert "Offline Question" in html
+    assert "renderAssignmentDetailScreen" in html
+    assert "cp-upload-dropzone" in html
+    assert 'id="course-info-number"' in html
 
 
 

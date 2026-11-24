@@ -5,6 +5,7 @@ import io
 import json
 import logging
 import re
+import xml.etree.ElementTree as ET
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -258,6 +259,21 @@ class SubmissionExtractor:
             reader = PdfReader(str(file_path))
             pages = [page.extract_text() or "" for page in reader.pages]
             return "\n".join(pages)[: self.max_chars]
+        if ext == ".docx":
+            try:
+                with zipfile.ZipFile(str(file_path)) as zf:
+                    doc_xml = zf.read("word/document.xml")
+                root = ET.fromstring(doc_xml)
+            except Exception as exc:
+                raise HomeworkPipelineError("Could not read .docx file.", status_code=400) from exc
+            w_ns = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+            paragraphs: list[str] = []
+            for p_node in root.iter(f"{w_ns}p"):
+                texts = [t_node.text for t_node in p_node.iter(f"{w_ns}t") if t_node.text]
+                line = "".join(texts).strip()
+                if line:
+                    paragraphs.append(line)
+            return "\n".join(paragraphs)[: self.max_chars]
 
         return file_path.read_text(encoding="utf-8", errors="ignore")[: self.max_chars]
 

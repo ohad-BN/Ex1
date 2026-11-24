@@ -71,7 +71,7 @@
     <div class="cp-step-indicator" aria-label="Onboarding steps">
       <div id="pill-step-1" class="cp-step-pill step-pill active">1. Lecturer Sign-In</div>
       <div id="pill-step-2" class="cp-step-pill step-pill">2. Create Class &amp; Lecture</div>
-      <div id="pill-step-3" class="cp-step-pill step-pill">3. Live QR Dashboard</div>
+      <div id="pill-step-3" class="cp-step-pill step-pill">3. Course Dashboard</div>
     </div>
 
     <!-- STEP 1: LECTURER SIGN IN / REGISTER -->
@@ -116,7 +116,7 @@
           <a href="javascript:void(0)" onclick="toggleForgotBox()" style="color:var(--cp-indigo-ink); text-decoration:none; font-weight:700;">Forgot password?</a>
         </div>
 
-        <button type="button" class="cp-btn cp-btn--primary cp-btn--block" onclick="handleLecturerSignIn()">
+        <button type="button" id="btn-lecturer-signin" class="cp-btn cp-btn--primary cp-btn--block" onclick="handleLecturerSignIn()">
           <span>Sign In &amp; Continue</span>
           {{ cp_icon('arrow-right', 16) }}
         </button>
@@ -126,7 +126,7 @@
             <label class="cp-label" for="forgot-identifier">Reset Password &mdash; Username or Email</label>
             <input class="cp-input" type="text" id="forgot-identifier" placeholder="Enter your username or email" />
           </div>
-          <button type="button" class="cp-btn cp-btn--secondary cp-btn--block" style="margin-bottom:8px;" onclick="handleForgotPassword()">
+          <button type="button" id="btn-forgot-pw" class="cp-btn cp-btn--secondary cp-btn--block" style="margin-bottom:8px;" onclick="handleForgotPassword()">
             {{ cp_icon('key', 15) }}
             <span>Send Reset Link / Token</span>
           </button>
@@ -139,7 +139,7 @@
               <label class="cp-label" for="reset-new-pw">New Password</label>
               <input class="cp-input" type="password" id="reset-new-pw" placeholder="Min 8 chars, letters + number/symbol" />
             </div>
-            <button type="button" class="cp-btn cp-btn--green cp-btn--block" onclick="handleResetPassword()">Set New Password</button>
+            <button type="button" id="btn-reset-pw" class="cp-btn cp-btn--green cp-btn--block" onclick="handleResetPassword()">Set New Password</button>
           </div>
         </div>
       </div>
@@ -176,7 +176,7 @@
           <input class="cp-input" type="password" id="reg-confirm" autocomplete="new-password" placeholder="Repeat password" onkeydown="if(event.key==='Enter') handleLecturerRegister()" />
         </div>
 
-        <button type="button" class="cp-btn cp-btn--green cp-btn--block" onclick="handleLecturerRegister()">
+        <button type="button" id="btn-lecturer-register" class="cp-btn cp-btn--green cp-btn--block" onclick="handleLecturerRegister()">
           <span>Register Professor Account</span>
           {{ cp_icon('arrow-right', 16) }}
         </button>
@@ -231,8 +231,8 @@
         <input class="cp-input" type="text" id="setup-lecture-title" placeholder="e.g. Lecture 1 — Architecture & Design" value="" />
       </div>
 
-      <button type="button" class="cp-btn cp-btn--green cp-btn--block" onclick="handleCreateClassAndLecture()" style="margin-bottom:10px;">
-        <span>Create Class &amp; Launch Live Lecture QR</span>
+      <button type="button" id="btn-create-class" class="cp-btn cp-btn--green cp-btn--block" onclick="handleCreateClassAndLecture()" style="margin-bottom:10px;">
+        <span>Create Course &amp; First Lecture</span>
         {{ cp_icon('arrow-right', 16) }}
       </button>
 
@@ -277,7 +277,7 @@
         const row = document.createElement("a");
         row.href = `/teacher?course_id=${encodeURIComponent(c.id)}`;
         row.className = "cp-course-launch-row";
-        row.innerHTML = `<span><span class="cp-code-pill">${escapeHtml(c.course_code)}</span> &mdash; ${escapeHtml(c.name)}</span><span class="cp-badge cp-badge--coral">Open &rarr;</span>`;
+        row.innerHTML = `<span>${escapeHtml(c.name)}</span><span class="cp-badge cp-badge--coral">Open &rarr;</span>`;
         list.appendChild(row);
       });
     } else {
@@ -311,8 +311,36 @@
     el.style.display = el.style.display === "none" ? "block" : "none";
   }
 
+  async function parseJsonSafe(res) {
+    const raw = await res.text();
+    try {
+      return raw ? JSON.parse(raw) : {};
+    } catch (_err) {
+      return { error: `Unexpected server response (HTTP ${res.status}). Please reload and try again.` };
+    }
+  }
+
+  async function withButtonLoading(btnId, loadingText, fn) {
+    const btn = btnId ? document.getElementById(btnId) : null;
+    const origHtml = btn ? btn.innerHTML : "";
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = loadingText;
+    }
+    try {
+      return await fn();
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = origHtml;
+      }
+    }
+  }
+
   async function handleLecturerLogout() {
-    await fetch("/api/auth/lecturer/logout", { method: "POST" });
+    try {
+      await fetch("/api/auth/lecturer/logout", { method: "POST" });
+    } catch (_err) {}
     window.location.href = "/teacher/login";
   }
 
@@ -332,19 +360,30 @@
       return;
     }
 
-    const res = await fetch("/api/auth/lecturer/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ identifier, password, remember_me }),
+    await withButtonLoading("btn-lecturer-signin", "Signing in...", async () => {
+      try {
+        const res = await fetch("/api/auth/lecturer/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ identifier, password, remember_me }),
+        });
+        const data = await parseJsonSafe(res);
+        if (!res.ok) {
+          errEl.textContent = data.error || `Sign-in failed (HTTP ${res.status}).`;
+          errEl.style.display = "block";
+          return;
+        }
+        const courses = data.courses || [];
+        if (courses.length > 0) {
+          window.location.href = "/teacher";
+          return;
+        }
+        showStep2(courses, data.lecturer ? data.lecturer.full_name : identifier);
+      } catch (_err) {
+        errEl.textContent = "Network error while signing in. Please check your connection and try again.";
+        errEl.style.display = "block";
+      }
     });
-    const data = await res.json();
-    if (!res.ok) {
-      errEl.textContent = data.error || "Sign-in failed.";
-      errEl.style.display = "block";
-      return;
-    }
-
-    showStep2(data.courses || [], data.lecturer ? data.lecturer.full_name : identifier);
   }
 
   async function handleLecturerRegister() {
@@ -365,63 +404,107 @@
       errEl.style.display = "block";
       return;
     }
-
-    const res = await fetch("/api/auth/lecturer/register", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ full_name, username, email, department, password, confirm_password }),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      errEl.textContent = data.error || "Registration failed.";
+    if (confirm_password && password !== confirm_password) {
+      errEl.textContent = "Passwords do not match.";
       errEl.style.display = "block";
       return;
     }
 
-    showStep2(data.courses || [], data.lecturer ? data.lecturer.full_name : full_name);
+    await withButtonLoading("btn-lecturer-register", "Creating account...", async () => {
+      try {
+        const res = await fetch("/api/auth/lecturer/register", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ full_name, username, email, department, password, confirm_password }),
+        });
+        const data = await parseJsonSafe(res);
+        if (!res.ok) {
+          errEl.textContent = data.error || `Registration failed (HTTP ${res.status}).`;
+          errEl.style.display = "block";
+          return;
+        }
+        const courses = data.courses || [];
+        if (courses.length > 0) {
+          window.location.href = "/teacher";
+          return;
+        }
+        showStep2(courses, data.lecturer ? data.lecturer.full_name : full_name);
+      } catch (_err) {
+        errEl.textContent = "Network error while creating account. Please try again.";
+        errEl.style.display = "block";
+      }
+    });
   }
 
   async function handleForgotPassword() {
     const errEl = document.getElementById("login-error");
     const okEl = document.getElementById("login-ok");
     errEl.style.display = "none";
+    okEl.style.display = "none";
     const identifier = document.getElementById("forgot-identifier").value.trim();
-    const res = await fetch("/api/auth/lecturer/forgot-password", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ identifier }),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      errEl.textContent = data.error || "Could not process request.";
+    if (!identifier) {
+      errEl.textContent = "Enter your username or email to request a reset.";
       errEl.style.display = "block";
       return;
     }
-    okEl.textContent = data.message || "Reset instructions generated.";
-    okEl.style.display = "block";
-    document.getElementById("reset-confirm-box").style.display = "block";
+
+    await withButtonLoading("btn-forgot-pw", "Sending...", async () => {
+      try {
+        const res = await fetch("/api/auth/lecturer/forgot-password", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ identifier }),
+        });
+        const data = await parseJsonSafe(res);
+        if (!res.ok) {
+          errEl.textContent = data.error || "Could not process request.";
+          errEl.style.display = "block";
+          return;
+        }
+        okEl.textContent = data.message || "Reset instructions generated.";
+        okEl.style.display = "block";
+        document.getElementById("reset-confirm-box").style.display = "block";
+      } catch (_err) {
+        errEl.textContent = "Network error while requesting password reset.";
+        errEl.style.display = "block";
+      }
+    });
   }
 
   async function handleResetPassword() {
     const errEl = document.getElementById("login-error");
     const okEl = document.getElementById("login-ok");
     errEl.style.display = "none";
+    okEl.style.display = "none";
     const token = document.getElementById("reset-token").value.trim();
     const new_password = document.getElementById("reset-new-pw").value;
-    const res = await fetch("/api/auth/lecturer/reset-password", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token, new_password }),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      errEl.textContent = data.error || "Reset failed.";
+    if (!token || !new_password) {
+      errEl.textContent = "Enter both the reset token and a new password.";
       errEl.style.display = "block";
       return;
     }
-    okEl.textContent = "Password updated cleanly. You can sign in now.";
-    okEl.style.display = "block";
-    document.getElementById("forgot-box").style.display = "none";
+
+    await withButtonLoading("btn-reset-pw", "Updating...", async () => {
+      try {
+        const res = await fetch("/api/auth/lecturer/reset-password", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token, new_password }),
+        });
+        const data = await parseJsonSafe(res);
+        if (!res.ok) {
+          errEl.textContent = data.error || "Reset failed.";
+          errEl.style.display = "block";
+          return;
+        }
+        okEl.textContent = "Password updated cleanly. You can sign in now.";
+        okEl.style.display = "block";
+        document.getElementById("forgot-box").style.display = "none";
+      } catch (_err) {
+        errEl.textContent = "Network error while resetting password.";
+        errEl.style.display = "block";
+      }
+    });
   }
 
   async function handleCreateClassAndLecture() {
@@ -438,25 +521,32 @@
       return;
     }
 
-    const res = await fetch("/api/courses", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ course_code, name, initial_lecture_title }),
+    await withButtonLoading("btn-create-class", "Creating course...", async () => {
+      try {
+        const res = await fetch("/api/courses", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ course_code, name, initial_lecture_title }),
+        });
+        const courseData = await parseJsonSafe(res);
+        if (!res.ok) {
+          errEl.textContent = courseData.error || `Failed to create class (HTTP ${res.status}).`;
+          errEl.style.display = "block";
+          return;
+        }
+
+        document.getElementById("pill-step-2").classList.remove("active");
+        document.getElementById("pill-step-3").classList.add("active");
+
+        const targetSession = courseData.active_session_code || "";
+        window.location.href = targetSession
+          ? `/teacher?course_id=${courseData.id}&session=${encodeURIComponent(targetSession)}`
+          : `/teacher?course_id=${courseData.id}`;
+      } catch (_err) {
+        errEl.textContent = "Network error while creating course. Please try again.";
+        errEl.style.display = "block";
+      }
     });
-    const courseData = await res.json();
-    if (!res.ok) {
-      errEl.textContent = courseData.error || "Failed to create class.";
-      errEl.style.display = "block";
-      return;
-    }
-
-    document.getElementById("pill-step-2").classList.remove("active");
-    document.getElementById("pill-step-3").classList.add("active");
-
-    const targetSession = courseData.active_session_code || "";
-    window.location.href = targetSession
-      ? `/teacher?course_id=${courseData.id}&session=${targetSession}`
-      : `/teacher?course_id=${courseData.id}`;
   }
 
   if (FORCE_SETUP) {

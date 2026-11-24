@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any, Optional
 
@@ -159,7 +160,11 @@ def submit_assignment_homework(assignment_id: int):
     saved_file: Path | None = None
     if "file" in request.files and request.files["file"].filename:
         fs = request.files["file"]
-        clean_name = secure_filename(fs.filename) or "submission.txt"
+        orig_name = Path(fs.filename)
+        raw_suffix = orig_name.suffix.lower()
+        safe_ext = raw_suffix if re.fullmatch(r"\.[a-z0-9]{1,10}", raw_suffix) else ".txt"
+        safe_stem = secure_filename(orig_name.stem) or "submission"
+        clean_name = f"{safe_stem}{safe_ext}"
         dest_dir = Path(cfg.UPLOAD_DIR) / f"homework_{assignment_id}"
         dest_dir.mkdir(parents=True, exist_ok=True)
         saved_file = dest_dir / f"student_{student_id}_{clean_name}"

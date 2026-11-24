@@ -20,8 +20,8 @@ class LecturerLoginSchema(BaseModel):
 
 
 class CourseCreateSchema(BaseModel):
-    course_code: str = Field(..., min_length=2, max_length=32)
-    name: str = Field(..., min_length=2, max_length=200)
+    course_code: str = Field(..., min_length=1, max_length=32)
+    name: str = Field(..., min_length=1, max_length=200)
     department: Optional[str] = Field(default=None, max_length=120)
     semester: str = Field(default="Fall 2026", max_length=64)
     lecturer_name: Optional[str] = Field(default=None, max_length=120)

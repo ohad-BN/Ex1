@@ -4,7 +4,7 @@
 {% set cp_use_socketio = true %}
 {% from "macros/icons.html" import cp_icon %}
 
-{% block title %}ClassPulse — Student Classroom App{% endblock %}
+{% block title %}ClassPulse — Student Portal{% endblock %}
 
 {% block styles %}
 <style>
@@ -24,48 +24,38 @@
     color: var(--cp-ink);
     margin: 10px 0 12px 0;
     font-size: 16px;
-    line-height: 1.35;
+    line-height: 1.4;
     overflow-wrap: anywhere;
   }
-  .cp-session-chip {
-    max-width: 100%;
-    white-space: normal;
-    text-align: left;
-    line-height: 1.3;
-  }
-  .cp-hw-eval-box {
-    background: var(--cp-well);
-    border: 1px solid rgba(91, 95, 239, 0.20);
-    border-radius: 14px;
-    padding: 12px;
-    margin-bottom: 10px;
-  }
-  .cp-poll-stage.cp-poll-idle #student-poll-box {
-    display: none;
-  }
   .cp-hw-kpi-val {
-    font-size: 20px;
+    font-size: 22px;
     font-weight: 800;
     color: var(--cp-ink);
     margin: 2px 0;
     font-variant-numeric: tabular-nums;
   }
+  .cp-past-poll-card {
+    background: var(--cp-well);
+    border: 1px solid var(--cp-border);
+    border-radius: 14px;
+    padding: 12px 14px;
+  }
 </style>
 {% endblock %}
 
 {% block body %}
-<div class="cp-shell cp-shell--mobile">
+<div class="cp-shell cp-student-shell">
   <span class="sr-only">ClassPulse Student App</span>
 
-  <!-- Slide-Over Overlay Backdrop -->
+  <!-- Mobile Slide-Over Backdrop -->
   <div id="student-drawer-backdrop" class="cp-m-backdrop" onclick="closeStudentDrawer()" aria-hidden="true"></div>
 
-  <!-- Phone-App Slide-Over Overlay Sidebar (Tabs + Student Profile + Room + Utility Link) -->
-  <aside id="student-nav-drawer" class="cp-m-drawer" aria-label="Student navigation drawer" aria-hidden="true">
+  <!-- Responsive Sidebar (Persistent on Desktop, Slide-Over Drawer on <=900px) -->
+  <aside id="student-nav-drawer" class="cp-m-drawer" aria-label="Student navigation sidebar" aria-hidden="true">
     <div class="cp-m-drawer-header">
       <div class="cp-brand-lockup" style="gap:9px;">
         <span class="cp-orb cp-orb--xs" aria-hidden="true"></span>
-        <strong style="font-size:15px; color:var(--cp-ink); letter-spacing:-0.01em;">ClassPulse</strong>
+        <strong style="font-size:16px; color:var(--cp-ink); letter-spacing:-0.01em;">ClassPulse</strong>
       </div>
       <button type="button" class="cp-m-drawer-close" onclick="closeStudentDrawer()" aria-label="Close navigation menu">
         {{ cp_icon('x', 18) }}
@@ -73,8 +63,8 @@
     </div>
 
     <div class="cp-m-identity-box">
-      <div class="cp-eyebrow" style="font-size:10px;">Student Profile</div>
-      <div id="student-identity-line" style="font-size:14px; font-weight:800; color:var(--cp-ink); overflow-wrap:anywhere;">
+      <div class="cp-eyebrow">Student Profile</div>
+      <div id="student-identity-line" style="font-size:15px; font-weight:800; color:var(--cp-ink); overflow-wrap:anywhere;">
         {% if dashboard.authenticated %}
           {{ dashboard.student.full_name }}
         {% else %}
@@ -82,51 +72,42 @@
         {% endif %}
       </div>
       {% if dashboard.authenticated %}
-      <div class="cp-muted cp-tabular" style="font-size:12px; overflow-wrap:anywhere;">
+      <div class="cp-muted cp-tabular" style="font-size:13px; overflow-wrap:anywhere;">
         {% if dashboard.student.student_id_number %}ID {{ dashboard.student.student_id_number }} &bull; {% endif %}{{ dashboard.student.email or '' }}
       </div>
       {% else %}
-      <button type="button" class="cp-btn cp-btn--primary cp-btn--sm" style="margin-top:6px;" onclick="closeStudentDrawer(); focusStudentSignIn();">
-        <span>Sign In &amp; Sync</span>
+      <button type="button" class="cp-btn cp-btn--primary cp-btn--sm" style="margin-top:8px;" onclick="closeStudentDrawer(); focusStudentSignIn();">
+        <span>Sign In</span>
       </button>
       {% endif %}
     </div>
 
     <div>
-      <div class="cp-eyebrow" style="font-size:10px; padding:0 4px 6px 4px;">Workspace</div>
-      <nav class="cp-m-drawer-nav" aria-label="Student workspace views">
-        <button type="button" id="tab-btn-live" class="cp-mode-tab mode-tab active" onclick="switchView('view-live', this)">
-          {{ cp_icon('zap', 17) }}
-          <span style="flex:1; text-align:left;">Live Class</span>
-          <span id="poll-live-dot" class="cp-live-dot live-dot"></span>
-        </button>
-        <button type="button" id="tab-btn-classes" class="cp-mode-tab mode-tab" onclick="switchView('view-classes', this)">
+      <div class="cp-eyebrow" style="padding:0 4px 6px 4px;">Navigation</div>
+      <nav class="cp-m-drawer-nav" aria-label="Student workspace sections">
+        <button type="button" id="nav-student-courses" class="cp-mode-tab mode-tab active" onclick="openSidebarSection('courses')">
           {{ cp_icon('book-open', 17) }}
-          <span style="flex:1; text-align:left;">Courses &amp; Logs</span>
+          <span style="flex:1; text-align:left;">Courses</span>
         </button>
-        <button type="button" id="tab-btn-study" class="cp-mode-tab mode-tab" onclick="switchView('view-study', this)">
-          {{ cp_icon('sparkles', 17) }}
-          <span style="flex:1; text-align:left;">AI Study Hub</span>
+        <button type="button" id="nav-student-assignments" class="cp-mode-tab mode-tab" onclick="openSidebarSection('course-assignments')">
+          {{ cp_icon('award', 17) }}
+          <span style="flex:1; text-align:left;">Assignments</span>
           <span id="study-new-dot" class="cp-live-dot live-dot" style="display:none;"></span>
+        </button>
+        <button type="button" id="nav-student-summaries" class="cp-mode-tab mode-tab" onclick="openSidebarSection('course-summaries')">
+          {{ cp_icon('file-text', 17) }}
+          <span style="flex:1; text-align:left;">Summaries</span>
         </button>
       </nav>
     </div>
 
-    <div class="cp-m-drawer-room">
-      <div class="cp-row-between">
-        <span class="cp-eyebrow" style="font-size:10px;">Active Room</span>
-        <span id="active-session-pill" class="cp-code-pill code-pill">&mdash;</span>
-      </div>
-      <div id="active-session-label" style="font-size:13px; font-weight:700; color:var(--cp-ink); overflow-wrap:anywhere;">
-        Select a lecture
-      </div>
-      <button type="button" class="cp-btn cp-btn--secondary cp-btn--sm" style="margin-top:4px; justify-content:space-between;" onclick="switchView('view-classes')">
-        <span>Switch Course / Lecture</span>
-        {{ cp_icon('chevron-right', 14) }}
-      </button>
-    </div>
-
     <div class="cp-m-drawer-footer">
+      {% if dashboard.authenticated %}
+      <button type="button" id="btn-student-logout" class="cp-btn cp-btn--secondary cp-btn--sm" style="justify-content:space-between;" onclick="signOutStudent()">
+        <span>Sign Out</span>
+        {{ cp_icon('log-out', 15) }}
+      </button>
+      {% endif %}
       <a class="cp-btn cp-btn--white cp-btn--sm" style="justify-content:space-between;" href="/teacher">
         <span>Lecturer Portal</span>
         {{ cp_icon('external-link', 14) }}
@@ -134,142 +115,148 @@
     </div>
   </aside>
 
-  <!-- Minimal Sticky App Bar (Hamburger + Mobile Back + Active Screen Title + Compact Status) -->
-  <header class="cp-m-appbar">
-    <button type="button"
-            id="student-drawer-toggle"
-            class="cp-m-menu-btn"
-            aria-label="Open navigation menu"
-            aria-expanded="false"
-            aria-controls="student-nav-drawer"
-            onclick="toggleStudentDrawer()">
-      {{ cp_icon('menu', 20) }}
-    </button>
-    <button type="button"
-            id="student-back-btn"
-            class="cp-m-menu-btn cp-m-back-btn"
-            aria-label="Go back to previous tab"
-            onclick="handleStudentBack()"
-            hidden>
-      {{ cp_icon('arrow-left', 19) }}
-    </button>
-    <div class="cp-m-title-wrap">
-      <h1 id="m-topbar-title" class="cp-m-title">Live Class</h1>
-      <div id="m-topbar-sub" class="cp-m-subtitle">Ready to join</div>
-    </div>
-    <div id="live-attendance-box" style="flex-shrink:0;"></div>
-  </header>
-
-  <!-- Spacious Phone Viewport Content -->
-  <main id="student-main-content" class="cp-m-content">
-    {% if checked_in_banner %}
-    <div id="verified-checkin-banner" class="cp-m-verified-toast" role="status">
-      <div style="min-width:0; flex:1;">
-        <span>&#10003; Attendance Verified!</span>
-        <span style="font-weight:600;"> &mdash; {{ checked_in_banner.student_name }}</span>
-        <div class="cp-tabular" style="font-size:11px; opacity:0.85; font-weight:600;">
-          {{ checked_in_banner.session_title }} ({{ checked_in_banner.session_code }}) &bull; {{ checked_in_banner.checked_in_at }}
-        </div>
+  <!-- Main Workspace Column -->
+  <div class="cp-student-main-wrap">
+    <header class="cp-m-appbar">
+      <button type="button"
+              id="student-drawer-toggle"
+              class="cp-m-menu-btn"
+              aria-label="Open navigation menu"
+              aria-expanded="false"
+              aria-controls="student-nav-drawer"
+              onclick="toggleStudentDrawer()">
+        {{ cp_icon('menu', 20) }}
+      </button>
+      <button type="button"
+              id="student-back-btn"
+              class="cp-back-btn cp-m-back-btn"
+              aria-label="Go back"
+              onclick="handleStudentBack()"
+              hidden>
+        {{ cp_icon('arrow-left', 17) }}
+        <span>Back</span>
+      </button>
+      <div class="cp-m-title-wrap">
+        <h1 id="m-topbar-title" class="cp-m-title">Courses</h1>
+        <div id="m-topbar-sub" class="cp-m-subtitle">Select a course to continue</div>
       </div>
-      <button type="button" class="cp-toast-close" onclick="this.parentElement.remove()" aria-label="Dismiss verification notice">&times;</button>
-    </div>
-    {% endif %}
+    </header>
 
-    {% if not dashboard.authenticated %}
-    <!-- Compact One-Time Student Sign-In Card (Guest Only) -->
-    <div class="cp-card cp-card--compact" id="login-card">
-      <div class="cp-row-wrap" style="margin-bottom:10px;">
-        <span class="cp-badge cp-badge--coral">{{ cp_icon('user-check', 13) }} <span>Quick Student Sign-In</span></span>
-      </div>
-      <div class="cp-stack-xs">
-        <div class="cp-grid-2-tight">
-          <input type="text" id="login-name" class="cp-input" placeholder="Full Name (e.g. Ohad Ben Nun)" />
-          <input type="text" id="login-sid" class="cp-input" placeholder="Student ID (e.g. 208123456)" />
-        </div>
-        <div class="cp-login-row-2">
-          <input type="email" id="login-email" class="cp-input" placeholder="Email (e.g. ohad@ariel.ac.il)" />
-          <input type="text" id="login-course" class="cp-input" placeholder="Course Code (optional)" />
-          <button type="button" class="cp-btn cp-btn--primary cp-btn--sm" onclick="signInStudent()">Sign In</button>
-        </div>
-      </div>
-    </div>
-    {% endif %}
-
-    <!-- VIEW 1 (DEFAULT): LIVE CLASSROOM (COLLAPSIBLE POLL + NATURAL-SCROLL Q&A + STICKY COMPOSER) -->
-    <section id="view-live" class="cp-view-pane view-pane active" style="flex:1;">
-      <div id="poll-stage-card" class="cp-poll-stage poll-stage cp-poll-idle">
-        <div class="cp-row-between">
-          <div class="cp-row-wrap" style="gap:7px;">
-            {{ cp_icon('bar-chart', 15) }}
-            <strong style="font-size:13.5px; color:var(--cp-ink);" id="poll-header-title">Classroom Poll</strong>
+    <main id="student-main-content" class="cp-m-content">
+      <!-- LEVEL 0: Courses Home -->
+      <section id="screen-courses" class="cp-view-pane view-pane active">
+        {% if not dashboard.authenticated %}
+        <div class="cp-card cp-card--compact" id="login-card">
+          <div class="cp-row-wrap" style="margin-bottom:10px;">
+            <span class="cp-badge cp-badge--coral">{{ cp_icon('user-check', 14) }} <span>Student Sign-In</span></span>
           </div>
-          <span id="student-poll-badge" class="cp-badge cp-badge--indigo">Waiting</span>
+          <div id="student-login-error" class="cp-alert cp-alert--err" style="display:none; margin-bottom:10px;" role="alert"></div>
+          <div class="cp-stack-xs">
+            <div class="cp-grid-2-tight">
+              <input type="text" id="login-name" class="cp-input" placeholder="Full Name" />
+              <input type="text" id="login-sid" class="cp-input" placeholder="Student ID" />
+            </div>
+            <div class="cp-login-row-2">
+              <input type="email" id="login-email" class="cp-input" placeholder="University Email" />
+              <input type="text" id="login-course" class="cp-input" placeholder="Course Code (optional)" />
+              <button type="button" id="btn-student-signin" class="cp-btn cp-btn--primary" onclick="signInStudent()">Sign In</button>
+            </div>
+          </div>
         </div>
-        <div id="student-poll-box" class="cp-muted" style="margin-top:8px; font-size:12.5px;"></div>
-      </div>
+        {% endif %}
 
-      <div class="cp-m-qa-section">
-        <div class="cp-m-section-label">
-          <span class="cp-eyebrow" style="font-size:10.5px;">Live Q&amp;A Stream</span>
-          <span class="cp-code-pill code-pill" id="chat-room-code">&mdash;</span>
+        <div id="courses-list" class="cp-course-grid"></div>
+      </section>
+
+      <!-- LEVEL 1: Course Hub -->
+      <section id="screen-course-hub" class="cp-view-pane view-pane"></section>
+
+      <!-- LEVEL 2: Lectures List -->
+      <section id="screen-course-lectures" class="cp-view-pane view-pane"></section>
+
+      <!-- LEVEL 2: Attendance Breakdown -->
+      <section id="screen-course-attendance" class="cp-view-pane view-pane"></section>
+
+      <!-- LEVEL 2: Assignments List -->
+      <section id="screen-course-assignments" class="cp-view-pane view-pane">
+        <div id="student-assignments-list" class="cp-stack-sm"></div>
+      </section>
+
+      <!-- LEVEL 3: Assignment Detail & File Upload -->
+      <section id="screen-assignment-detail" class="cp-view-pane view-pane"></section>
+
+      <!-- LEVEL 2: AI Lecture Summaries -->
+      <section id="screen-course-summaries" class="cp-view-pane view-pane">
+        <div id="student-lecture-summaries" class="cp-stack-sm"></div>
+      </section>
+
+      <!-- LEVEL 2: Course Info (Only screen showing Course Number/Code) -->
+      <section id="screen-course-info" class="cp-view-pane view-pane"></section>
+
+      <!-- LEVEL 3: Lecture View (Context Banner + Polls if present + Lecture Q&A + Offline Question) -->
+      <section id="screen-lecture" class="cp-view-pane view-pane">
+        <div id="verified-checkin-banner"
+             class="cp-context-banner {% if checked_in_banner and checked_in_banner.attendance_recorded %}cp-context-banner--recorded{% endif %}"
+             role="status">
+          <span id="lecture-context-text" style="min-width:0; overflow-wrap:anywhere;">
+            {% if checked_in_banner %}
+              {% if checked_in_banner.course_name %}{{ checked_in_banner.course_name }} | {% endif %}{{ checked_in_banner.lecture_label or checked_in_banner.session_title }}{% if checked_in_banner.attendance_recorded %} | Attendance Recorded{% endif %}
+            {% endif %}
+          </span>
         </div>
 
-        <div id="student-chat-feed" class="cp-stack-xs"></div>
-      </div>
-
-      <div class="cp-m-composer-dock">
-        <div class="cp-m-composer-grid chat-composer">
-          <select id="student-chat-cat" class="cp-select" aria-label="Message category" style="padding:8px 10px; font-size:12px;">
-            <option value="Question">Question</option>
-            <option value="Comment">Comment</option>
-            <option value="Suggestion">Idea</option>
-          </select>
-          <input type="text" id="student-chat-body" class="cp-input" placeholder="Ask a question..." onkeydown="if(event.key==='Enter') sendStudentChat()" />
-          <button type="button" class="cp-btn cp-btn--primary cp-btn--sm" style="width:44px; min-width:44px; height:40px; padding:0;" onclick="sendStudentChat()" aria-label="Send message">
-            {{ cp_icon('send', 16) }}
-          </button>
+        <!-- Polls (Hidden cleanly when 0 polls exist for this lecture) -->
+        <div id="poll-stage-card" class="cp-poll-stage poll-stage" hidden>
+          <div class="cp-row-between" style="margin-bottom:8px;">
+            <div class="cp-row-wrap" style="gap:7px;">
+              {{ cp_icon('bar-chart', 17) }}
+              <strong style="font-size:16px; color:var(--cp-ink);" id="poll-header-title">Polls</strong>
+            </div>
+            <span id="student-poll-badge" class="cp-badge cp-badge--indigo">Open</span>
+          </div>
+          <div id="student-poll-box" style="font-size:14px;"></div>
+          <div id="student-past-polls" class="cp-stack-xs" style="margin-top:12px;"></div>
         </div>
-      </div>
-    </section>
 
-    <!-- VIEW 2: MY ENROLLED COURSES & ATTENDANCE LOGS -->
-    <section id="view-classes" class="cp-view-pane view-pane">
-      <div id="courses-list" class="cp-stack-sm"></div>
-    </section>
-
-    <!-- VIEW 3: AI STUDY HUB (SEGMENTED SUMMARIES | HOMEWORK) -->
-    <section id="view-study" class="cp-view-pane view-pane">
-      <div class="cp-row-between" style="gap:8px;">
-        <div class="cp-row-wrap" style="gap:6px;">
-          <span class="cp-code-pill code-pill" id="study-course-code">&mdash;</span>
-          <span class="cp-muted" style="font-size:12px; font-weight:600;">Course Resources</span>
+        <!-- Lecture Q&A -->
+        <div id="lecture-qa-section" class="cp-card">
+          <div class="cp-card-header">
+            <h3>{{ cp_icon('message-square', 17) }} <span>Lecture Q&amp;A</span></h3>
+          </div>
+          <div id="student-chat-feed" class="cp-stack-xs" style="margin-bottom:14px;"></div>
+          <div class="cp-m-composer-grid chat-composer">
+            <select id="student-chat-cat" class="cp-select" aria-label="Message category">
+              <option value="Question">Question</option>
+              <option value="Comment">Comment</option>
+              <option value="Suggestion">Suggestion</option>
+            </select>
+            <input type="text" id="student-chat-body" class="cp-input" placeholder="Ask a question in this lecture..." onkeydown="if(event.key==='Enter') sendStudentChat()" />
+            <button type="button" class="cp-btn cp-btn--primary" style="width:44px; min-width:44px; padding:0;" onclick="sendStudentChat()" aria-label="Send message">
+              {{ cp_icon('send', 16) }}
+            </button>
+          </div>
         </div>
-        <button type="button" class="cp-btn cp-btn--white cp-btn--sm" onclick="loadStudyHub()">
-          {{ cp_icon('refresh', 13) }}
-          <span>Refresh</span>
-        </button>
-      </div>
 
-      <div class="cp-m-subtabs" role="tablist" aria-label="Study hub sections">
-        <button type="button" id="study-subbtn-summaries" class="cp-m-subtab active" role="tab" aria-selected="true" onclick="switchStudySubView('summaries')">
-          {{ cp_icon('file-text', 15) }}
-          <span>AI Summaries</span>
-        </button>
-        <button type="button" id="study-subbtn-homework" class="cp-m-subtab" role="tab" aria-selected="false" onclick="switchStudySubView('homework')">
-          {{ cp_icon('award', 15) }}
-          <span>Homework</span>
-        </button>
-      </div>
-
-      <div id="study-pane-summaries" class="cp-m-subpane active">
-        <div id="student-lecture-summaries" class="cp-stack-sm cp-muted" style="font-size:13px;"></div>
-      </div>
-
-      <div id="study-pane-homework" class="cp-m-subpane">
-        <div id="student-assignments-list" class="cp-stack-sm cp-muted" style="font-size:13px;"></div>
-      </div>
-    </section>
-  </main>
+        <!-- Distinct Offline Question Card -->
+        <div id="lecture-offline-section" class="cp-card">
+          <div class="cp-card-header">
+            <h3>{{ cp_icon('clock', 17) }} <span>Offline Question</span></h3>
+          </div>
+          <p class="cp-muted" style="font-size:13.5px; margin:0 0 12px 0;">
+            Send an asynchronous question for the lecturer to review outside lecture hours.
+          </p>
+          <div id="student-offline-feed" class="cp-stack-xs" style="margin-bottom:14px;"></div>
+          <div class="cp-input-action">
+            <input type="text" id="student-offline-body" class="cp-input" placeholder="Write an offline question..." onkeydown="if(event.key==='Enter') sendOfflineQuestion()" />
+            <button type="button" id="btn-send-offline-q" class="cp-btn cp-btn--indigo" onclick="sendOfflineQuestion()">
+              {{ cp_icon('send', 15) }}
+              <span>Send Offline Question</span>
+            </button>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
 </div>
 {% endblock %}
 
@@ -277,112 +264,36 @@
 <script>
   let STATE = {{ dashboard | tojson }};
   const FROM_QR_ROUTE = {{ (from_qr_route | default(false)) | tojson }};
+  const INITIAL_SESSION_CODE = {{ initial_session_code | tojson }};
+  const INITIAL_COURSE_ID = {{ (initial_course_id | default(none)) | tojson }};
+  const SERVER_CHECKIN_BANNER = {{ (checked_in_banner | default(none)) | tojson }};
+
+  let CURRENT_COURSE_ID = null;
+  let CURRENT_ASSIGNMENT_ID = null;
   let ACTIVE_SESSION = null;
+  let LECTURE_POLLS = [];
   let CURRENT_POLL = null;
   let MY_VOTE = null;
   let CHAT_MESSAGES = [];
+
   const KNOWN_ASSIGNMENT_IDS = new Set();
   const PENDING_REVIEWS = new Set();
   const SUBMITTING_ASSIGNMENTS = new Set();
+  const SELECTED_HW_FILES = {};
+  const ASSIGNMENTS_BY_COURSE = {};
+  const SUMMARIES_BY_COURSE = {};
   const LAST_CLASS_SCORES = {};
   const CLASS_SCORE_DELTAS = {};
   let HW_INITIALIZED_COURSE_ID = null;
+
   const OPT_COLORS = ["#E87148", "#5B5FEF", "#16A34A", "#D97706", "#0F766E", "#BE185D"];
   const LETTERS = ["A", "B", "C", "D", "E", "F", "G", "H"];
 
-  const VIEW_TITLES = {
-    "view-live": "Live Class",
-    "view-classes": "Courses & Logs",
-    "view-study": "AI Study Hub",
-  };
-
-  const socket = window.cpCreateSocket({ transports: ["websocket", "polling"] });
-  let activeViewId = "view-live";
-  const STUDENT_NAV_STACK = ["view-live"];
+  const STUDENT_STACK = [{ screen: "courses" }];
   let STUDENT_CLEAN_URL = "/student";
   let STUDENT_HISTORY_GUARD_INSTALLED = false;
 
-  function updateBackButtonVisibility() {
-    const backBtn = document.getElementById("student-back-btn");
-    if (!backBtn) return;
-    backBtn.hidden = activeViewId === "view-live";
-  }
-
-  function handleStudentBack() {
-    const drawer = document.getElementById("student-nav-drawer");
-    if (drawer && drawer.classList.contains("open")) {
-      closeStudentDrawer();
-      return;
-    }
-    if (activeViewId === "view-live") return;
-    if (STUDENT_NAV_STACK.length > 1) {
-      STUDENT_NAV_STACK.pop();
-    }
-    const prevView = STUDENT_NAV_STACK[STUDENT_NAV_STACK.length - 1] || "view-live";
-    switchView(prevView, null, { fromHistory: true });
-    if (window.history && window.history.replaceState) {
-      window.history.replaceState(
-        { cpStudentView: prevView, cpGuard: prevView === "view-live" },
-        "",
-        STUDENT_CLEAN_URL
-      );
-    }
-  }
-
-  function initStudentHistoryGuard(cleanUrl) {
-    STUDENT_CLEAN_URL = cleanUrl || "/student";
-    if (window.history && window.history.replaceState && window.history.pushState) {
-      window.history.replaceState(
-        { cpStudentView: "view-live", cpRoot: true },
-        "",
-        STUDENT_CLEAN_URL
-      );
-      window.history.pushState(
-        { cpStudentView: "view-live", cpGuard: true },
-        "",
-        STUDENT_CLEAN_URL
-      );
-    }
-    if (STUDENT_HISTORY_GUARD_INSTALLED) return;
-    STUDENT_HISTORY_GUARD_INSTALLED = true;
-    window.addEventListener("popstate", () => {
-      const drawer = document.getElementById("student-nav-drawer");
-      if (drawer && drawer.classList.contains("open")) {
-        closeStudentDrawer();
-        if (window.history && window.history.pushState) {
-          window.history.pushState(
-            { cpStudentView: activeViewId, cpGuard: activeViewId === "view-live" },
-            "",
-            STUDENT_CLEAN_URL
-          );
-        }
-        return;
-      }
-      if (activeViewId !== "view-live") {
-        if (STUDENT_NAV_STACK.length > 1) {
-          STUDENT_NAV_STACK.pop();
-        }
-        const prevView = STUDENT_NAV_STACK[STUDENT_NAV_STACK.length - 1] || "view-live";
-        switchView(prevView, null, { fromHistory: true });
-        if (prevView === "view-live" && window.history && window.history.pushState) {
-          window.history.pushState(
-            { cpStudentView: "view-live", cpGuard: true },
-            "",
-            STUDENT_CLEAN_URL
-          );
-        }
-        return;
-      }
-      // On Home ("view-live"): keep the student inside the app and never return to sign-in.
-      if (window.history && window.history.pushState) {
-        window.history.pushState(
-          { cpStudentView: "view-live", cpGuard: true },
-          "",
-          STUDENT_CLEAN_URL
-        );
-      }
-    });
-  }
+  const socket = window.cpCreateSocket({ transports: ["websocket", "polling"] });
 
   function escapeHtml(str) {
     return String(str == null ? "" : str)
@@ -391,6 +302,256 @@
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;")
       .replace(/'/g, "&#39;");
+  }
+
+  function formatBytes(bytes) {
+    const n = Number(bytes || 0);
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+    return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
+  function formatLocalDateTime(isoStr, fallbackStr) {
+    const raw = String(isoStr || fallbackStr || "").trim();
+    if (!raw) return "";
+    let d = new Date(raw);
+    if (Number.isNaN(d.getTime())) {
+      const normalized = raw.replace(" UTC", "Z").replace(" ", "T");
+      d = new Date(normalized);
+    }
+    if (Number.isNaN(d.getTime())) {
+      return raw.replace(/\s*UTC$/i, "");
+    }
+    return d.toLocaleString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
+  }
+
+  function formatLectureLabel(s) {
+    if (!s) return "Lecture";
+    const title = String(s.title || s.lecture_title || "").trim();
+    const num = s.lecture_number;
+    if (title) {
+      if (num && !/^lecture\b/i.test(title)) {
+        return `Lecture ${num} \u2014 ${title}`;
+      }
+      return title;
+    }
+    return num ? `Lecture ${num}` : "Lecture";
+  }
+
+  function currentScreenState() {
+    return STUDENT_STACK[STUDENT_STACK.length - 1] || { screen: "courses" };
+  }
+
+  function getStudentCoursesPool() {
+    const myCourses = STATE.my_courses || [];
+    const raw = myCourses.length > 0 ? myCourses : (STATE.all_courses || []);
+    return sortCoursesByRecentLecture(raw);
+  }
+
+  function findFullCourseById(courseId) {
+    const pools = [...(STATE.my_courses || []), ...(STATE.all_courses || [])];
+    return pools.find(c => Number(c.id) === Number(courseId)) || null;
+  }
+
+  function getCourseAssignments(courseId) {
+    if (ASSIGNMENTS_BY_COURSE[courseId]) return ASSIGNMENTS_BY_COURSE[courseId];
+    const c = findFullCourseById(courseId);
+    return (c && Array.isArray(c.assignments)) ? c.assignments : [];
+  }
+
+  function getCourseSummaries(courseId) {
+    if (SUMMARIES_BY_COURSE[courseId]) return SUMMARIES_BY_COURSE[courseId];
+    const c = findFullCourseById(courseId);
+    return (c && Array.isArray(c.lecture_summaries)) ? c.lecture_summaries : [];
+  }
+
+  function updateBackButtonVisibility() {
+    const backBtn = document.getElementById("student-back-btn");
+    if (!backBtn) return;
+    const st = currentScreenState();
+    backBtn.hidden = st.screen === "courses";
+  }
+
+  function updateSidebarNavActive(screenName) {
+    document.querySelectorAll("#student-nav-drawer .cp-mode-tab").forEach(el => el.classList.remove("active"));
+    if (screenName === "course-assignments" || screenName === "assignment-detail") {
+      document.getElementById("nav-student-assignments")?.classList.add("active");
+    } else if (screenName === "course-summaries") {
+      document.getElementById("nav-student-summaries")?.classList.add("active");
+    } else {
+      document.getElementById("nav-student-courses")?.classList.add("active");
+    }
+  }
+
+  function renderCurrentScreen() {
+    const st = currentScreenState();
+    document.querySelectorAll("#student-main-content > .view-pane").forEach(el => el.classList.remove("active"));
+    const target = document.getElementById(`screen-${st.screen}`);
+    if (target) target.classList.add("active");
+
+    updateSidebarNavActive(st.screen);
+    updateBackButtonVisibility();
+
+    const titleEl = document.getElementById("m-topbar-title");
+    const subEl = document.getElementById("m-topbar-sub");
+    const course = st.courseId ? findFullCourseById(st.courseId) : (CURRENT_COURSE_ID ? findFullCourseById(CURRENT_COURSE_ID) : null);
+
+    if (st.screen === "courses") {
+      if (titleEl) titleEl.textContent = "Courses";
+      if (subEl) subEl.textContent = "Select a course to explore";
+      renderCourses();
+    } else if (st.screen === "course-hub") {
+      CURRENT_COURSE_ID = st.courseId;
+      if (titleEl) titleEl.textContent = course ? course.name : "Course";
+      if (subEl) subEl.textContent = course ? course.lecturer_name : "Course Overview";
+      renderCourseHub(st.courseId);
+    } else if (st.screen === "course-lectures") {
+      CURRENT_COURSE_ID = st.courseId;
+      if (titleEl) titleEl.textContent = "Lectures";
+      if (subEl) subEl.textContent = course ? course.name : "Select a lecture";
+      renderCourseLectures(st.courseId);
+    } else if (st.screen === "course-attendance") {
+      CURRENT_COURSE_ID = st.courseId;
+      if (titleEl) titleEl.textContent = "Attendance";
+      if (subEl) subEl.textContent = course ? course.name : "Lecture attendance breakdown";
+      renderCourseAttendance(st.courseId);
+    } else if (st.screen === "course-assignments") {
+      CURRENT_COURSE_ID = st.courseId;
+      if (titleEl) titleEl.textContent = "Assignments";
+      if (subEl) subEl.textContent = course ? course.name : "Coursework & uploads";
+      const dot = document.getElementById("study-new-dot");
+      if (dot) {
+        dot.classList.remove("hot");
+        dot.style.display = "none";
+      }
+      document.getElementById("study-toast-banner")?.remove();
+      renderAssignmentsListScreen(st.courseId);
+      loadAssignmentsForCourse(st.courseId);
+    } else if (st.screen === "assignment-detail") {
+      CURRENT_COURSE_ID = st.courseId;
+      CURRENT_ASSIGNMENT_ID = st.assignmentId;
+      const aList = getCourseAssignments(st.courseId);
+      const a = aList.find(x => Number(x.id) === Number(st.assignmentId));
+      if (titleEl) titleEl.textContent = a ? a.title : "Assignment";
+      if (subEl) subEl.textContent = course ? course.name : "Submission & AI Review";
+      renderAssignmentDetailScreen(st.courseId, st.assignmentId);
+      loadAssignmentsForCourse(st.courseId);
+    } else if (st.screen === "course-summaries") {
+      CURRENT_COURSE_ID = st.courseId;
+      if (titleEl) titleEl.textContent = "Summaries";
+      if (subEl) subEl.textContent = course ? course.name : "AI lecture study guides";
+      renderStudyLectures(getCourseSummaries(st.courseId));
+      loadSummariesForCourse(st.courseId);
+    } else if (st.screen === "course-info") {
+      CURRENT_COURSE_ID = st.courseId;
+      if (titleEl) titleEl.textContent = "Course Info";
+      if (subEl) subEl.textContent = course ? course.name : "Details";
+      renderCourseInfo(st.courseId);
+    } else if (st.screen === "lecture") {
+      const lTitle = ACTIVE_SESSION ? formatLectureLabel(ACTIVE_SESSION) : "Lecture";
+      if (titleEl) titleEl.textContent = lTitle;
+      if (subEl) subEl.textContent = course ? course.name : (ACTIVE_SESSION ? ACTIVE_SESSION.course_name : "Lecture");
+      renderLectureContextBanner();
+      if (window.ClassPulseNotify) window.ClassPulseNotify.clearUnread();
+    }
+  }
+
+  function navigateStudent(nextState, opts = {}) {
+    const cur = currentScreenState();
+    const same =
+      cur.screen === nextState.screen &&
+      Number(cur.courseId || 0) === Number(nextState.courseId || 0) &&
+      Number(cur.assignmentId || 0) === Number(nextState.assignmentId || 0) &&
+      String(cur.sessionCode || "") === String(nextState.sessionCode || "");
+
+    if (!opts.fromHistory) {
+      if (nextState.screen === "courses") {
+        STUDENT_STACK.splice(0, STUDENT_STACK.length, { screen: "courses" });
+      } else if (opts.replace) {
+        STUDENT_STACK[STUDENT_STACK.length - 1] = nextState;
+      } else if (!same) {
+        STUDENT_STACK.push(nextState);
+        if (window.history && window.history.pushState) {
+          window.history.pushState({ cpStudentState: nextState }, "", STUDENT_CLEAN_URL);
+        }
+      }
+    }
+    closeStudentDrawer();
+    renderCurrentScreen();
+  }
+
+  function handleStudentBack() {
+    const drawer = document.getElementById("student-nav-drawer");
+    if (drawer && drawer.classList.contains("open")) {
+      closeStudentDrawer();
+      return;
+    }
+    if (STUDENT_STACK.length <= 1) return;
+    STUDENT_STACK.pop();
+    const prev = currentScreenState();
+    renderCurrentScreen();
+    if (window.history && window.history.replaceState) {
+      window.history.replaceState(
+        { cpStudentState: prev, cpGuard: prev.screen === "courses" },
+        "",
+        STUDENT_CLEAN_URL
+      );
+    }
+  }
+
+  function initStudentHistoryGuard(cleanUrl) {
+    STUDENT_CLEAN_URL = cleanUrl || "/student";
+    const cur = currentScreenState();
+    if (window.history && window.history.replaceState && window.history.pushState) {
+      window.history.replaceState({ cpStudentState: cur, cpRoot: true }, "", STUDENT_CLEAN_URL);
+      window.history.pushState({ cpStudentState: cur, cpGuard: true }, "", STUDENT_CLEAN_URL);
+    }
+    if (STUDENT_HISTORY_GUARD_INSTALLED) return;
+    STUDENT_HISTORY_GUARD_INSTALLED = true;
+    window.addEventListener("popstate", () => {
+      const drawer = document.getElementById("student-nav-drawer");
+      if (drawer && drawer.classList.contains("open")) {
+        closeStudentDrawer();
+        if (window.history && window.history.pushState) {
+          window.history.pushState({ cpStudentState: currentScreenState(), cpGuard: true }, "", STUDENT_CLEAN_URL);
+        }
+        return;
+      }
+      if (STUDENT_STACK.length > 1) {
+        STUDENT_STACK.pop();
+        renderCurrentScreen();
+        if (currentScreenState().screen === "courses" && window.history && window.history.pushState) {
+          window.history.pushState({ cpStudentState: currentScreenState(), cpGuard: true }, "", STUDENT_CLEAN_URL);
+        }
+        return;
+      }
+      if (window.history && window.history.pushState) {
+        window.history.pushState({ cpStudentState: currentScreenState(), cpGuard: true }, "", STUDENT_CLEAN_URL);
+      }
+    });
+  }
+
+  function openSidebarSection(targetScreen) {
+    if (targetScreen === "courses") {
+      navigateStudent({ screen: "courses" });
+      return;
+    }
+    const pool = getStudentCoursesPool();
+    const courseId = CURRENT_COURSE_ID || (ACTIVE_SESSION && ACTIVE_SESSION.course_id) || (pool[0] && pool[0].id);
+    if (!courseId) {
+      navigateStudent({ screen: "courses" });
+      return;
+    }
+    CURRENT_COURSE_ID = courseId;
+    STUDENT_STACK.splice(0, STUDENT_STACK.length, { screen: "courses" }, { screen: "course-hub", courseId });
+    navigateStudent({ screen: targetScreen, courseId });
   }
 
   function openStudentDrawer() {
@@ -436,23 +597,14 @@
     if (evt.key === "Escape") closeStudentDrawer();
   });
 
-  function switchStudySubView(subId) {
-    const isHw = subId === "homework";
-    document.getElementById("study-subbtn-summaries")?.classList.toggle("active", !isHw);
-    document.getElementById("study-subbtn-homework")?.classList.toggle("active", isHw);
-    document.getElementById("study-subbtn-summaries")?.setAttribute("aria-selected", String(!isHw));
-    document.getElementById("study-subbtn-homework")?.setAttribute("aria-selected", String(isHw));
-    document.getElementById("study-pane-summaries")?.classList.toggle("active", !isHw);
-    document.getElementById("study-pane-homework")?.classList.toggle("active", isHw);
-  }
-
   if (window.ClassPulseNotify) {
     window.ClassPulseNotify.init({
       role: "student",
       baseTitle: document.title,
       currentStudentId: STATE.student ? STATE.student.id : null,
       isChatVisibleFn: (payload) =>
-        activeViewId === "view-live" && (!payload || !ACTIVE_SESSION || payload.session_code === ACTIVE_SESSION.session_code),
+        currentScreenState().screen === "lecture" &&
+        (!payload || !ACTIVE_SESSION || payload.session_code === ACTIVE_SESSION.session_code),
       onOpenMessage: (payload) => {
         const msgId = payload.message_id || payload.id;
         const allCourses = STATE.all_courses || [];
@@ -469,139 +621,88 @@
           if (matchedSession) break;
         }
         if (matchedSession && matchedCourse) {
-          selectSession(matchedSession, matchedCourse);
-          switchView("view-live");
+          openStudentLecture(matchedCourse.id, matchedSession.session_code);
           setTimeout(() => {
             if (!window.ClassPulseNotify.highlightMessage(msgId)) {
               fetchLatestSessionChat().then(() => window.ClassPulseNotify.highlightMessage(msgId));
             }
           }, 250);
         } else {
-          window.location.href = `/student?session=${encodeURIComponent(payload.session_code)}&view=view-live&msg_id=${encodeURIComponent(msgId)}`;
+          window.location.href = `/student?session=${encodeURIComponent(payload.session_code)}&msg_id=${encodeURIComponent(msgId)}`;
         }
       },
     });
   }
 
-  function switchView(viewId, btnEl, opts = {}) {
-    const prevViewId = activeViewId;
-    activeViewId = viewId;
-    if (!opts.fromHistory && viewId !== prevViewId) {
-      if (viewId === "view-live") {
-        STUDENT_NAV_STACK.splice(0, STUDENT_NAV_STACK.length, "view-live");
-      } else if (STUDENT_NAV_STACK[STUDENT_NAV_STACK.length - 1] !== viewId) {
-        STUDENT_NAV_STACK.push(viewId);
-        if (window.history && window.history.pushState) {
-          window.history.pushState({ cpStudentView: viewId }, "", STUDENT_CLEAN_URL);
-        }
-      }
-    }
-    document.querySelectorAll(".view-pane").forEach(el => el.classList.remove("active"));
-    document.querySelectorAll(".mode-tab").forEach(el => el.classList.remove("active"));
-    const target = document.getElementById(viewId);
-    if (target) target.classList.add("active");
-    if (btnEl) {
-      btnEl.classList.add("active");
-    } else {
-      const map = {
-        "view-live": "tab-btn-live",
-        "view-classes": "tab-btn-classes",
-        "view-study": "tab-btn-study",
-      };
-      const fallbackBtn = document.getElementById(map[viewId] || "tab-btn-live");
-      if (fallbackBtn) fallbackBtn.classList.add("active");
-    }
-    const titleEl = document.getElementById("m-topbar-title");
-    if (titleEl) titleEl.textContent = VIEW_TITLES[viewId] || "Student App";
-    updateBackButtonVisibility();
-    closeStudentDrawer();
-
-    if (viewId === "view-live" && window.ClassPulseNotify) window.ClassPulseNotify.clearUnread();
-    if (viewId === "view-study") {
-      const dot = document.getElementById("study-new-dot");
-      if (dot) {
-        dot.classList.remove("hot");
-        dot.style.display = "none";
-      }
-      const banner = document.getElementById("study-toast-banner");
-      if (banner) banner.remove();
-      loadStudyHub(true);
-    }
+  async function signOutStudent() {
+    try {
+      await fetch("/api/student/logout", { method: "POST" });
+    } catch (_err) {}
+    window.location.href = "/student";
   }
 
   async function signInStudent() {
+    const errEl = document.getElementById("student-login-error");
+    const btn = document.getElementById("btn-student-signin");
+    if (errEl) errEl.style.display = "none";
+
     const full_name = document.getElementById("login-name").value.trim();
     const student_id_number = (document.getElementById("login-sid")?.value || "").trim();
     const email = document.getElementById("login-email").value.trim();
     const course_code = document.getElementById("login-course").value.trim();
-    const res = await fetch("/api/student/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ full_name, student_id_number, email, course_code }),
-    });
-    const data = await res.json();
-    if (!res.ok) return alert(data.error || "Sign-in failed");
-    window.location.reload();
-  }
 
-  function findFullCourseById(courseId) {
-    const pools = [...(STATE.my_courses || []), ...(STATE.all_courses || [])];
-    return pools.find(c => Number(c.id) === Number(courseId)) || null;
-  }
-
-  function selectSession(sessionObj, courseObj) {
-    if (ACTIVE_SESSION && ACTIVE_SESSION.session_code && ACTIVE_SESSION.session_code !== sessionObj.session_code) {
-      socket.emit("leave_session", { session_code: ACTIVE_SESSION.session_code });
+    if (!email && !student_id_number) {
+      if (errEl) {
+        errEl.textContent = "Please enter your Email or Student ID to sign in.";
+        errEl.style.display = "block";
+      }
+      return;
     }
-    CHAT_MESSAGES = [];
-    KNOWN_ASSIGNMENT_IDS.clear();
-    PENDING_REVIEWS.clear();
-    HW_INITIALIZED_COURSE_ID = null;
-    for (const k of Object.keys(LAST_CLASS_SCORES)) delete LAST_CLASS_SCORES[k];
-    for (const k of Object.keys(CLASS_SCORE_DELTAS)) delete CLASS_SCORE_DELTAS[k];
-    ACTIVE_SESSION = {
-      ...sessionObj,
-      course_id: courseObj.id,
-      course_code: courseObj.course_code,
-      course_name: courseObj.name,
-    };
-    const labelEl = document.getElementById("active-session-label");
-    if (labelEl) labelEl.textContent = `${courseObj.course_code}: ${sessionObj.title}`;
-    const pillEl = document.getElementById("active-session-pill");
-    if (pillEl) pillEl.textContent = sessionObj.session_code;
-    const subEl = document.getElementById("m-topbar-sub");
-    if (subEl) subEl.textContent = `${courseObj.course_code} · ${sessionObj.title}`;
-    const chatCodeEl = document.getElementById("chat-room-code");
-    if (chatCodeEl) chatCodeEl.textContent = sessionObj.session_code;
-    const studyCodeEl = document.getElementById("study-course-code");
-    if (studyCodeEl) studyCodeEl.textContent = courseObj.course_code;
 
-    const attBox = document.getElementById("live-attendance-box");
-    if (attBox) {
-      if (sessionObj.checked_in) {
-        attBox.innerHTML = `<span class="cp-badge cp-badge--green">&#10003; Checked In</span>`;
-      } else {
-        attBox.innerHTML = `<span class="cp-badge cp-badge--amber">Scan QR</span>`;
+    const origText = btn ? btn.textContent : "Sign In";
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = "Signing in...";
+    }
+    try {
+      const res = await fetch("/api/student/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ full_name, student_id_number, email, course_code }),
+      });
+      const rawText = await res.text();
+      let data = {};
+      try {
+        data = rawText ? JSON.parse(rawText) : {};
+      } catch (_parseErr) {
+        data = { error: `Unexpected server response (HTTP ${res.status}).` };
+      }
+      if (!res.ok) {
+        if (errEl) {
+          errEl.textContent = data.error || `Sign-in failed (HTTP ${res.status}).`;
+          errEl.style.display = "block";
+        }
+        return;
+      }
+      window.location.href = "/student";
+    } catch (_err) {
+      if (errEl) {
+        errEl.textContent = "Network error while signing in. Please try again.";
+        errEl.style.display = "block";
+      }
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = origText;
       }
     }
+  }
 
-    const fullCourse = findFullCourseById(courseObj.id) || courseObj;
-    if (Array.isArray(fullCourse.lecture_summaries)) {
-      renderStudyLectures(fullCourse.lecture_summaries);
-    }
-    if (Array.isArray(fullCourse.assignments)) {
-      renderStudyAssignments(fullCourse.assignments);
-    }
-
-    socket.emit("join_session", {
-      session_code: sessionObj.session_code,
-      student_id: STATE.student ? STATE.student.id : null,
-      as_student: true,
-    });
-    fetchLatestSessionPolls();
-    fetchLatestSessionChat();
-    loadStudyHub();
-    renderCourses();
+  function focusStudentSignIn() {
+    navigateStudent({ screen: "courses" });
+    const card = document.getElementById("login-card");
+    if (card) card.scrollIntoView({ behavior: "smooth", block: "center" });
+    document.getElementById("login-name")?.focus();
   }
 
   function getSessionSortStamp(s) {
@@ -655,8 +756,8 @@
     const fullDate = `${monthShort} ${day}, ${year}`;
 
     let label = `${weekdayShort}, ${fullDate}`;
-    if (diffDays === 0) label = `Today · ${fullDate}`;
-    else if (diffDays === 1) label = `Yesterday · ${fullDate}`;
+    if (diffDays === 0) label = `Today \u00b7 ${fullDate}`;
+    else if (diffDays === 1) label = `Yesterday \u00b7 ${fullDate}`;
     return { key, label, time };
   }
 
@@ -664,8 +765,869 @@
     const status = String((sessionObj && sessionObj.attendance_status) || (sessionObj && sessionObj.checked_in ? "PRESENT" : "ABSENT")).toUpperCase();
     if (status === "PRESENT") return { label: "Present", badgeClass: "cp-badge--green" };
     if (status === "LATE") return { label: "Late", badgeClass: "cp-badge--amber" };
-    if (!isEnrolled) return { label: "Open", badgeClass: "cp-badge--neutral" };
+    if (!isEnrolled) return { label: "Not Recorded", badgeClass: "cp-badge--neutral" };
     return { label: "Absent", badgeClass: "cp-badge--red" };
+  }
+
+  // LEVEL 0: Courses Home (Course Name + Lecturer + Attendance %)
+  function renderCourses() {
+    const listEl = document.getElementById("courses-list");
+    if (!listEl) return;
+    const courses = getStudentCoursesPool();
+    if (!courses.length) {
+      listEl.innerHTML = `<div class="cp-card cp-muted" style="font-size:14px; text-align:center; grid-column:1 / -1;">No courses available yet. Scan a classroom QR code or sign in to get started.</div>`;
+      return;
+    }
+
+    listEl.innerHTML = courses.map(c => {
+      const pct = Number(c.attendance_pct || 0);
+      const badgeClass = c.is_enrolled ? (pct >= 75 ? "cp-badge--green" : "cp-badge--amber") : "cp-badge--neutral";
+      const pctLabel = c.is_enrolled ? `Attendance: ${pct}%` : "Not Enrolled";
+      return `
+        <button type="button"
+                class="cp-hub-tile cp-course-tile"
+                data-course-id="${Number(c.id)}"
+                onclick="openCourseHub(${Number(c.id)})">
+          <div class="cp-tile-head">
+            <span class="cp-tile-icon cp-tile-icon--coral">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+            </span>
+            <span class="cp-badge cp-tabular ${badgeClass}">${escapeHtml(pctLabel)}</span>
+          </div>
+          <div>
+            <div class="cp-tile-title">${escapeHtml(c.name)}</div>
+            <div class="cp-tile-sub" style="margin-top:4px;">${escapeHtml(c.lecturer_name)}</div>
+          </div>
+        </button>
+      `;
+    }).join("");
+  }
+
+  function openCourseHub(courseId) {
+    CURRENT_COURSE_ID = courseId;
+    navigateStudent({ screen: "course-hub", courseId });
+  }
+
+  // LEVEL 1: Course Hub (5 Clear Clickable Tiles)
+  function renderCourseHub(courseId) {
+    const container = document.getElementById("screen-course-hub");
+    const c = findFullCourseById(courseId);
+    if (!container || !c) return;
+
+    const lecCount = (c.sessions || []).length;
+    const assignCount = getCourseAssignments(courseId).length;
+    const sumCount = getCourseSummaries(courseId).length;
+    const pctText = c.is_enrolled ? `Attendance: ${Number(c.attendance_pct || 0)}%` : "View details";
+
+    container.innerHTML = `
+      <div class="cp-card cp-card--compact">
+        <div class="cp-row-between">
+          <div>
+            <h2 style="margin:0; font-size:20px; font-weight:800; color:var(--cp-ink);">${escapeHtml(c.name)}</h2>
+            <div class="cp-muted" style="font-size:14px; margin-top:2px;">${escapeHtml(c.lecturer_name)}</div>
+          </div>
+          ${c.is_enrolled ? `<span class="cp-badge cp-badge--green cp-tabular">Attendance: ${Number(c.attendance_pct || 0)}%</span>` : ""}
+        </div>
+      </div>
+
+      <div class="cp-hub-grid">
+        <button type="button" id="hub-tile-lectures" class="cp-hub-tile" onclick="navigateStudent({ screen: 'course-lectures', courseId: ${Number(courseId)} })">
+          <div class="cp-tile-head">
+            <span class="cp-tile-icon cp-tile-icon--indigo">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="6 3 20 12 6 21 6 3"/></svg>
+            </span>
+          </div>
+          <div>
+            <div class="cp-tile-title">Lectures</div>
+            <div class="cp-tile-sub">${lecCount} lecture${lecCount === 1 ? "" : "s"}</div>
+          </div>
+        </button>
+
+        <button type="button" id="hub-tile-attendance" class="cp-hub-tile" onclick="navigateStudent({ screen: 'course-attendance', courseId: ${Number(courseId)} })">
+          <div class="cp-tile-head">
+            <span class="cp-tile-icon cp-tile-icon--green">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg>
+            </span>
+          </div>
+          <div>
+            <div class="cp-tile-title">Attendance Breakdown</div>
+            <div class="cp-tile-sub">${escapeHtml(pctText)}</div>
+          </div>
+        </button>
+
+        <button type="button" id="hub-tile-assignments" class="cp-hub-tile" onclick="navigateStudent({ screen: 'course-assignments', courseId: ${Number(courseId)} })">
+          <div class="cp-tile-head">
+            <span class="cp-tile-icon cp-tile-icon--coral">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
+            </span>
+          </div>
+          <div>
+            <div class="cp-tile-title">Assignments</div>
+            <div class="cp-tile-sub">${assignCount} assignment${assignCount === 1 ? "" : "s"} &amp; upload</div>
+          </div>
+        </button>
+
+        <button type="button" id="hub-tile-summaries" class="cp-hub-tile" onclick="navigateStudent({ screen: 'course-summaries', courseId: ${Number(courseId)} })">
+          <div class="cp-tile-head">
+            <span class="cp-tile-icon cp-tile-icon--purple">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M16 13H8"/><path d="M16 17H8"/></svg>
+            </span>
+          </div>
+          <div>
+            <div class="cp-tile-title">Summaries</div>
+            <div class="cp-tile-sub">${sumCount} study guide${sumCount === 1 ? "" : "s"}</div>
+          </div>
+        </button>
+
+        <button type="button" id="hub-tile-info" class="cp-hub-tile" onclick="navigateStudent({ screen: 'course-info', courseId: ${Number(courseId)} })">
+          <div class="cp-tile-head">
+            <span class="cp-tile-icon cp-tile-icon--amber">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+            </span>
+          </div>
+          <div>
+            <div class="cp-tile-title">Course Info</div>
+            <div class="cp-tile-sub">Course number &amp; syllabus details</div>
+          </div>
+        </button>
+      </div>
+    `;
+  }
+
+  // LEVEL 2A: Lectures List (Date-grouped, newest first, zero raw codes)
+  function renderCourseLectures(courseId) {
+    const container = document.getElementById("screen-course-lectures");
+    const c = findFullCourseById(courseId);
+    if (!container || !c) return;
+    const sessions = sortSessionsNewestFirst(c.sessions || []);
+    if (!sessions.length) {
+      container.innerHTML = `<div class="cp-card cp-muted" style="text-align:center;">No lectures created yet in this course.</div>`;
+      return;
+    }
+
+    const dateGroups = [];
+    const groupByKey = new Map();
+    for (const s of sessions) {
+      const info = formatLectureDateHeading(s.started_at_iso || s.started_at);
+      let group = groupByKey.get(info.key);
+      if (!group) {
+        group = { key: info.key, label: info.label, items: [] };
+        groupByKey.set(info.key, group);
+        dateGroups.push(group);
+      }
+      group.items.push({ session: s, time: info.time });
+    }
+
+    const timelineHtml = dateGroups.map(group => {
+      const rowsHtml = group.items.map(({ session: s, time }) => {
+        const isSelected = ACTIVE_SESSION && ACTIVE_SESSION.session_code === s.session_code;
+        const badge = formatAttendanceBadge(s, c.is_enrolled);
+        return `
+          <button type="button"
+                  class="cp-m-lecture-row ${isSelected ? 'active' : ''}"
+                  data-session-code="${escapeHtml(s.session_code)}"
+                  onclick="openStudentLecture(${Number(c.id)}, '${escapeHtml(s.session_code)}');">
+            <div class="cp-m-lecture-main">
+              <div class="cp-m-lecture-title">${escapeHtml(formatLectureLabel(s))}</div>
+              <div class="cp-m-lecture-meta cp-tabular">
+                ${time ? `<span>${escapeHtml(time)}</span>` : ""}
+              </div>
+            </div>
+            <div class="cp-m-lecture-right">
+              <span class="cp-badge ${badge.badgeClass}">${escapeHtml(badge.label)}</span>
+              <span class="cp-m-lecture-chev" aria-hidden="true">&#8250;</span>
+            </div>
+          </button>
+        `;
+      }).join("");
+      return `
+        <div class="cp-m-date-group" data-date-key="${escapeHtml(group.key)}">
+          <div class="cp-m-date-heading">${escapeHtml(group.label)}</div>
+          <div class="cp-m-lecture-list">${rowsHtml}</div>
+        </div>
+      `;
+    }).join("");
+
+    container.innerHTML = `<div class="cp-card"><div class="cp-m-timeline" style="margin-top:0;">${timelineHtml}</div></div>`;
+  }
+
+  // LEVEL 2B: Attendance Breakdown (Lecture-by-lecture, local timestamps, zero UTC)
+  function renderCourseAttendance(courseId) {
+    const container = document.getElementById("screen-course-attendance");
+    const c = findFullCourseById(courseId);
+    if (!container || !c) return;
+    const sessions = sortSessionsNewestFirst(c.sessions || []);
+
+    const summaryCard = `
+      <div class="cp-card cp-card--compact">
+        <div class="cp-row-between">
+          <div>
+            <div class="cp-eyebrow">Overall Attendance</div>
+            <div style="font-size:22px; font-weight:800; color:var(--cp-ink); margin-top:2px;">
+              Attendance: ${Number(c.attendance_pct || 0)}%
+            </div>
+          </div>
+          <span class="cp-badge cp-badge--indigo cp-tabular">
+            ${Number(c.attended_count || 0)} of ${Number(c.total_sessions || sessions.length)} lectures
+          </span>
+        </div>
+      </div>
+    `;
+
+    if (!sessions.length) {
+      container.innerHTML = summaryCard + `<div class="cp-card cp-muted" style="text-align:center;">No lectures recorded yet.</div>`;
+      return;
+    }
+
+    const rowsHtml = sessions.map(s => {
+      const badge = formatAttendanceBadge(s, c.is_enrolled);
+      const localCheckIn = s.checked_in && (s.checked_in_at_iso || s.checked_in_at)
+        ? `Recorded ${formatLocalDateTime(s.checked_in_at_iso, s.checked_in_at)}`
+        : formatLocalDateTime(s.started_at_iso, s.started_at);
+      return `
+        <button type="button"
+                class="cp-m-lecture-row"
+                data-session-code="${escapeHtml(s.session_code)}"
+                onclick="openStudentLecture(${Number(c.id)}, '${escapeHtml(s.session_code)}')">
+          <div class="cp-m-lecture-main">
+            <div class="cp-m-lecture-title">${escapeHtml(formatLectureLabel(s))}</div>
+            <div class="cp-m-lecture-meta cp-tabular">${escapeHtml(localCheckIn)}</div>
+          </div>
+          <div class="cp-m-lecture-right">
+            <span class="cp-badge ${badge.badgeClass}">${escapeHtml(badge.label)}</span>
+            <span class="cp-m-lecture-chev" aria-hidden="true">&#8250;</span>
+          </div>
+        </button>
+      `;
+    }).join("");
+
+    container.innerHTML = summaryCard + `<div class="cp-card"><div class="cp-m-lecture-list">${rowsHtml}</div></div>`;
+  }
+
+  // LEVEL 2C: Course Info (ONLY Student screen displaying Course Number / Code!)
+  function renderCourseInfo(courseId) {
+    const container = document.getElementById("screen-course-info");
+    const c = findFullCourseById(courseId);
+    if (!container || !c) return;
+    container.innerHTML = `
+      <div class="cp-card">
+        <div class="cp-card-header">
+          <h3>Course Details</h3>
+        </div>
+        <div class="cp-detail-list">
+          <div class="cp-detail-row">
+            <span class="cp-muted">Course Name</span>
+            <strong style="color:var(--cp-ink);">${escapeHtml(c.name)}</strong>
+          </div>
+          <div class="cp-detail-row">
+            <span class="cp-muted">Course Number</span>
+            <span id="course-info-number" class="cp-code-pill code-pill" style="font-size:14px; padding:5px 12px;">${escapeHtml(c.course_code)}</span>
+          </div>
+          <div class="cp-detail-row">
+            <span class="cp-muted">Lecturer</span>
+            <strong style="color:var(--cp-ink);">${escapeHtml(c.lecturer_name)}</strong>
+          </div>
+          <div class="cp-detail-row">
+            <span class="cp-muted">Department</span>
+            <strong style="color:var(--cp-ink);">${escapeHtml(c.department || "General")}</strong>
+          </div>
+          <div class="cp-detail-row">
+            <span class="cp-muted">Semester</span>
+            <strong style="color:var(--cp-ink);">${escapeHtml(c.semester || "Current")}</strong>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  // LEVEL 2D & LEVEL 3: Assignments List + Prominent Upload & Review Detail
+  function renderAssignmentsListScreen(courseId) {
+    const el = document.getElementById("student-assignments-list");
+    if (!el) return;
+    const assignments = getCourseAssignments(courseId);
+    if (!assignments.length) {
+      el.innerHTML = `<div class="cp-card cp-muted" style="text-align:center; padding:22px;">No assignments posted yet for this course.</div>`;
+      return;
+    }
+
+    el.innerHTML = `<div class="cp-course-grid">` + assignments.map(a => {
+      const sub = a.my_submission;
+      const myScore = sub
+        ? (sub.ai_rubric_grade !== undefined ? sub.ai_rubric_grade : (sub.metrics ? sub.metrics.overall_score : null))
+        : null;
+      const statusBadge = myScore !== null
+        ? `<span class="cp-badge cp-badge--green cp-tabular">Submitted \u00b7 ${escapeHtml(myScore)}/100</span>`
+        : `<span class="cp-badge cp-badge--indigo">Ready to Upload</span>`;
+      return `
+        <button type="button"
+                class="cp-hub-tile"
+                data-assignment-id="${Number(a.id)}"
+                onclick="openAssignmentDetail(${Number(courseId)}, ${Number(a.id)})">
+          <div class="cp-tile-head">
+            <span class="cp-tile-icon cp-tile-icon--coral">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
+            </span>
+            ${statusBadge}
+          </div>
+          <div>
+            <div class="cp-tile-title">${escapeHtml(a.title)}</div>
+            <div class="cp-tile-sub" style="margin-top:4px;">${escapeHtml((a.rubric_text || "Upload file or submit code").slice(0, 88))}</div>
+          </div>
+        </button>
+      `;
+    }).join("") + `</div>`;
+  }
+
+  function openAssignmentDetail(courseId, assignmentId) {
+    CURRENT_COURSE_ID = courseId;
+    CURRENT_ASSIGNMENT_ID = assignmentId;
+    navigateStudent({ screen: "assignment-detail", courseId, assignmentId });
+  }
+
+  function renderTelemetryPills(telemetry) {
+    if (!telemetry) return "";
+    const labels = [
+      ["line_count", "Lines"],
+      ["structure_count", "Classes/Funcs"],
+      ["assertion_count", "Assertions"],
+      ["doc_signals", "Docs/Comments"],
+    ];
+    const items = labels
+      .filter(([k]) => telemetry[k] !== undefined)
+      .map(([k, lbl]) => {
+        const item = telemetry[k];
+        return `<span class="cp-telemetry-pill cp-tabular">${escapeHtml(lbl)}: <strong style="color:var(--cp-ink);">${escapeHtml(item.mine)}</strong> <span class="cp-muted">(Avg ${escapeHtml(item.cohort_avg)})</span></span>`;
+      });
+    if (!items.length) return "";
+    return `<div class="cp-row-wrap" style="gap:6px; margin-bottom:10px;">${items.join("")}</div>`;
+  }
+
+  function renderCategoryBreakdownHtml(categories) {
+    if (!Array.isArray(categories) || !categories.length) return "";
+    const rows = categories.map(c => {
+      const score = Number(c.ai_rubric_score || 0);
+      const avg = Number(c.cohort_mean || 0);
+      const best = Number(c.cohort_best || 0);
+      const clsScore = c.class_score || 10;
+      const barColor = clsScore >= 8 ? "var(--cp-green)" : (clsScore >= 5 ? "var(--cp-indigo)" : "var(--cp-amber)");
+      return `
+        <div class="cp-well cp-cat-bar" style="padding:10px 12px; margin-bottom:0;">
+          <div class="cp-row-between" style="gap:6px; margin-bottom:6px;">
+            <strong style="font-size:13px; color:var(--cp-ink);">${escapeHtml(c.label)}</strong>
+            <span class="cp-badge cp-badge--purple cp-tabular">
+              ${escapeHtml(clsScore)}/10 (#${escapeHtml(c.rank)}/${escapeHtml(c.cohort_size)})
+            </span>
+          </div>
+          <div class="cp-cat-bar-track">
+            <div style="position:absolute; top:0; bottom:0; left:0; width:${Math.min(100, Math.max(0, best))}%; background:rgba(91,95,239,0.14); border-radius:999px;"></div>
+            <div class="cp-cat-bar-fill" style="position:relative; width:${Math.min(100, Math.max(0, score))}%; background:${barColor};"></div>
+            <div class="cp-cat-bar-avg" title="Class Average" style="left:${Math.min(99, Math.max(0, avg))}%;"></div>
+          </div>
+          <div class="cp-row-between cp-muted cp-tabular" style="font-size:12px; margin-top:5px;">
+            <span>Rubric: <strong style="color:var(--cp-ink);">${score}/100</strong></span>
+            <span>Avg: <strong>${avg}</strong> &bull; Best: <strong>${best}</strong></span>
+          </div>
+        </div>
+      `;
+    }).join("");
+    return `<div class="cp-stack-xs" style="margin-bottom:10px;">${rows}</div>`;
+  }
+
+  function renderSimpleReviewHtml(md) {
+    const safe = escapeHtml(md || "No review generated yet.");
+    const formatInline = (s) =>
+      s
+        .replace(/&amp;bull;/g, "&bull;")
+        .replace(/\*\*(.+?)\*\*/g, '<strong style="color:var(--cp-ink);">$1</strong>')
+        .replace(/`([^`]+)`/g, '<code style="background:var(--cp-surface-solid); color:var(--cp-indigo-ink); border:1px solid var(--cp-border); padding:1px 5px; border-radius:5px; font-size:12px;">$1</code>');
+
+    const lines = safe.split(/\r?\n/);
+    let html = "";
+    let inList = false;
+    for (const rawLine of lines) {
+      const line = rawLine.trim();
+      if (!line) {
+        if (inList) { html += "</ul>"; inList = false; }
+        continue;
+      }
+      if (line.startsWith("### ") || line.startsWith("## ")) {
+        if (inList) { html += "</ul>"; inList = false; }
+        const headingText = line.replace(/^#{2,3}\s+/, "");
+        html += `<div class="cp-eyebrow" style="color:var(--cp-indigo-ink); margin:8px 0 4px;">${formatInline(headingText)}</div>`;
+      } else if (line.startsWith("- ") || line.startsWith("* ")) {
+        if (!inList) { html += '<ul style="margin:0 0 6px 18px; padding:0;">'; inList = true; }
+        html += `<li style="margin:3px 0; color:var(--cp-ink);">${formatInline(line.slice(2))}</li>`;
+      } else {
+        if (inList) { html += "</ul>"; inList = false; }
+        html += `<p style="margin:4px 0; color:var(--cp-ink-secondary);">${formatInline(line)}</p>`;
+      }
+    }
+    if (inList) html += "</ul>";
+    return html;
+  }
+
+  function handleHwFileSelected(assignId, fileObj) {
+    if (fileObj) {
+      SELECTED_HW_FILES[assignId] = fileObj;
+    } else {
+      delete SELECTED_HW_FILES[assignId];
+    }
+    const chipEl = document.getElementById(`hw-file-chip-${assignId}`);
+    if (chipEl) {
+      if (fileObj) {
+        chipEl.style.display = "inline-flex";
+        chipEl.innerHTML = `
+          <span>${escapeHtml(fileObj.name)} (${escapeHtml(formatBytes(fileObj.size))})</span>
+          <button type="button" class="cp-toast-close" onclick="event.stopPropagation(); clearHwFile(${Number(assignId)})" aria-label="Remove file">&times;</button>
+        `;
+      } else {
+        chipEl.style.display = "none";
+        chipEl.innerHTML = "";
+      }
+    }
+  }
+
+  function clearHwFile(assignId) {
+    const fileEl = document.getElementById(`hw-file-${assignId}`);
+    if (fileEl) fileEl.value = "";
+    handleHwFileSelected(assignId, null);
+  }
+
+  function renderAssignmentDetailScreen(courseId, assignId) {
+    const container = document.getElementById("screen-assignment-detail");
+    if (!container) return;
+    const assignments = getCourseAssignments(courseId);
+    const a = assignments.find(x => Number(x.id) === Number(assignId));
+    if (!a) {
+      container.innerHTML = `<div class="cp-card cp-muted" style="text-align:center;">Assignment not found.</div>`;
+      return;
+    }
+
+    const prevCode = document.getElementById(`hw-code-${assignId}`)?.value || "";
+    const prevGit = document.getElementById(`hw-git-${assignId}`)?.value || "";
+    const sub = a.my_submission;
+    const myScore = sub
+      ? (sub.ai_rubric_grade !== undefined ? sub.ai_rubric_grade : (sub.metrics ? sub.metrics.overall_score : null))
+      : null;
+    const standing = sub ? sub.class_standing : null;
+    const deltaInfo = CLASS_SCORE_DELTAS[a.id];
+    const isPending = PENDING_REVIEWS.has(a.id);
+    const isSubmitting = SUBMITTING_ASSIGNMENTS.has(a.id);
+    const selectedFile = SELECTED_HW_FILES[a.id] || null;
+
+    container.innerHTML = `
+      <div class="cp-card">
+        <div class="cp-row-between" style="margin-bottom:8px;">
+          <h2 style="margin:0; font-size:20px; font-weight:800; color:var(--cp-ink);">${escapeHtml(a.title)}</h2>
+          ${myScore !== null
+            ? `<span class="cp-badge cp-badge--green cp-tabular">Score: ${escapeHtml(myScore)}/100</span>`
+            : `<span class="cp-badge cp-badge--indigo">Open for Submission</span>`}
+        </div>
+        <p class="cp-secondary" style="font-size:14.5px; margin:0 0 14px 0; line-height:1.5;">${escapeHtml(a.rubric_text)}</p>
+
+        ${!STATE.student ? `
+          <div class="cp-alert cp-alert--warn cp-row-between" style="margin-bottom:14px;">
+            <span>Sign in to upload and submit your assignment.</span>
+            <button type="button" class="cp-btn cp-btn--white cp-btn--sm" onclick="focusStudentSignIn()">Sign In</button>
+          </div>
+        ` : ""}
+
+        <div class="cp-stack-sm">
+          <div>
+            <label class="cp-label" for="hw-file-${Number(a.id)}">Upload Assignment File</label>
+            <div class="cp-upload-dropzone"
+                 id="hw-dropzone-${Number(a.id)}"
+                 onclick="document.getElementById('hw-file-${Number(a.id)}').click()"
+                 ondragover="event.preventDefault(); this.classList.add('dragover');"
+                 ondragleave="this.classList.remove('dragover');"
+                 ondrop="event.preventDefault(); this.classList.remove('dragover'); if(event.dataTransfer.files[0]) handleHwFileSelected(${Number(a.id)}, event.dataTransfer.files[0]);">
+              <span class="cp-tile-icon cp-tile-icon--indigo" style="width:44px; height:44px;">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
+              </span>
+              <strong style="font-size:15px; color:var(--cp-ink);">Tap to choose a file or drag &amp; drop</strong>
+              <span class="cp-muted" style="font-size:13px;">Supports .py, .java, .c, .cpp, .js, .ts, .pdf, .docx, .zip, .txt, .md</span>
+              <input type="file"
+                     id="hw-file-${Number(a.id)}"
+                     class="sr-only"
+                     accept=".py,.java,.c,.cpp,.h,.js,.ts,.pdf,.docx,.zip,.txt,.md"
+                     onchange="handleHwFileSelected(${Number(a.id)}, this.files && this.files[0])" />
+              <div id="hw-file-chip-${Number(a.id)}" class="cp-upload-file-chip" style="display:${selectedFile ? 'inline-flex' : 'none'};">
+                ${selectedFile ? `<span>${escapeHtml(selectedFile.name)} (${escapeHtml(formatBytes(selectedFile.size))})</span>` : ""}
+              </div>
+            </div>
+          </div>
+
+          <details class="cp-m-accordion" style="border-top:none; padding-top:0;">
+            <summary>
+              <span>Or Paste Code / Notes / GitHub URL</span>
+              <span class="cp-muted">&#9662;</span>
+            </summary>
+            <div class="cp-stack-xs" style="margin-top:8px;">
+              <textarea id="hw-code-${Number(a.id)}" class="cp-textarea" rows="4" placeholder="Paste code or submission notes (optional)...">${escapeHtml(prevCode)}</textarea>
+              <input type="text" id="hw-git-${Number(a.id)}" class="cp-input" placeholder="Or GitHub repository URL (optional)" value="${escapeHtml(prevGit)}" />
+            </div>
+          </details>
+
+          <button id="hw-btn-${Number(a.id)}" type="button" class="cp-btn cp-btn--primary cp-btn--block" onclick="submitStudentHomework(${Number(a.id)})" ${isSubmitting ? "disabled" : ""}>
+            ${isSubmitting ? "Uploading & Submitting..." : "Upload & Submit Assignment"}
+          </button>
+
+          <div id="hw-status-${Number(a.id)}" style="font-size:13.5px; font-weight:700; min-height:18px; color:${isPending ? 'var(--cp-indigo-ink)' : 'var(--cp-ink-muted)'};">
+            ${isPending ? "Submitted! AI review in progress..." : ""}
+          </div>
+        </div>
+      </div>
+
+      ${sub ? `
+        <div class="cp-card">
+          <div class="cp-grid-2-tight" style="margin-bottom:10px;">
+            <div class="cp-metric-tile cp-metric-tile--green">
+              <div class="cp-eyebrow" style="color:var(--cp-green-ink);">AI Rubric</div>
+              <div class="cp-hw-kpi-val">${escapeHtml(myScore)}<span class="cp-muted" style="font-size:13px;">/100</span></div>
+            </div>
+            <div class="cp-metric-tile cp-metric-tile--purple">
+              <div class="cp-eyebrow" style="color:var(--cp-purple-ink);">Class Standing</div>
+              <div class="cp-hw-kpi-val">${standing ? escapeHtml(standing.class_score) : 10}<span class="cp-muted" style="font-size:13px;">/10</span></div>
+              <div class="cp-muted" style="font-size:12.5px;">Rank #${standing ? escapeHtml(standing.rank) : 1} of ${standing ? escapeHtml(standing.cohort_size) : 1}</div>
+            </div>
+          </div>
+          ${deltaInfo ? `
+            <div class="cp-alert cp-alert--info" style="font-size:13px; margin-bottom:10px;">
+              Class Standing updated: <strong>${escapeHtml(deltaInfo.from)}/10 &rarr; ${escapeHtml(deltaInfo.to)}/10</strong>
+            </div>
+          ` : ""}
+          <details class="cp-m-accordion" open>
+            <summary>
+              <span>Score Breakdown &amp; Metrics</span>
+              <span class="cp-muted">&#9662;</span>
+            </summary>
+            <div style="margin-top:8px;">
+              ${renderCategoryBreakdownHtml(sub.category_breakdown)}
+              ${renderTelemetryPills(sub.telemetry_comparison)}
+            </div>
+          </details>
+          <details class="cp-m-accordion" open>
+            <summary>
+              <span>AI Code Review</span>
+              <span class="cp-muted">&#9662;</span>
+            </summary>
+            <div class="cp-review-md" style="margin-top:8px; background:var(--cp-well);">
+              ${renderSimpleReviewHtml(sub.deep_review_md)}
+            </div>
+          </details>
+        </div>
+      ` : ""}
+    `;
+  }
+
+  function setHomeworkStatus(assignId, message, kind = "info") {
+    const el = document.getElementById(`hw-status-${assignId}`);
+    if (!el) return;
+    const colorMap = {
+      info: "var(--cp-ink-muted)",
+      pending: "var(--cp-indigo-ink)",
+      success: "var(--cp-green-ink)",
+      error: "var(--cp-red-ink)",
+    };
+    el.style.color = colorMap[kind] || "var(--cp-ink-muted)";
+    el.textContent = message || "";
+  }
+
+  async function loadAssignmentsForCourse(courseId) {
+    if (!courseId) return;
+    const stQuery = STATE.student && STATE.student.id ? `?student_id=${STATE.student.id}&_ts=${Date.now()}` : `?_ts=${Date.now()}`;
+    try {
+      const hwRes = await fetch(`/api/courses/${courseId}/assignments${stQuery}`, { cache: "no-store" });
+      if (!hwRes.ok) return;
+      const hwData = await hwRes.json();
+      const assignments = hwData.assignments || [];
+      ASSIGNMENTS_BY_COURSE[courseId] = assignments;
+
+      const isFirstLoad = HW_INITIALIZED_COURSE_ID !== courseId;
+      let newlyDiscoveredTitle = null;
+      for (const a of assignments) {
+        if (!KNOWN_ASSIGNMENT_IDS.has(a.id)) {
+          if (!isFirstLoad) newlyDiscoveredTitle = a.title;
+          KNOWN_ASSIGNMENT_IDS.add(a.id);
+        }
+        if (a.my_submission && PENDING_REVIEWS.has(a.id)) {
+          PENDING_REVIEWS.delete(a.id);
+        }
+        const standing = a.my_submission && a.my_submission.class_standing;
+        if (standing && typeof standing.class_score === "number") {
+          const prev = LAST_CLASS_SCORES[a.id];
+          if (typeof prev === "number" && prev !== standing.class_score) {
+            CLASS_SCORE_DELTAS[a.id] = { from: prev, to: standing.class_score };
+          }
+          LAST_CLASS_SCORES[a.id] = standing.class_score;
+        }
+      }
+      HW_INITIALIZED_COURSE_ID = courseId;
+
+      const st = currentScreenState();
+      if (st.screen === "course-assignments" && Number(st.courseId) === Number(courseId)) {
+        renderAssignmentsListScreen(courseId);
+      } else if (st.screen === "assignment-detail" && Number(st.courseId) === Number(courseId)) {
+        renderAssignmentDetailScreen(courseId, st.assignmentId);
+      }
+      if (newlyDiscoveredTitle) {
+        notifyNewAssignment(newlyDiscoveredTitle, courseId);
+      }
+    } catch (err) {
+      console.error("loadAssignmentsForCourse error:", err);
+    }
+  }
+
+  async function loadSummariesForCourse(courseId) {
+    if (!courseId) return;
+    try {
+      const res = await fetch(`/api/courses/${courseId}/lectures?_ts=${Date.now()}`, { cache: "no-store" });
+      if (!res.ok) return;
+      const data = await res.json();
+      const artifacts = data.artifacts || [];
+      SUMMARIES_BY_COURSE[courseId] = artifacts;
+      if (currentScreenState().screen === "course-summaries" && Number(currentScreenState().courseId) === Number(courseId)) {
+        renderStudyLectures(artifacts);
+      }
+    } catch (err) {
+      console.error("loadSummariesForCourse error:", err);
+    }
+  }
+
+  function renderStudyLectures(artifacts) {
+    const el = document.getElementById("student-lecture-summaries");
+    if (!el) return;
+    if (!artifacts.length) {
+      el.innerHTML = `<div class="cp-card cp-muted" style="text-align:center; padding:22px;">No published AI lecture summaries yet for this course.</div>`;
+      return;
+    }
+    el.innerHTML = artifacts.map((a, idx) => {
+      const segHtml = (a.corrected_transcript || []).map(seg =>
+        `<div class="cp-m-hairline-row" style="justify-content:flex-start;"><span class="cp-ts ts">[${escapeHtml(seg.offset_mmss)}]</span> <span style="color:var(--cp-ink); overflow-wrap:anywhere;">${escapeHtml(seg.text)}</span></div>`
+      ).join("");
+      return `
+        <div class="cp-card">
+          <div class="cp-row-between" style="margin-bottom:10px;">
+            <strong style="font-size:16px; color:var(--cp-ink); overflow-wrap:anywhere;">${escapeHtml(a.lecture_title || "Lecture Summary")}</strong>
+          </div>
+          <div class="cp-row-wrap" style="margin-bottom:10px; gap:8px;">
+            <a class="cp-btn cp-btn--green cp-btn--sm" href="/api/lectures/${Number(a.id)}/download/summary.md">Summary (.md)</a>
+            <a class="cp-btn cp-btn--secondary cp-btn--sm" href="/api/lectures/${Number(a.id)}/download/transcript.txt">Transcript (.txt)</a>
+          </div>
+          <details class="cp-m-accordion" ${idx === 0 ? "open" : ""}>
+            <summary>
+              <span>AI Summary</span>
+              <span class="cp-muted">&#9662;</span>
+            </summary>
+            <div class="cp-review-md" style="margin:8px 0 0 0; background:var(--cp-well);">${renderSimpleReviewHtml(a.summary_markdown)}</div>
+          </details>
+          <details class="cp-m-accordion">
+            <summary>
+              <span>Corrected Transcript</span>
+              <span class="cp-muted">&#9662;</span>
+            </summary>
+            <div style="margin-top:6px;">${segHtml}</div>
+          </details>
+        </div>
+      `;
+    }).join("");
+  }
+
+  async function submitStudentHomework(assignId) {
+    if (!STATE.student) {
+      setHomeworkStatus(assignId, "Sign in with your Name & Email first.", "error");
+      focusStudentSignIn();
+      return;
+    }
+    if (SUBMITTING_ASSIGNMENTS.has(assignId)) return;
+
+    const codeEl = document.getElementById(`hw-code-${assignId}`);
+    const gitEl = document.getElementById(`hw-git-${assignId}`);
+    const fileEl = document.getElementById(`hw-file-${assignId}`);
+    const btnEl = document.getElementById(`hw-btn-${assignId}`);
+
+    const code = codeEl ? codeEl.value.trim() : "";
+    const git = gitEl ? gitEl.value.trim() : "";
+    const pickedFile = SELECTED_HW_FILES[assignId] || (fileEl && fileEl.files && fileEl.files[0]) || null;
+
+    if (!code && !git && !pickedFile) {
+      setHomeworkStatus(
+        assignId,
+        "Please choose a file, paste code/text, or enter a GitHub URL before submitting.",
+        "error"
+      );
+      return;
+    }
+
+    SUBMITTING_ASSIGNMENTS.add(assignId);
+    if (btnEl) {
+      btnEl.disabled = true;
+      btnEl.textContent = "Uploading & Submitting...";
+    }
+    setHomeworkStatus(assignId, "Uploading submission...", "pending");
+
+    try {
+      let res;
+      if (pickedFile) {
+        const fd = new FormData();
+        fd.append("file", pickedFile);
+        fd.append("student_id", STATE.student.id);
+        fd.append("generate_review", "true");
+        fd.append("async", "true");
+        if (code) fd.append("content_text", code);
+        if (git) fd.append("github_url", git);
+        res = await fetch(`/api/assignments/${assignId}/submissions?async=1`, {
+          method: "POST",
+          body: fd,
+        });
+      } else {
+        res = await fetch(`/api/assignments/${assignId}/submissions?async=1`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            student_id: STATE.student.id,
+            content_text: code,
+            github_url: git,
+            generate_review: true,
+            async: true,
+          }),
+        });
+      }
+
+      const rawText = await res.text();
+      let data = {};
+      try {
+        data = rawText ? JSON.parse(rawText) : {};
+      } catch (_parseErr) {
+        data = { error: `Server returned HTTP ${res.status}` };
+      }
+
+      if (!res.ok) {
+        setHomeworkStatus(assignId, data.error || `Submission failed (HTTP ${res.status}).`, "error");
+        return;
+      }
+
+      if (codeEl) codeEl.value = "";
+      if (gitEl) gitEl.value = "";
+      clearHwFile(assignId);
+
+      const courseId = CURRENT_COURSE_ID || (ACTIVE_SESSION && ACTIVE_SESSION.course_id);
+      if (res.status === 202 || data.status === "PENDING") {
+        PENDING_REVIEWS.add(assignId);
+        setHomeworkStatus(assignId, "Submitted! AI review in progress...", "pending");
+        setTimeout(() => loadAssignmentsForCourse(courseId), 2000);
+      } else {
+        PENDING_REVIEWS.delete(assignId);
+        setHomeworkStatus(assignId, "Submission graded!", "success");
+        await loadAssignmentsForCourse(courseId);
+      }
+    } catch (err) {
+      setHomeworkStatus(
+        assignId,
+        `Network error while submitting: ${err && err.message ? err.message : "Request failed"}`,
+        "error"
+      );
+    } finally {
+      SUBMITTING_ASSIGNMENTS.delete(assignId);
+      const latestBtn = document.getElementById(`hw-btn-${assignId}`);
+      if (latestBtn) {
+        latestBtn.disabled = false;
+        latestBtn.textContent = "Upload & Submit Assignment";
+      }
+    }
+  }
+
+  function notifyNewAssignment(title, courseId) {
+    const st = currentScreenState();
+    if (st.screen === "course-assignments" || st.screen === "assignment-detail") return;
+    const dot = document.getElementById("study-new-dot");
+    if (dot) {
+      dot.style.display = "inline-block";
+      dot.classList.add("hot");
+    }
+    const existing = document.getElementById("study-toast-banner");
+    if (existing) existing.remove();
+    const container = document.getElementById("student-main-content");
+    if (!container) return;
+    const banner = document.createElement("div");
+    banner.id = "study-toast-banner";
+    banner.className = "cp-alert cp-alert--info cp-row-between";
+    banner.style.cssText = "cursor:pointer; margin-bottom:0;";
+    banner.innerHTML = `
+      <span><strong>New Assignment:</strong> ${escapeHtml(title || "Assignment")}</span>
+      <span class="cp-badge cp-badge--indigo">Open &rarr;</span>
+    `;
+    banner.onclick = () => {
+      const targetCourseId = courseId || CURRENT_COURSE_ID || (ACTIVE_SESSION && ACTIVE_SESSION.course_id);
+      if (targetCourseId) {
+        navigateStudent({ screen: "course-assignments", courseId: targetCourseId });
+      }
+    };
+    container.insertBefore(banner, container.firstChild);
+  }
+
+  // LEVEL 3: Lecture View (Context Banner, Polls if present, Lecture Q&A, Offline Question)
+  function renderLectureContextBanner() {
+    const banner = document.getElementById("verified-checkin-banner");
+    const textEl = document.getElementById("lecture-context-text");
+    if (!banner || !textEl) return;
+
+    if (ACTIVE_SESSION) {
+      const recorded = Boolean(
+        ACTIVE_SESSION.checked_in ||
+        (SERVER_CHECKIN_BANNER &&
+          SERVER_CHECKIN_BANNER.attendance_recorded &&
+          SERVER_CHECKIN_BANNER.session_code === ACTIVE_SESSION.session_code)
+      );
+      const parts = [];
+      if (ACTIVE_SESSION.course_name) parts.push(ACTIVE_SESSION.course_name);
+      parts.push(formatLectureLabel(ACTIVE_SESSION));
+      if (recorded) parts.push("Attendance Recorded");
+      textEl.textContent = parts.join(" | ");
+      banner.classList.toggle("cp-context-banner--recorded", recorded);
+      return;
+    }
+    if (SERVER_CHECKIN_BANNER) {
+      const parts = [];
+      if (SERVER_CHECKIN_BANNER.course_name) parts.push(SERVER_CHECKIN_BANNER.course_name);
+      parts.push(SERVER_CHECKIN_BANNER.lecture_label || SERVER_CHECKIN_BANNER.session_title || "Lecture");
+      if (SERVER_CHECKIN_BANNER.attendance_recorded) parts.push("Attendance Recorded");
+      textEl.textContent = parts.join(" | ");
+      banner.classList.toggle("cp-context-banner--recorded", Boolean(SERVER_CHECKIN_BANNER.attendance_recorded));
+    }
+  }
+
+  function selectSession(sessionObj, courseObj) {
+    if (ACTIVE_SESSION && ACTIVE_SESSION.session_code && ACTIVE_SESSION.session_code !== sessionObj.session_code) {
+      socket.emit("leave_session", { session_code: ACTIVE_SESSION.session_code });
+    }
+    CHAT_MESSAGES = [];
+    LECTURE_POLLS = [];
+    CURRENT_POLL = null;
+    MY_VOTE = null;
+    KNOWN_ASSIGNMENT_IDS.clear();
+    PENDING_REVIEWS.clear();
+    HW_INITIALIZED_COURSE_ID = null;
+    CURRENT_COURSE_ID = courseObj.id;
+
+    ACTIVE_SESSION = {
+      ...sessionObj,
+      course_id: courseObj.id,
+      course_code: courseObj.course_code,
+      course_name: courseObj.name,
+    };
+
+    renderLectureContextBanner();
+    renderStudentPoll();
+    renderStudentChat();
+
+    socket.emit("join_session", {
+      session_code: sessionObj.session_code,
+      student_id: STATE.student ? STATE.student.id : null,
+      as_student: true,
+    });
+    fetchLatestSessionPolls();
+    fetchLatestSessionChat();
   }
 
   function openStudentLecture(courseId, sessionCode) {
@@ -674,114 +1636,17 @@
     const sess = (course.sessions || []).find(s => s.session_code === sessionCode);
     if (!sess) return;
     selectSession(sess, course);
-    switchView("view-live");
+    navigateStudent({ screen: "lecture", courseId: course.id, sessionCode: sess.session_code });
   }
 
-  function renderCourses() {
-    const listEl = document.getElementById("courses-list");
-    const myCourses = STATE.my_courses || [];
-    const rawCourses = myCourses.length > 0 ? myCourses : (STATE.all_courses || []);
-    const courses = sortCoursesByRecentLecture(rawCourses);
-    if (!courses.length) {
-      listEl.innerHTML = `<div class="cp-card cp-muted" style="font-size:13px; text-align:center;">No courses yet. Scan a classroom QR code to get started!</div>`;
-      return;
-    }
-
-    listEl.innerHTML = courses.map(c => {
-      const sessions = sortSessionsNewestFirst(c.sessions || []);
-      const primarySession = sessions.find(s => ACTIVE_SESSION && ACTIVE_SESSION.session_code === s.session_code) || sessions[0] || null;
-      const courseSelected = ACTIVE_SESSION && ACTIVE_SESSION.course_code === c.course_code;
-
-      const dateGroups = [];
-      const groupByKey = new Map();
-      for (const s of sessions) {
-        const info = formatLectureDateHeading(s.started_at_iso || s.started_at);
-        let group = groupByKey.get(info.key);
-        if (!group) {
-          group = { key: info.key, label: info.label, items: [] };
-          groupByKey.set(info.key, group);
-          dateGroups.push(group);
-        }
-        group.items.push({ session: s, time: info.time });
-      }
-
-      const timelineHtml = dateGroups.map(group => {
-        const rowsHtml = group.items.map(({ session: s, time }) => {
-          const isSelected = ACTIVE_SESSION && ACTIVE_SESSION.session_code === s.session_code;
-          const badge = formatAttendanceBadge(s, c.is_enrolled);
-          return `
-            <button type="button"
-                    class="cp-m-lecture-row ${isSelected ? 'active' : ''}"
-                    data-session-code="${escapeHtml(s.session_code)}"
-                    onclick="event.stopPropagation(); openStudentLecture(${Number(c.id)}, '${escapeHtml(s.session_code)}');">
-              <div class="cp-m-lecture-main">
-                <div class="cp-m-lecture-title">${escapeHtml(s.title)}</div>
-                <div class="cp-m-lecture-meta cp-tabular">
-                  ${time ? `<span>${escapeHtml(time)}</span><span>&bull;</span>` : ''}
-                  <span class="cp-m-lecture-code">${escapeHtml(s.session_code)}</span>
-                  ${isSelected ? '<span class="cp-m-lecture-active-dot">Active</span>' : ''}
-                </div>
-              </div>
-              <div class="cp-m-lecture-right">
-                <span class="cp-badge ${badge.badgeClass}">${escapeHtml(badge.label)}</span>
-                <span class="cp-m-lecture-chev" aria-hidden="true">&#8250;</span>
-              </div>
-            </button>
-          `;
-        }).join("");
-
-        return `
-          <div class="cp-m-date-group" data-date-key="${escapeHtml(group.key)}">
-            <div class="cp-m-date-heading">${escapeHtml(group.label)}</div>
-            <div class="cp-m-lecture-list">${rowsHtml}</div>
-          </div>
-        `;
-      }).join("");
-
-      return `
-        <div class="cp-m-course-card course-card ${courseSelected ? 'selected' : ''}" data-course-code="${escapeHtml(c.course_code)}">
-          <div class="cp-row-between" style="margin-bottom:4px; align-items:flex-start;">
-            <div style="min-width:0; flex:1;">
-              <div class="cp-row-wrap" style="gap:6px; margin-bottom:4px;">
-                <span class="cp-code-pill code-pill">${escapeHtml(c.course_code)}</span>
-                <span class="cp-muted" style="font-size:11.5px;">${escapeHtml(c.lecturer_name)}</span>
-              </div>
-              <strong style="font-size:15.5px; color:var(--cp-ink); display:block; overflow-wrap:anywhere;">${escapeHtml(c.name)}</strong>
-            </div>
-            <span class="cp-badge cp-tabular ${c.is_enrolled ? 'cp-badge--green' : 'cp-badge--neutral'}" style="flex-shrink:0;">
-              ${c.is_enrolled ? `${Number(c.attended_count || 0)}/${Number(c.total_sessions || 0)} (${Number(c.attendance_pct || 0)}%)` : 'Open'}
-            </span>
-          </div>
-
-          ${primarySession ? `
-            <button type="button"
-                    class="cp-m-live-room-cta"
-                    style="margin-top:10px;"
-                    onclick="openStudentLecture(${Number(c.id)}, '${escapeHtml(primarySession.session_code)}');">
-              <span style="min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
-                Open ${escapeHtml(primarySession.title)} (${escapeHtml(primarySession.session_code)})
-              </span>
-              <span>&rarr;</span>
-            </button>
-          ` : ''}
-
-          ${sessions.length > 0 ? `
-            <details class="cp-m-accordion">
-              <summary>
-                <span>All Lectures &amp; Attendance (${sessions.length})</span>
-                <span class="cp-muted">&#9662;</span>
-              </summary>
-              <div class="cp-m-timeline">${timelineHtml}</div>
-            </details>
-          ` : ''}
-        </div>
-      `;
-    }).join("");
-  }
-
-  function applyIncomingPoll(poll, autoFocus = false) {
+  function applyIncomingPoll(poll) {
     if (!poll) return;
-    const isNewActive = poll.status === "ACTIVE" && (!CURRENT_POLL || CURRENT_POLL.id !== poll.id || CURRENT_POLL.status !== "ACTIVE");
+    const idx = LECTURE_POLLS.findIndex(p => Number(p.id) === Number(poll.id));
+    if (idx >= 0) {
+      LECTURE_POLLS[idx] = { ...LECTURE_POLLS[idx], ...poll };
+    } else if (poll.status !== "DRAFT") {
+      LECTURE_POLLS.push(poll);
+    }
     if (poll.my_vote_index !== undefined && poll.my_vote_index !== null) {
       MY_VOTE = poll.my_vote_index;
     } else if (CURRENT_POLL && CURRENT_POLL.id !== poll.id) {
@@ -789,53 +1654,19 @@
     }
     CURRENT_POLL = poll;
     renderStudentPoll();
-    if (isNewActive && autoFocus) {
-      switchView("view-live");
-    }
   }
 
-  function renderStudentPoll() {
-    const stageCard = document.getElementById("poll-stage-card");
-    const box = document.getElementById("student-poll-box");
-    const badge = document.getElementById("student-poll-badge");
-    const dot = document.getElementById("poll-live-dot");
-
-    if (!CURRENT_POLL) {
-      stageCard.classList.remove("active-poll");
-      stageCard.classList.add("cp-poll-idle");
-      if (dot) dot.classList.remove("hot");
-      badge.className = "cp-badge cp-badge--indigo";
-      badge.textContent = "Waiting";
-      box.innerHTML = "";
-      return;
-    }
-
-    stageCard.classList.remove("cp-poll-idle");
-    const isActive = CURRENT_POLL.status === "ACTIVE";
-    const isClosed = CURRENT_POLL.status === "CLOSED";
-    const hasVoted = MY_VOTE !== null && MY_VOTE !== undefined;
-
-    if (isActive) {
-      stageCard.classList.add("active-poll");
-      if (dot) dot.classList.add("hot");
-      badge.className = "cp-badge cp-badge--green";
-      badge.textContent = hasVoted ? "✓ Vote Recorded • Live" : "LIVE — Tap to Vote";
-    } else {
-      stageCard.classList.remove("active-poll");
-      if (dot) dot.classList.remove("hot");
-      badge.className = "cp-badge cp-badge--amber";
-      badge.textContent = "Poll Closed";
-    }
-
-    const optionsHtml = (CURRENT_POLL.options || []).map((opt, idx) => {
-      const isSelected = MY_VOTE === idx;
-      const isCorrect = isClosed && CURRENT_POLL.correct_index === idx;
-      const pct = (CURRENT_POLL.percentages && CURRENT_POLL.percentages[idx]) || 0;
-      const count = (CURRENT_POLL.counts && CURRENT_POLL.counts[idx]) || 0;
+  function renderPollOptionButtons(poll, hasVoted) {
+    const isActive = poll.status === "ACTIVE";
+    const isClosed = poll.status === "CLOSED";
+    return (poll.options || []).map((opt, idx) => {
+      const isSelected = MY_VOTE === idx && Number(CURRENT_POLL?.id) === Number(poll.id);
+      const isCorrect = isClosed && poll.correct_index === idx;
+      const pct = (poll.percentages && poll.percentages[idx]) || 0;
+      const count = (poll.counts && poll.counts[idx]) || 0;
       const showBars = hasVoted || isClosed;
       const color = OPT_COLORS[idx % OPT_COLORS.length];
       const letter = LETTERS[idx] || (idx + 1);
-
       return `
         <button type="button"
                 class="cp-poll-opt poll-opt ${isSelected ? 'selected' : ''} ${isCorrect ? 'correct' : ''}"
@@ -847,31 +1678,94 @@
               <span class="cp-opt-badge opt-badge" style="background:${color};">${escapeHtml(letter)}</span>
               <span style="overflow-wrap:anywhere;">${escapeHtml(opt)} ${isSelected ? '&#10003;' : ''} ${isCorrect ? '&#9733;' : ''}</span>
             </div>
-            ${showBars ? `<span class="cp-poll-pct cp-tabular" style="font-size:12px; color:var(--cp-ink); font-weight:800; flex-shrink:0;">${pct}% <span class="cp-muted" style="font-weight:500;">(${count})</span></span>` : ''}
+            ${showBars ? `<span class="cp-poll-pct cp-tabular" style="font-size:13px; color:var(--cp-ink); font-weight:800; flex-shrink:0;">${pct}% <span class="cp-muted" style="font-weight:500;">(${count})</span></span>` : ''}
           </div>
         </button>
       `;
     }).join("");
+  }
+
+  function renderStudentPoll() {
+    const stageCard = document.getElementById("poll-stage-card");
+    const box = document.getElementById("student-poll-box");
+    const pastBox = document.getElementById("student-past-polls");
+    const badge = document.getElementById("student-poll-badge");
+    if (!stageCard || !box || !badge) return;
+
+    const visiblePolls = LECTURE_POLLS.filter(p => p && p.status !== "DRAFT");
+    if (!CURRENT_POLL && !visiblePolls.length) {
+      stageCard.hidden = true;
+      stageCard.classList.remove("active-poll");
+      box.innerHTML = "";
+      if (pastBox) pastBox.innerHTML = "";
+      return;
+    }
+
+    stageCard.hidden = false;
+    const primary = CURRENT_POLL || visiblePolls[visiblePolls.length - 1];
+    const isActive = primary.status === "ACTIVE";
+    const hasVoted = primary.my_vote_index !== undefined && primary.my_vote_index !== null
+      ? true
+      : (MY_VOTE !== null && MY_VOTE !== undefined);
+    if (primary.my_vote_index !== undefined && primary.my_vote_index !== null) {
+      MY_VOTE = primary.my_vote_index;
+    }
+
+    if (isActive) {
+      stageCard.classList.add("active-poll");
+      badge.className = "cp-badge cp-badge--green";
+      badge.textContent = hasVoted ? "Vote Recorded" : "Open";
+    } else {
+      stageCard.classList.remove("active-poll");
+      badge.className = "cp-badge cp-badge--neutral";
+      badge.textContent = "Closed";
+    }
 
     box.innerHTML = `
-      <div class="cp-poll-question">
-        ${escapeHtml(CURRENT_POLL.question)}
-      </div>
-      ${optionsHtml}
-      <div class="cp-row-between cp-muted" style="font-size:11.5px; margin-top:6px;">
-        <span>${hasVoted ? '&#10003; Your answer is locked in.' : (isActive ? 'Tap an option above to vote.' : 'Final poll results.')}</span>
-        <span class="cp-tabular">Votes: <strong style="color:var(--cp-ink);">${Number(CURRENT_POLL.total_votes || 0)}</strong></span>
+      <div class="cp-poll-question">${escapeHtml(primary.question)}</div>
+      ${renderPollOptionButtons(primary, hasVoted)}
+      <div class="cp-row-between cp-muted" style="font-size:13px; margin-top:6px;">
+        <span>${hasVoted ? "&#10003; Vote Recorded" : (isActive ? "Select an option to vote." : "Final poll results")}</span>
+        <span class="cp-tabular">Votes: <strong style="color:var(--cp-ink);">${Number(primary.total_votes || 0)}</strong></span>
       </div>
     `;
+
+    if (pastBox) {
+      const others = visiblePolls.filter(p => Number(p.id) !== Number(primary.id)).reverse();
+      if (!others.length) {
+        pastBox.innerHTML = "";
+      } else {
+        pastBox.innerHTML = `
+          <details class="cp-m-accordion">
+            <summary>
+              <span>Previous Polls (${others.length})</span>
+              <span class="cp-muted">&#9662;</span>
+            </summary>
+            <div class="cp-stack-xs" style="margin-top:8px;">
+              ${others.map(p => `
+                <div class="cp-past-poll-card">
+                  <div class="cp-row-between" style="margin-bottom:6px;">
+                    <strong style="font-size:14px; color:var(--cp-ink);">${escapeHtml(p.question)}</strong>
+                    <span class="cp-badge cp-badge--neutral">Closed</span>
+                  </div>
+                  ${renderPollOptionButtons(p, true)}
+                </div>
+              `).join("")}
+            </div>
+          </details>
+        `;
+      }
+    }
   }
 
   async function castStudentVote(optionIndex) {
     if (!CURRENT_POLL || CURRENT_POLL.status !== "ACTIVE") return;
     const studentId = STATE.student ? STATE.student.id : null;
     if (!studentId) {
-      return alert("Please sign in with your Name & Email first so your vote is counted!");
+      return alert("Please sign in with your Name & Email first so your vote is counted.");
     }
     MY_VOTE = optionIndex;
+    CURRENT_POLL.my_vote_index = optionIndex;
     renderStudentPoll();
 
     try {
@@ -882,7 +1776,7 @@
       });
       if (res.ok) {
         const updated = await res.json();
-        applyIncomingPoll(updated, false);
+        applyIncomingPoll(updated);
       }
     } catch (_e) {
       socket.emit("poll:vote", {
@@ -900,32 +1794,21 @@
       const res = await fetch(`/api/sessions/${ACTIVE_SESSION.id}/polls${stParam}`, { cache: "no-store" });
       if (!res.ok) return;
       const data = await res.json();
-      const polls = data.polls || [];
+      const polls = (data.polls || []).filter(p => p.status !== "DRAFT");
+      LECTURE_POLLS = polls;
       const active = polls.find(p => p.status === "ACTIVE");
-      if (active) {
-        applyIncomingPoll(active, true);
-      } else if (polls.length > 0) {
-        const latest = polls[polls.length - 1];
-        if (CURRENT_POLL && CURRENT_POLL.id === latest.id) {
-          applyIncomingPoll(latest, false);
-        }
-      }
+      CURRENT_POLL = active || (polls.length ? polls[polls.length - 1] : null);
+      renderStudentPoll();
     } catch (_err) {}
   }
 
-  function renderStudentChat() {
-    const feed = document.getElementById("student-chat-feed");
-    if (!CHAT_MESSAGES.length) {
-      feed.innerHTML = `<div class="cp-card cp-muted" style="font-size:13px; text-align:center; padding:20px 16px;">No questions yet. Ask the first question below!</div>`;
-      return;
-    }
-    const sorted = [...CHAT_MESSAGES].sort((a, b) => (b.is_pinned - a.is_pinned) || (b.id - a.id));
-    feed.innerHTML = sorted.map(m => `
+  function renderMessageCardHtml(m) {
+    return `
       <div class="cp-chat-msg chat-item ${m.is_pinned ? 'pinned' : ''}" data-msg-id="${escapeHtml(m.id)}" style="margin-bottom:0; padding:12px 14px; border-radius:16px;">
         <div class="cp-row-between" style="margin-bottom:6px; align-items:flex-start; flex-wrap:nowrap; gap:8px;">
           <div class="cp-row-wrap" style="gap:6px; min-width:0; flex:1;">
             <span class="cp-ts ts">[${escapeHtml(m.offset_mmss)}]</span>
-            <strong style="font-size:13px;">${escapeHtml(m.author_name)}</strong>
+            <strong style="font-size:14px;">${escapeHtml(m.author_name)}</strong>
             <span class="cp-cat-pill cat">${escapeHtml(m.category)}</span>
             ${m.is_pinned ? '<span class="cp-badge cp-badge--amber">Pinned</span>' : ''}
           </div>
@@ -933,9 +1816,34 @@
             &#9650; ${Number(m.upvotes || 0)}
           </button>
         </div>
-        <div style="color:var(--cp-ink); font-size:13.5px; line-height:1.45; overflow-wrap:anywhere;">${escapeHtml(m.body)}</div>
+        <div style="color:var(--cp-ink); font-size:14.5px; line-height:1.45; overflow-wrap:anywhere;">${escapeHtml(m.body)}</div>
       </div>
-    `).join("");
+    `;
+  }
+
+  function renderStudentChat() {
+    const qaFeed = document.getElementById("student-chat-feed");
+    const offlineFeed = document.getElementById("student-offline-feed");
+    const qaMsgs = CHAT_MESSAGES.filter(m => m.category !== "Offline Question");
+    const offlineMsgs = CHAT_MESSAGES.filter(m => m.category === "Offline Question");
+
+    if (qaFeed) {
+      if (!qaMsgs.length) {
+        qaFeed.innerHTML = `<div class="cp-well cp-muted" style="font-size:13.5px; text-align:center;">No questions yet. Ask the first question below.</div>`;
+      } else {
+        const sortedQa = [...qaMsgs].sort((a, b) => (b.is_pinned - a.is_pinned) || (b.id - a.id));
+        qaFeed.innerHTML = sortedQa.map(renderMessageCardHtml).join("");
+      }
+    }
+
+    if (offlineFeed) {
+      if (!offlineMsgs.length) {
+        offlineFeed.innerHTML = `<div class="cp-well cp-muted" style="font-size:13.5px; text-align:center;">No offline questions submitted yet.</div>`;
+      } else {
+        const sortedOff = [...offlineMsgs].sort((a, b) => b.id - a.id);
+        offlineFeed.innerHTML = sortedOff.map(renderMessageCardHtml).join("");
+      }
+    }
   }
 
   async function fetchLatestSessionChat() {
@@ -980,6 +1888,40 @@
     }
   }
 
+  async function sendOfflineQuestion() {
+    if (!ACTIVE_SESSION) return alert("Select a lecture first.");
+    const bodyEl = document.getElementById("student-offline-body");
+    const btnEl = document.getElementById("btn-send-offline-q");
+    const body = bodyEl ? bodyEl.value.trim() : "";
+    if (!body) return;
+    bodyEl.value = "";
+    if (btnEl) btnEl.disabled = true;
+    try {
+      const res = await fetch(`/api/sessions/${ACTIVE_SESSION.id}/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          student_id: STATE.student ? STATE.student.id : null,
+          author_name: STATE.student ? STATE.student.full_name : "Student",
+          category: "Offline Question",
+          body,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        bodyEl.value = body;
+        return alert(data.error || "Could not send offline question.");
+      }
+      if (!CHAT_MESSAGES.find(x => x.id === data.id)) CHAT_MESSAGES.push(data);
+      renderStudentChat();
+    } catch (_err) {
+      bodyEl.value = body;
+      alert("Network error while sending offline question.");
+    } finally {
+      if (btnEl) btnEl.disabled = false;
+    }
+  }
+
   async function upvoteStudentChat(msgId) {
     await fetch(`/api/chat/${msgId}/upvote`, { method: "POST" });
   }
@@ -1000,28 +1942,16 @@
     if (data && data.my_vote !== undefined && data.my_vote !== null) {
       MY_VOTE = data.my_vote;
     }
-    if (incoming) applyIncomingPoll(incoming, incoming.status === "ACTIVE");
+    if (incoming) applyIncomingPoll(incoming);
   });
-  socket.on("poll:activated", (poll) => {
-    MY_VOTE = null;
-    applyIncomingPoll(poll, true);
-  });
-  socket.on("poll:opened", (poll) => {
-    MY_VOTE = null;
-    applyIncomingPoll(poll, true);
-  });
+  socket.on("poll:activated", (poll) => { MY_VOTE = null; applyIncomingPoll(poll); });
+  socket.on("poll:opened", (poll) => { MY_VOTE = null; applyIncomingPoll(poll); });
   socket.on("poll:results_update", (poll) => {
-    if (!CURRENT_POLL || CURRENT_POLL.id === poll.id) {
-      applyIncomingPoll({ ...CURRENT_POLL, ...poll }, false);
-    }
+    if (!CURRENT_POLL || CURRENT_POLL.id === poll.id) applyIncomingPoll({ ...CURRENT_POLL, ...poll });
   });
-  socket.on("poll:voted_ack", (poll) => {
-    applyIncomingPoll(poll, false);
-  });
+  socket.on("poll:voted_ack", (poll) => { applyIncomingPoll(poll); });
   socket.on("poll:closed", (poll) => {
-    if (!CURRENT_POLL || CURRENT_POLL.id === poll.id) {
-      applyIncomingPoll({ ...CURRENT_POLL, ...poll }, false);
-    }
+    if (!CURRENT_POLL || CURRENT_POLL.id === poll.id) applyIncomingPoll({ ...CURRENT_POLL, ...poll });
   });
 
   socket.on("chat:init", (d) => {
@@ -1034,9 +1964,7 @@
     renderStudentChat();
   });
   socket.on("chat:notify", (payload) => {
-    if (window.ClassPulseNotify) {
-      window.ClassPulseNotify.pushChatNotification(payload);
-    }
+    if (window.ClassPulseNotify) window.ClassPulseNotify.pushChatNotification(payload);
   });
   socket.on("chat:updated", (m) => {
     const idx = CHAT_MESSAGES.findIndex(x => x.id === m.id);
@@ -1044,552 +1972,23 @@
     renderStudentChat();
   });
 
-  function focusStudentSignIn() {
-    const card = document.getElementById("login-card");
-    if (card) {
-      card.scrollIntoView({ behavior: "smooth", block: "center" });
-    }
-    const nameInput = document.getElementById("login-name");
-    if (nameInput) nameInput.focus();
-  }
-
-  function notifyNewAssignment(title) {
-    if (activeViewId === "view-study") return;
-    const dot = document.getElementById("study-new-dot");
-    if (dot) {
-      dot.style.display = "inline-block";
-      dot.classList.add("hot");
-    }
-    const existing = document.getElementById("study-toast-banner");
-    if (existing) existing.remove();
-    const container = document.getElementById("student-main-content");
-    if (!container) return;
-    const banner = document.createElement("div");
-    banner.id = "study-toast-banner";
-    banner.className = "cp-alert cp-alert--info cp-row-between";
-    banner.style.cssText = "cursor:pointer; margin-bottom:0;";
-    banner.innerHTML = `
-      <span><strong>New Homework:</strong> ${escapeHtml(title || "Assignment")}</span>
-      <span class="cp-badge cp-badge--indigo">Open &rarr;</span>
-    `;
-    banner.onclick = () => {
-      switchView("view-study");
-      switchStudySubView("homework");
-    };
-    container.insertBefore(banner, container.firstChild);
-  }
-
-  async function loadAssignmentsOnly() {
-    if (!ACTIVE_SESSION || !ACTIVE_SESSION.course_id) {
-      renderStudyAssignments([]);
-      return;
-    }
-    const cid = ACTIVE_SESSION.course_id;
-    const stQuery = STATE.student && STATE.student.id ? `?student_id=${STATE.student.id}&_ts=${Date.now()}` : `?_ts=${Date.now()}`;
-    try {
-      const hwRes = await fetch(`/api/courses/${cid}/assignments${stQuery}`, { cache: "no-store" });
-      if (!hwRes.ok) {
-        const el = document.getElementById("student-assignments-list");
-        if (el && !el.children.length) renderStudyAssignments([]);
-        return;
-      }
-      const hwData = await hwRes.json();
-      const assignments = hwData.assignments || [];
-      const isFirstLoad = HW_INITIALIZED_COURSE_ID !== cid;
-      let newlyDiscoveredTitle = null;
-      for (const a of assignments) {
-        if (!KNOWN_ASSIGNMENT_IDS.has(a.id)) {
-          if (!isFirstLoad) newlyDiscoveredTitle = a.title;
-          KNOWN_ASSIGNMENT_IDS.add(a.id);
-        }
-        if (a.my_submission && PENDING_REVIEWS.has(a.id)) {
-          PENDING_REVIEWS.delete(a.id);
-        }
-        const standing = a.my_submission && a.my_submission.class_standing;
-        if (standing && typeof standing.class_score === "number") {
-          const prev = LAST_CLASS_SCORES[a.id];
-          if (typeof prev === "number" && prev !== standing.class_score) {
-            CLASS_SCORE_DELTAS[a.id] = { from: prev, to: standing.class_score };
-          }
-          LAST_CLASS_SCORES[a.id] = standing.class_score;
-        }
-      }
-      HW_INITIALIZED_COURSE_ID = cid;
-      renderStudyAssignments(assignments);
-      if (newlyDiscoveredTitle) {
-        notifyNewAssignment(newlyDiscoveredTitle);
-      }
-    } catch (err) {
-      console.error("loadAssignmentsOnly error:", err);
-      const el = document.getElementById("student-assignments-list");
-      if (el && !el.children.length) renderStudyAssignments([]);
-    }
-  }
-
-  async function loadStudyHub() {
-    if (!ACTIVE_SESSION || !ACTIVE_SESSION.course_id) {
-      renderStudyLectures([]);
-      renderStudyAssignments([]);
-      return;
-    }
-    const cid = ACTIVE_SESSION.course_id;
-    try {
-      const [lecRes] = await Promise.all([
-        fetch(`/api/courses/${cid}/lectures?_ts=${Date.now()}`, { cache: "no-store" }),
-        loadAssignmentsOnly(),
-      ]);
-      if (lecRes.ok) {
-        const lecData = await lecRes.json();
-        renderStudyLectures(lecData.artifacts || []);
-      } else {
-        const el = document.getElementById("student-lecture-summaries");
-        if (el && !el.children.length) renderStudyLectures([]);
-      }
-    } catch (err) {
-      console.error("loadStudyHub error:", err);
-      const el = document.getElementById("student-lecture-summaries");
-      if (el && !el.children.length) renderStudyLectures([]);
-    }
-  }
-
-  function renderStudyLectures(artifacts) {
-    const el = document.getElementById("student-lecture-summaries");
-    if (!el) return;
-    if (!artifacts.length) {
-      el.innerHTML = `<div class="cp-card cp-muted" style="text-align:center; padding:18px;">No published AI lecture summaries yet for this course.</div>`;
-      return;
-    }
-    el.innerHTML = artifacts.map((a, idx) => {
-      const segHtml = (a.corrected_transcript || []).map(seg =>
-        `<div class="cp-m-hairline-row" style="justify-content:flex-start;"><span class="cp-ts ts">[${escapeHtml(seg.offset_mmss)}]</span> <span style="color:var(--cp-ink); overflow-wrap:anywhere;">${escapeHtml(seg.text)}</span></div>`
-      ).join("");
-      return `
-        <div class="cp-card" style="padding:16px;">
-          <div class="cp-row-between" style="margin-bottom:8px;">
-            <strong style="font-size:15px; color:var(--cp-ink); overflow-wrap:anywhere;">${escapeHtml(a.lecture_title || a.session_code)}</strong>
-            <span class="cp-badge cp-badge--green">${escapeHtml(a.session_code)}</span>
-          </div>
-          <div class="cp-row-wrap" style="margin-bottom:10px; gap:8px;">
-            <a class="cp-btn cp-btn--green cp-btn--sm" href="/api/lectures/${Number(a.id)}/download/summary.md">Summary (.md)</a>
-            <a class="cp-btn cp-btn--secondary cp-btn--sm" href="/api/lectures/${Number(a.id)}/download/transcript.txt">Transcript (.txt)</a>
-          </div>
-          <details class="cp-m-accordion" ${idx === 0 ? 'open' : ''}>
-            <summary>
-              <span>AI Summary</span>
-              <span class="cp-muted">&#9662;</span>
-            </summary>
-            <div class="cp-review-md" style="margin:8px 0 0 0; background:var(--cp-well);">${renderSimpleReviewHtml(a.summary_markdown)}</div>
-          </details>
-          <details class="cp-m-accordion">
-            <summary>
-              <span>Corrected Transcript ([MM:SS])</span>
-              <span class="cp-muted">&#9662;</span>
-            </summary>
-            <div style="margin-top:6px;">${segHtml}</div>
-          </details>
-        </div>
-      `;
-    }).join("");
-  }
-
-  function getAssignmentCardSignature(a) {
-    const stats = a.cohort_stats || {};
-    const sub = a.my_submission;
-    const standingSig = sub && sub.class_standing
-      ? `${sub.class_standing.class_score}:${sub.class_standing.rank}:${sub.class_standing.cohort_size}`
-      : "0";
-    const deltaSig = CLASS_SCORE_DELTAS[a.id] ? `${CLASS_SCORE_DELTAS[a.id].from}->${CLASS_SCORE_DELTAS[a.id].to}` : "";
-    const subSig = sub
-      ? `${sub.version}:${sub.submitted_at || ""}:${(sub.deep_review_md || "").length}:${standingSig}:${deltaSig}`
-      : "none";
-    const pendingSig = PENDING_REVIEWS.has(a.id) ? "pending" : "idle";
-    return `${a.id}|${stats.submission_count || 0}|${stats.mean_overall_score || 0}|${subSig}|${pendingSig}|${STATE.student ? STATE.student.id : "guest"}`;
-  }
-
-  function renderTelemetryPills(telemetry) {
-    if (!telemetry) return "";
-    const labels = [
-      ["line_count", "Lines"],
-      ["structure_count", "Classes/Funcs"],
-      ["assertion_count", "Assertions"],
-      ["doc_signals", "Docs/Comments"],
-    ];
-    const items = labels
-      .filter(([k]) => telemetry[k] !== undefined)
-      .map(([k, lbl]) => {
-        const item = telemetry[k];
-        return `<span class="cp-telemetry-pill cp-tabular">${escapeHtml(lbl)}: <strong style="color:var(--cp-ink);">${escapeHtml(item.mine)}</strong> <span class="cp-muted">(Avg ${escapeHtml(item.cohort_avg)})</span></span>`;
-      });
-    if (!items.length) return "";
-    return `<div class="cp-row-wrap" style="gap:6px; margin-bottom:10px;">${items.join("")}</div>`;
-  }
-
-  function renderCategoryBreakdownHtml(categories) {
-    if (!Array.isArray(categories) || !categories.length) return "";
-    const rows = categories.map(c => {
-      const score = Number(c.ai_rubric_score || 0);
-      const avg = Number(c.cohort_mean || 0);
-      const best = Number(c.cohort_best || 0);
-      const clsScore = c.class_score || 10;
-      const barColor = clsScore >= 8 ? "var(--cp-green)" : (clsScore >= 5 ? "var(--cp-indigo)" : "var(--cp-amber)");
-      return `
-        <div class="cp-well cp-cat-bar" style="padding:10px 12px; margin-bottom:0;">
-          <div class="cp-row-between" style="gap:6px; margin-bottom:6px;">
-            <strong style="font-size:12px; color:var(--cp-ink);">${escapeHtml(c.label)}</strong>
-            <span class="cp-badge cp-badge--purple cp-tabular">
-              ${escapeHtml(clsScore)}/10 (#${escapeHtml(c.rank)}/${escapeHtml(c.cohort_size)})
-            </span>
-          </div>
-          <div class="cp-cat-bar-track">
-            <div style="position:absolute; top:0; bottom:0; left:0; width:${Math.min(100, Math.max(0, best))}%; background:rgba(91,95,239,0.14); border-radius:999px;"></div>
-            <div class="cp-cat-bar-fill" style="position:relative; width:${Math.min(100, Math.max(0, score))}%; background:${barColor};"></div>
-            <div class="cp-cat-bar-avg" title="Class Average" style="left:${Math.min(99, Math.max(0, avg))}%;"></div>
-          </div>
-          <div class="cp-row-between cp-muted cp-tabular" style="font-size:10.5px; margin-top:5px;">
-            <span>Rubric: <strong style="color:var(--cp-ink);">${score}/100</strong></span>
-            <span>Avg: <strong>${avg}</strong> &bull; Best: <strong>${best}</strong></span>
-          </div>
-        </div>
-      `;
-    }).join("");
-    return `<div class="cp-stack-xs" style="margin-bottom:10px;">${rows}</div>`;
-  }
-
-  function renderSimpleReviewHtml(md) {
-    const safe = escapeHtml(md || "No review generated yet.");
-    const formatInline = (s) =>
-      s
-        .replace(/&amp;bull;/g, "&bull;")
-        .replace(/\*\*(.+?)\*\*/g, '<strong style="color:var(--cp-ink);">$1</strong>')
-        .replace(/`([^`]+)`/g, '<code style="background:var(--cp-surface-solid); color:var(--cp-indigo-ink); border:1px solid var(--cp-border); padding:1px 5px; border-radius:5px; font-size:11px;">$1</code>');
-
-    const lines = safe.split(/\r?\n/);
-    let html = "";
-    let inList = false;
-    for (const rawLine of lines) {
-      const line = rawLine.trim();
-      if (!line) {
-        if (inList) {
-          html += "</ul>";
-          inList = false;
-        }
-        continue;
-      }
-      if (line.startsWith("### ") || line.startsWith("## ")) {
-        if (inList) {
-          html += "</ul>";
-          inList = false;
-        }
-        const headingText = line.replace(/^#{2,3}\s+/, "");
-        html += `<div class="cp-eyebrow" style="font-size:11px; color:var(--cp-indigo-ink); margin:8px 0 4px;">${formatInline(headingText)}</div>`;
-      } else if (line.startsWith("- ") || line.startsWith("* ")) {
-        if (!inList) {
-          html += '<ul style="margin:0 0 6px 16px; padding:0;">';
-          inList = true;
-        }
-        html += `<li style="margin:2px 0; color:var(--cp-ink);">${formatInline(line.slice(2))}</li>`;
-      } else {
-        if (inList) {
-          html += "</ul>";
-          inList = false;
-        }
-        html += `<p style="margin:3px 0; color:var(--cp-ink-secondary);">${formatInline(line)}</p>`;
-      }
-    }
-    if (inList) html += "</ul>";
-    return html;
-  }
-
-  function buildAssignmentCardElement(a) {
-    const stats = a.cohort_stats || {};
-    const sub = a.my_submission;
-    const myScore = sub
-      ? (sub.ai_rubric_grade !== undefined ? sub.ai_rubric_grade : (sub.metrics ? sub.metrics.overall_score : null))
-      : null;
-    const standing = sub ? sub.class_standing : null;
-    const deltaInfo = CLASS_SCORE_DELTAS[a.id];
-    const isPending = PENDING_REVIEWS.has(a.id);
-    const isSubmitting = SUBMITTING_ASSIGNMENTS.has(a.id);
-
-    const wrapper = document.createElement("div");
-    wrapper.className = "cp-card";
-    wrapper.style.padding = "16px";
-    wrapper.dataset.hwCard = String(a.id);
-    wrapper.dataset.hwSig = getAssignmentCardSignature(a);
-    wrapper.innerHTML = `
-      <div class="cp-row-between" style="margin-bottom:6px;">
-        <strong style="font-size:15px; color:var(--cp-ink); overflow-wrap:anywhere;">${escapeHtml(a.title)}</strong>
-        ${myScore !== null
-          ? `<span class="cp-badge cp-badge--green cp-tabular">v${Number(sub.version || 1)} &bull; ${escapeHtml(myScore)}/100</span>`
-          : `<span class="cp-badge cp-badge--amber cp-tabular">Class Avg: ${escapeHtml(stats.mean_overall_score || 0)}</span>`}
-      </div>
-      <div class="cp-muted" style="font-size:12px; margin-bottom:10px; line-height:1.4;">${escapeHtml(a.rubric_text)}</div>
-
-      ${sub ? `
-        <div class="cp-grid-2-tight" style="margin-bottom:8px;">
-          <div class="cp-metric-tile cp-metric-tile--green">
-            <div class="cp-eyebrow" style="font-size:10px; color:var(--cp-green-ink);">AI Rubric</div>
-            <div class="cp-hw-kpi-val">${escapeHtml(myScore)}<span class="cp-muted" style="font-size:12px;">/100</span></div>
-            <div class="cp-muted" style="font-size:10.5px;">Fixed rubric grade</div>
-          </div>
-          <div class="cp-metric-tile cp-metric-tile--purple">
-            <div class="cp-eyebrow" style="font-size:10px; color:var(--cp-purple-ink);">Class Standing</div>
-            <div class="cp-hw-kpi-val">${standing ? escapeHtml(standing.class_score) : 10}<span class="cp-muted" style="font-size:12px;">/10</span></div>
-            <div class="cp-muted" style="font-size:10.5px;">Rank #${standing ? escapeHtml(standing.rank) : 1} of ${standing ? escapeHtml(standing.cohort_size) : 1}</div>
-          </div>
-        </div>
-
-        ${deltaInfo ? `
-          <div class="cp-alert cp-alert--info" style="padding:8px 10px; font-size:11.5px; margin-bottom:8px;">
-            Class Standing updated: <strong>${escapeHtml(deltaInfo.from)}/10 &rarr; ${escapeHtml(deltaInfo.to)}/10</strong>
-          </div>
-        ` : ''}
-
-        <details class="cp-m-accordion">
-          <summary>
-            <span>Score Breakdown &amp; Metrics</span>
-            <span class="cp-muted">&#9662;</span>
-          </summary>
-          <div style="margin-top:8px;">
-            ${renderCategoryBreakdownHtml(sub.category_breakdown)}
-            ${renderTelemetryPills(sub.telemetry_comparison)}
-          </div>
-        </details>
-
-        <details class="cp-m-accordion">
-          <summary>
-            <span>AI Code Review</span>
-            <span class="cp-muted">&#9662;</span>
-          </summary>
-          <div class="cp-review-md" style="margin-top:8px; background:var(--cp-well);">
-            ${renderSimpleReviewHtml(sub.deep_review_md)}
-          </div>
-        </details>
-      ` : ''}
-
-      ${!STATE.student ? `
-        <div class="cp-alert cp-alert--warn cp-row-between" style="padding:8px 10px; margin:8px 0;">
-          <span style="font-size:11.5px;">Sign in to submit homework.</span>
-          <button type="button" class="cp-btn cp-btn--white cp-btn--sm" onclick="focusStudentSignIn()">Sign In</button>
-        </div>
-      ` : ''}
-
-      <details class="cp-m-accordion" ${sub ? '' : 'open'} style="${sub ? '' : 'border-top:none; padding-top:0; margin-top:4px;'}">
-        <summary>
-          <span>${sub ? 'Resubmit Improved Version' : 'Submit Solution'}</span>
-          <span class="cp-muted">&#9662;</span>
-        </summary>
-        <div style="margin-top:8px;">
-          <textarea id="hw-code-${Number(a.id)}" class="cp-textarea" rows="4" placeholder="Paste your code/solution or notes..." style="font-family:var(--cp-font-mono); font-size:12px; margin-bottom:8px;"></textarea>
-          <div class="cp-input-action" style="margin-bottom:8px;">
-            <input type="text" id="hw-git-${Number(a.id)}" class="cp-input" placeholder="Or GitHub URL (optional)" />
-            <button id="hw-btn-${Number(a.id)}" type="button" class="cp-btn cp-btn--primary cp-btn--sm" onclick="submitStudentHomework(${Number(a.id)})" ${isSubmitting ? 'disabled' : ''}>
-              ${isSubmitting ? 'Submitting...' : 'Submit &amp; Review'}
-            </button>
-          </div>
-          <input type="file" id="hw-file-${Number(a.id)}" class="cp-file-input" />
-          <div id="hw-status-${Number(a.id)}" style="margin-top:6px; font-size:11.5px; font-weight:600; min-height:14px; color:${isPending ? 'var(--cp-indigo-ink)' : 'var(--cp-ink-muted)'};">
-            ${isPending ? 'Submitted! AI grading &amp; cohort comparison in progress...' : ''}
-          </div>
-        </div>
-      </details>
-    `;
-    return wrapper;
-  }
-
-  function setHomeworkStatus(assignId, message, kind = "info") {
-    const el = document.getElementById(`hw-status-${assignId}`);
-    if (!el) return;
-    const colorMap = {
-      info: "var(--cp-ink-muted)",
-      pending: "var(--cp-indigo-ink)",
-      success: "var(--cp-green-ink)",
-      error: "var(--cp-red-ink)",
-    };
-    el.style.color = colorMap[kind] || "var(--cp-ink-muted)";
-    el.textContent = message || "";
-  }
-
-  function renderStudyAssignments(assignments) {
-    const el = document.getElementById("student-assignments-list");
-    if (!el) return;
-    if (!assignments.length) {
-      el.innerHTML = `<div class="cp-card cp-muted" style="text-align:center; padding:18px;">No assignments posted yet for this course.</div>`;
-      return;
-    }
-
-    const emptyStateOnly = el.children.length === 1 && !el.firstElementChild.dataset.hwCard;
-    if (emptyStateOnly) el.innerHTML = "";
-
-    const existingMap = new Map();
-    for (const child of Array.from(el.children)) {
-      if (child.dataset && child.dataset.hwCard) {
-        existingMap.set(Number(child.dataset.hwCard), child);
-      } else {
-        child.remove();
-      }
-    }
-
-    const nextIds = new Set(assignments.map(a => Number(a.id)));
-    for (const [id, node] of existingMap.entries()) {
-      if (!nextIds.has(id)) {
-        node.remove();
-        existingMap.delete(id);
-      }
-    }
-
-    assignments.forEach((a, idx) => {
-      const id = Number(a.id);
-      const existingNode = existingMap.get(id);
-      const newSig = getAssignmentCardSignature(a);
-      let targetNode = existingNode;
-
-      if (!existingNode || existingNode.dataset.hwSig !== newSig) {
-        const prevCode = existingNode?.querySelector(`#hw-code-${id}`)?.value || "";
-        const prevGit = existingNode?.querySelector(`#hw-git-${id}`)?.value || "";
-        const prevDetailsOpen = existingNode?.querySelector("details:last-of-type")?.open;
-        targetNode = buildAssignmentCardElement(a);
-        if (prevCode) targetNode.querySelector(`#hw-code-${id}`).value = prevCode;
-        if (prevGit) targetNode.querySelector(`#hw-git-${id}`).value = prevGit;
-        if (typeof prevDetailsOpen === "boolean") {
-          const lastDetails = targetNode.querySelector("details:last-of-type");
-          if (lastDetails) lastDetails.open = prevDetailsOpen;
-        }
-        if (existingNode) {
-          el.replaceChild(targetNode, existingNode);
-        }
-      }
-
-      const currentAtIdx = el.children[idx];
-      if (currentAtIdx !== targetNode) {
-        el.insertBefore(targetNode, currentAtIdx || null);
-      }
-    });
-  }
-
-  async function submitStudentHomework(assignId) {
-    if (!STATE.student) {
-      setHomeworkStatus(assignId, "Sign in with your Name & Email first.", "error");
-      focusStudentSignIn();
-      return;
-    }
-    if (SUBMITTING_ASSIGNMENTS.has(assignId)) return;
-
-    const codeEl = document.getElementById(`hw-code-${assignId}`);
-    const gitEl = document.getElementById(`hw-git-${assignId}`);
-    const fileEl = document.getElementById(`hw-file-${assignId}`);
-    const btnEl = document.getElementById(`hw-btn-${assignId}`);
-
-    const code = codeEl ? codeEl.value.trim() : "";
-    const git = gitEl ? gitEl.value.trim() : "";
-    const hasFile = Boolean(fileEl && fileEl.files && fileEl.files.length > 0);
-
-    if (!code && !git && !hasFile) {
-      setHomeworkStatus(
-        assignId,
-        "Please paste code/text, attach a file, or enter a GitHub URL before submitting.",
-        "error"
-      );
-      return;
-    }
-
-    SUBMITTING_ASSIGNMENTS.add(assignId);
-    if (btnEl) {
-      btnEl.disabled = true;
-      btnEl.textContent = "Submitting...";
-    }
-    setHomeworkStatus(assignId, "Uploading submission...", "pending");
-
-    try {
-      let res;
-      if (hasFile) {
-        const fd = new FormData();
-        fd.append("file", fileEl.files[0]);
-        fd.append("student_id", STATE.student.id);
-        fd.append("generate_review", "true");
-        fd.append("async", "true");
-        if (code) fd.append("content_text", code);
-        if (git) fd.append("github_url", git);
-        res = await fetch(`/api/assignments/${assignId}/submissions?async=1`, {
-          method: "POST",
-          body: fd,
-        });
-      } else {
-        res = await fetch(`/api/assignments/${assignId}/submissions?async=1`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            student_id: STATE.student.id,
-            content_text: code,
-            github_url: git,
-            generate_review: true,
-            async: true,
-          }),
-        });
-      }
-
-      const rawText = await res.text();
-      let data = {};
-      try {
-        data = rawText ? JSON.parse(rawText) : {};
-      } catch (_parseErr) {
-        data = { error: `Server returned HTTP ${res.status}` };
-      }
-
-      if (!res.ok) {
-        setHomeworkStatus(assignId, data.error || `Homework submission failed (HTTP ${res.status}).`, "error");
-        return;
-      }
-
-      if (codeEl) codeEl.value = "";
-      if (gitEl) gitEl.value = "";
-      if (fileEl) fileEl.value = "";
-
-      if (res.status === 202 || data.status === "PENDING") {
-        PENDING_REVIEWS.add(assignId);
-        setHomeworkStatus(
-          assignId,
-          "Submitted! AI grading & cohort comparison in progress...",
-          "pending"
-        );
-        setTimeout(loadAssignmentsOnly, 2000);
-      } else {
-        PENDING_REVIEWS.delete(assignId);
-        setHomeworkStatus(assignId, "Review complete!", "success");
-        await loadAssignmentsOnly();
-      }
-    } catch (err) {
-      setHomeworkStatus(
-        assignId,
-        `Network error while submitting: ${err && err.message ? err.message : "Request failed"}`,
-        "error"
-      );
-    } finally {
-      SUBMITTING_ASSIGNMENTS.delete(assignId);
-      const latestBtn = document.getElementById(`hw-btn-${assignId}`);
-      if (latestBtn) {
-        latestBtn.disabled = false;
-        latestBtn.textContent = "Submit & Review";
-      }
-    }
-  }
-
-  socket.on("lecture:summary_ready", () => loadStudyHub());
+  socket.on("lecture:summary_ready", (payload) => {
+    const cid = payload?.course_id || CURRENT_COURSE_ID || (ACTIVE_SESSION && ACTIVE_SESSION.course_id);
+    if (cid) loadSummariesForCourse(cid);
+  });
   socket.on("assignment:created", (payload) => {
-    if (!ACTIVE_SESSION || Number(payload?.course_id) !== Number(ACTIVE_SESSION.course_id)) return;
+    const cid = payload?.course_id || CURRENT_COURSE_ID || (ACTIVE_SESSION && ACTIVE_SESSION.course_id);
+    if (!cid || Number(payload?.course_id) !== Number(cid)) return;
     const isNew = payload?.id && !KNOWN_ASSIGNMENT_IDS.has(payload.id);
     if (payload?.id) KNOWN_ASSIGNMENT_IDS.add(payload.id);
-    loadAssignmentsOnly();
-    if (isNew || activeViewId !== "view-study") {
-      notifyNewAssignment(payload?.title || "New Homework");
-    }
+    loadAssignmentsForCourse(cid);
+    if (isNew) notifyNewAssignment(payload?.title || "New Assignment", cid);
   });
   socket.on("assignment:review_ready", (payload) => {
     if (!payload) return;
     if (STATE.student && Number(payload.student_id) !== Number(STATE.student.id)) return;
-    const aid = Number(payload.assignment_id);
-    PENDING_REVIEWS.delete(aid);
-    loadAssignmentsOnly();
+    PENDING_REVIEWS.delete(Number(payload.assignment_id));
+    if (payload.course_id) loadAssignmentsForCourse(payload.course_id);
   });
   socket.on("assignment:review_error", (payload) => {
     if (!payload) return;
@@ -1599,47 +1998,67 @@
     setHomeworkStatus(aid, `AI review failed: ${payload.error || "Unknown error"}`, "error");
   });
   socket.on("assignment:cohort_updated", (payload) => {
-    if (!ACTIVE_SESSION || Number(payload?.course_id) !== Number(ACTIVE_SESSION.course_id)) return;
-    loadAssignmentsOnly();
+    if (payload?.course_id && Number(payload.course_id) === Number(CURRENT_COURSE_ID)) {
+      loadAssignmentsForCourse(payload.course_id);
+    }
   });
 
   (function initStudentApp() {
     renderCourses();
-    const targetCode = {{ initial_session_code | tojson }};
-    const nextUrl = FROM_QR_ROUTE
-      ? (targetCode ? `/student?session=${encodeURIComponent(targetCode)}` : "/student")
-      : (window.location.pathname === "/student"
-          ? `${window.location.pathname}${window.location.search}`
-          : (targetCode ? `/student?session=${encodeURIComponent(targetCode)}` : "/student"));
-    initStudentHistoryGuard(nextUrl);
-    updateBackButtonVisibility();
-    const myCourses = STATE.my_courses || [];
-    const searchPool = sortCoursesByRecentLecture(myCourses.length > 0 ? myCourses : (STATE.all_courses || []));
-    const allCourses = STATE.all_courses || [];
+    const targetCode = INITIAL_SESSION_CODE;
+    const targetCourseId = INITIAL_COURSE_ID;
+    const cleanUrl = targetCode ? `/student?session=${encodeURIComponent(targetCode)}` : "/student";
 
-    for (const c of allCourses) {
-      for (const s of sortSessionsNewestFirst(c.sessions || [])) {
-        if (targetCode && s.session_code === targetCode) {
-          selectSession(s, c);
-          return;
+    const searchPool = getStudentCoursesPool();
+    const allCourses = STATE.all_courses || [];
+    let matchedCourse = null;
+    let matchedSession = null;
+
+    if (targetCode) {
+      const orderedCourses = targetCourseId
+        ? [
+            ...allCourses.filter(c => Number(c.id) === Number(targetCourseId)),
+            ...allCourses.filter(c => Number(c.id) !== Number(targetCourseId)),
+          ]
+        : allCourses;
+      for (const c of orderedCourses) {
+        for (const s of sortSessionsNewestFirst(c.sessions || [])) {
+          if (s.session_code === targetCode) {
+            matchedCourse = c;
+            matchedSession = s;
+            break;
+          }
         }
+        if (matchedSession) break;
       }
     }
-    const firstWithSessions = searchPool.find(c => (c.sessions || []).length > 0);
-    if (firstWithSessions) {
-      const sortedSessions = sortSessionsNewestFirst(firstWithSessions.sessions);
-      selectSession(sortedSessions[0], firstWithSessions);
-    } else {
-      renderStudyLectures([]);
-      renderStudyAssignments([]);
-    }
-  })();
 
-  (function handleStudentDeepLink() {
+    if (matchedCourse && matchedSession && (FROM_QR_ROUTE || targetCode)) {
+      selectSession(matchedSession, matchedCourse);
+      STUDENT_STACK.splice(
+        0,
+        STUDENT_STACK.length,
+        { screen: "courses" },
+        { screen: "course-hub", courseId: matchedCourse.id },
+        { screen: "course-lectures", courseId: matchedCourse.id },
+        { screen: "lecture", courseId: matchedCourse.id, sessionCode: matchedSession.session_code }
+      );
+      renderCurrentScreen();
+    } else {
+      const firstCourse = searchPool[0] || allCourses[0] || null;
+      if (firstCourse) {
+        CURRENT_COURSE_ID = firstCourse.id;
+        const firstSess = sortSessionsNewestFirst(firstCourse.sessions || [])[0] || null;
+        if (firstSess) selectSession(firstSess, firstCourse);
+      }
+      STUDENT_STACK.splice(0, STUDENT_STACK.length, { screen: "courses" });
+      renderCurrentScreen();
+    }
+
+    initStudentHistoryGuard(cleanUrl);
+
     const params = new URLSearchParams(window.location.search);
-    const targetView = params.get("view");
     const targetMsgId = params.get("msg_id");
-    if (targetView) switchView(targetView);
     if (targetMsgId && window.ClassPulseNotify) {
       setTimeout(() => {
         if (!window.ClassPulseNotify.highlightMessage(targetMsgId)) {
@@ -1651,10 +2070,13 @@
 
   let hwPollCounter = 0;
   setInterval(() => {
-    fetchLatestSessionPolls();
+    if (currentScreenState().screen === "lecture") {
+      fetchLatestSessionPolls();
+    }
     hwPollCounter += 1;
-    if (PENDING_REVIEWS.size > 0 || hwPollCounter % 4 === 0) {
-      loadAssignmentsOnly();
+    const cid = CURRENT_COURSE_ID || (ACTIVE_SESSION && ACTIVE_SESSION.course_id);
+    if (cid && (PENDING_REVIEWS.size > 0 || (hwPollCounter % 4 === 0 && (currentScreenState().screen === "course-assignments" || currentScreenState().screen === "assignment-detail")))) {
+      loadAssignmentsForCourse(cid);
     }
   }, 2500);
 </script>

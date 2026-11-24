@@ -6,6 +6,7 @@ import io
 import re
 from typing import Any, Iterable, Optional
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models import AuditLog, Student
@@ -76,9 +77,17 @@ def resolve_or_upsert_student(
     if norm_sid is not None and not validate_student_id_format(norm_sid):
         return None, ("Student ID must be 4-32 letters or digits.", 400)  # type: ignore[return-value]
 
-    by_email = db.query(Student).filter_by(email=norm_email).one_or_none()
+    by_email = (
+        db.query(Student)
+        .filter(func.lower(Student.email) == norm_email)
+        .order_by(Student.id.asc())
+        .first()
+    )
     by_sid = (
-        db.query(Student).filter_by(student_id_number=norm_sid).one_or_none()
+        db.query(Student)
+        .filter_by(student_id_number=norm_sid)
+        .order_by(Student.id.asc())
+        .first()
         if norm_sid is not None
         else None
     )
@@ -223,5 +232,27 @@ def validate_image_magic_bytes(data: bytes) -> bool:
     if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
         return True
     return False
+
+
+def generate_deterministic_session_code(
+    db: Session, course_code: str, lecture_number: int
+) -> str:
+    """Build a clean deterministic <=16-char session code like CS204-L1 without random hex."""
+    from app.models import ClassSession
+
+    alnum = re.sub(r"[^A-Z0-9]", "", (course_code or "").upper()) or "CLS"
+    tag = f"-L{max(1, int(lecture_number))}"
+    base = alnum[: max(1, 16 - len(tag))]
+    candidate = f"{base}{tag}"
+    if db.query(ClassSession).filter_by(session_code=candidate).first() is None:
+        return candidate
+    suffix = 2
+    while True:
+        ext = f"{tag}-{suffix}"
+        base = alnum[: max(1, 16 - len(ext))]
+        candidate = f"{base}{ext}"
+        if db.query(ClassSession).filter_by(session_code=candidate).first() is None:
+            return candidate
+        suffix += 1
 
 

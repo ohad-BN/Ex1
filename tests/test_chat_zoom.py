@@ -73,10 +73,10 @@ def test_chat_lecture_relative_timestamp_upvotes_pin_and_export(chat_app) -> Non
     assert "[+15:30] [Question] [PINNED] Ohad:" in txt
     assert "(+2 upvotes)" in txt
 
-    # Verify Live Q&A Companion Popout view renders cleanly
+    # Verify Classroom Q&A Popout view renders cleanly
     pop_resp = client.get("/lecturer/chat-popout/CHAT1")
     assert pop_resp.status_code == 200
-    assert b"Live Q&amp;A Companion Feed" in pop_resp.data
+    assert b"Classroom Q&amp;A Feed" in pop_resp.data
 
 
 def test_rest_chat_post_and_validation(chat_app) -> None:

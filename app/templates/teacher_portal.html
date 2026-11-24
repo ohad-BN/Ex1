@@ -1,11 +1,12 @@
 {% extends "layouts/base.html" %}
 {% set cp_use_csrf = true %}
+{% set cp_use_image_compress = true %}
 {% set cp_use_notifications = true %}
 {% set cp_use_socketio = true %}
 {% set cp_use_headcount = true %}
 {% from "macros/icons.html" import cp_icon %}
 
-{% block title %}ClassPulse — Teacher Portal ({{ selected_course.course_code }}){% endblock %}
+{% block title %}ClassPulse — {{ selected_course.name }}{% endblock %}
 
 {% block styles %}
 <style>
@@ -81,17 +82,17 @@
 
 {% block body %}
 <div class="cp-teacher-shell">
-  <!-- Collapsible Mobile/Tablet Drawer Summary Bar (<=980px) -->
+  <!-- Mobile/Tablet Drawer Summary Bar (<=980px) -->
   <div class="cp-mobile-drawer-bar">
-    <div class="cp-brand-lockup">
+    <div class="cp-brand-lockup" style="min-width:0; flex:1;">
       <span class="cp-orb cp-orb--xs" aria-hidden="true"></span>
       <div style="min-width:0;">
-        <div class="cp-row-wrap" style="gap:6px;">
-          <strong style="font-size:14px; color:var(--cp-ink);">ClassPulse</strong>
-          <span class="cp-code-pill code-pill">{{ selected_course.course_code }}</span>
-          <span class="cp-code-pill code-pill">{{ session.session_code }}</span>
+        <div style="font-size:15px; font-weight:800; color:var(--cp-ink); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+          {{ selected_course.name }}
         </div>
-        <div class="cp-brand-sub" style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ session.title }}</div>
+        <div class="cp-brand-sub" style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+          {% if session.lecture_number and not session.title.lower().startswith('lecture') %}Lecture {{ session.lecture_number }} &mdash; {% endif %}{{ session.title }}
+        </div>
       </div>
     </div>
     <button type="button"
@@ -101,27 +102,96 @@
             aria-controls="teacher-sidebar"
             onclick="toggleMobileSidebar()">
       {{ cp_icon('menu', 16) }}
-      <span>Courses &amp; Lectures</span>
+      <span>Menu</span>
     </button>
   </div>
 
-  <!-- Left Sidebar: School-Wide Course & Lecture Selector -->
-  <aside id="teacher-sidebar" class="cp-sidebar sidebar">
+  <!-- Mobile Drawer Backdrop -->
+  <div id="teacher-sidebar-backdrop" class="cp-sidebar-backdrop" onclick="closeMobileSidebar()" aria-hidden="true"></div>
+
+  <!-- Structured Lecturer Sidebar Menu -->
+  <aside id="teacher-sidebar" class="cp-sidebar sidebar" aria-label="Lecturer navigation sidebar">
     <div class="cp-row-between cp-sidebar-divider" style="border-top:none; padding-top:0; padding-bottom:12px; border-bottom:1px solid var(--cp-border);">
       <div class="cp-brand-lockup">
         <span class="cp-orb cp-orb--sm" aria-hidden="true"></span>
         <div>
           <h1 class="cp-brand-title">ClassPulse</h1>
-          <div class="cp-brand-sub">Teacher Multi-Course Portal</div>
+          <div class="cp-brand-sub">Lecturer Workspace</div>
         </div>
       </div>
-      <a class="cp-btn cp-btn--white cp-btn--sm" href="/student" target="_blank">
-        <span>Student App</span>
-        {{ cp_icon('external-link', 13) }}
-      </a>
+      <button type="button" class="cp-sidebar-close-btn" onclick="closeMobileSidebar()" aria-label="Close menu">
+        {{ cp_icon('x', 18) }}
+      </button>
     </div>
 
-    <!-- Lecturer Courses List -->
+    <!-- Category 1: Course -->
+    <div>
+      <div class="cp-sidebar-section-hdr">
+        <span class="cp-eyebrow">Course</span>
+      </div>
+      <nav aria-label="Course navigation">
+        <button type="button" class="cp-nav-item active" data-tab-target="tab-overview" onclick="switchTab('tab-overview', this)">
+          {{ cp_icon('book-open', 16) }}
+          <span class="cp-nav-label">Overview</span>
+        </button>
+        <button type="button" class="cp-nav-item" data-tab-target="tab-lectures" onclick="switchTab('tab-lectures', this)">
+          {{ cp_icon('play', 16) }}
+          <span class="cp-nav-label">Lectures ({{ course_sessions|length }})</span>
+        </button>
+      </nav>
+    </div>
+
+    <!-- Category 2: Lecture Tools -->
+    <div>
+      <div class="cp-sidebar-section-hdr" style="margin-bottom:4px;">
+        <span class="cp-eyebrow">Lecture Tools</span>
+      </div>
+      <div class="cp-muted" style="font-size:12.5px; padding:0 4px 8px 4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+        {{ session.title }}
+      </div>
+      <nav aria-label="Lecture tools navigation">
+        <button type="button" class="cp-nav-item" data-tab-target="tab-attendance" onclick="switchTab('tab-attendance', this)">
+          {{ cp_icon('qr', 16) }}
+          <span class="cp-nav-label">Attendance &amp; QR</span>
+        </button>
+        <button type="button" class="cp-nav-item" data-tab-target="tab-polls" onclick="switchTab('tab-polls', this)">
+          {{ cp_icon('bar-chart', 16) }}
+          <span class="cp-nav-label">Polls</span>
+        </button>
+        <button type="button" class="cp-nav-item" data-tab-target="tab-chat" onclick="switchTab('tab-chat', this)">
+          {{ cp_icon('message-square', 16) }}
+          <span class="cp-nav-label">Q&amp;A</span>
+          <span id="tab-chat-badge" class="cp-red-dot" style="display:none;"></span>
+        </button>
+        <button type="button" class="cp-nav-item" data-tab-target="tab-ai-lectures" onclick="switchTab('tab-ai-lectures', this)">
+          {{ cp_icon('sparkles', 16) }}
+          <span class="cp-nav-label">AI Summary</span>
+        </button>
+      </nav>
+    </div>
+
+    <!-- Category 3: Course Management -->
+    <div>
+      <div class="cp-sidebar-section-hdr">
+        <span class="cp-eyebrow">Management</span>
+      </div>
+      <nav aria-label="Course management navigation">
+        <button type="button" class="cp-nav-item" data-tab-target="tab-homework" onclick="switchTab('tab-homework', this)">
+          {{ cp_icon('award', 16) }}
+          <span class="cp-nav-label">Homework</span>
+        </button>
+        <button type="button" id="tab-btn-course-monitor" class="cp-nav-item" data-tab-target="tab-course-roster" onclick="switchTab('tab-course-roster', this)">
+          {{ cp_icon('users', 16) }}
+          <span class="cp-nav-label">Roster ({{ selected_course.students|length }})</span>
+        </button>
+        <button type="button" class="cp-nav-item" data-tab-target="tab-course-details" onclick="switchTab('tab-course-details', this)">
+          {{ cp_icon('file-text', 16) }}
+          <span class="cp-nav-label">Course Details</span>
+        </button>
+      </nav>
+    </div>
+
+    <!-- Category 4: My Courses -->
     <div>
       <div class="cp-sidebar-section-hdr">
         <span class="cp-eyebrow">My Courses ({{ courses|length }})</span>
@@ -134,50 +204,29 @@
         <a class="cp-nav-item course-item {% if c.id == selected_course.id %}active{% endif %}"
            href="/teacher?course_id={{ c.id }}">
           <span class="cp-nav-label">{{ c.name }}</span>
-          <span class="cp-code-pill code-pill">{{ c.course_code }}</span>
         </a>
       {% endfor %}
     </div>
 
-    <!-- Course Lecture Sessions List -->
-    <div style="flex:1; overflow-y:auto; min-height:0;">
-      <div class="cp-sidebar-section-hdr">
-        <span class="cp-eyebrow">{{ selected_course.course_code }} Lectures ({{ course_sessions|length }})</span>
-        <button type="button" class="cp-btn cp-btn--green cp-btn--sm" onclick="openModal('modal-new-lecture')">
-          {{ cp_icon('plus', 13) }}
-          <span>Lecture</span>
-        </button>
+    <!-- Category 5: Account -->
+    <div class="cp-well" style="font-size:13px;">
+      <div style="color:var(--cp-ink); font-weight:700;">
+        {{ lecturer.full_name if lecturer else selected_course.lecturer_name }}
       </div>
-      {% for s in course_sessions %}
-        <a class="cp-session-item session-item {% if s.session_code == session.session_code %}active{% endif %}"
-           href="/teacher?course_id={{ selected_course.id }}&session={{ s.session_code }}">
-          <div class="cp-nav-label">
-            <div style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ s.title }}</div>
-            <div class="cp-muted cp-tabular" style="font-size:11px; font-weight:500;">
-              {{ s.started_at.strftime('%Y-%m-%d %H:%M') }}
-            </div>
-          </div>
-          <span class="cp-code-pill code-pill">{{ s.session_code }}</span>
-        </a>
-      {% endfor %}
-    </div>
-
-    <!-- Lecturer Identity & Account Actions -->
-    <div class="cp-well" style="font-size:11.5px;">
-      <div class="cp-secondary">
-        Lecturer: <strong style="color:var(--cp-ink);">{{ lecturer.full_name if lecturer else selected_course.lecturer_name }}</strong>
-        {% if lecturer and lecturer.username %}<span style="color:var(--cp-indigo-ink); font-weight:700;">(@{{ lecturer.username }})</span>{% endif %}
-      </div>
-      <div class="cp-muted" style="margin-top:2px;">
-        Dept: {{ lecturer.department if lecturer else selected_course.department }} &bull; {{ selected_course.semester }}
+      <div class="cp-muted" style="font-size:12.5px; margin-top:2px;">
+        {{ lecturer.department if lecturer else selected_course.department }} &bull; {{ selected_course.semester }}
       </div>
       <div class="cp-row-wrap" style="margin-top:10px; gap:6px;">
         <button type="button" class="cp-btn cp-btn--white cp-btn--sm" onclick="openModal('modal-account-security')">
           {{ cp_icon('shield', 13) }}
           <span>Security</span>
         </button>
-        <a class="cp-btn cp-btn--white cp-btn--sm" href="/teacher/login">
-          <span>Switch Lecturer</span>
+        <a class="cp-btn cp-btn--white cp-btn--sm" href="/teacher/login?switch=1">
+          <span>Switch Account</span>
+        </a>
+        <a class="cp-btn cp-btn--white cp-btn--sm" href="/student" target="_blank">
+          <span>Student App</span>
+          {{ cp_icon('external-link', 13) }}
         </a>
         <button type="button" class="cp-btn cp-btn--secondary cp-btn--sm" onclick="logoutLecturer()">
           {{ cp_icon('log-out', 13) }}
@@ -189,64 +238,181 @@
 
   <!-- Right Main Modular Workspace -->
   <main class="cp-workspace workspace">
-    <!-- 6 Modular Workspace Tabs (Single-Line Top Bar) -->
-    <nav class="cp-tab-bar tab-bar" aria-label="Lecturer workspace tabs">
-      <button type="button" class="cp-tab-btn tab-btn active" data-tab-target="tab-attendance" onclick="switchTab('tab-attendance', this)">
-        {{ cp_icon('qr', 15) }}
-        <span>Attendance</span>
-      </button>
-      <button type="button" class="cp-tab-btn tab-btn" data-tab-target="tab-polls" onclick="switchTab('tab-polls', this)">
-        {{ cp_icon('bar-chart', 15) }}
-        <span>Polls</span>
-      </button>
-      <button type="button" class="cp-tab-btn tab-btn" data-tab-target="tab-chat" onclick="switchTab('tab-chat', this)">
-        {{ cp_icon('message-square', 15) }}
-        <span>Q&amp;A <span id="tab-chat-badge" class="cp-red-dot" style="display:none;"></span></span>
-      </button>
-      <button type="button" class="cp-tab-btn tab-btn" data-tab-target="tab-ai-lectures" onclick="switchTab('tab-ai-lectures', this)">
-        {{ cp_icon('sparkles', 15) }}
-        <span>AI Summary</span>
-      </button>
-      <button type="button" class="cp-tab-btn tab-btn" data-tab-target="tab-homework" onclick="switchTab('tab-homework', this)">
-        {{ cp_icon('award', 15) }}
-        <span>Homework</span>
-      </button>
-      <button type="button" id="tab-btn-course-monitor" class="cp-tab-btn tab-btn" data-tab-target="tab-course-roster" onclick="switchTab('tab-course-roster', this)">
-        {{ cp_icon('users', 15) }}
-        <span>Roster ({{ selected_course.students|length }})</span>
-      </button>
-    </nav>
-
-    <!-- Top Header -->
+    <!-- Top Header with Persistent In-App Back Button -->
     <header class="cp-topbar topbar">
-      <div style="min-width:0; flex:1 1 300px;">
-        <div class="cp-row-wrap" style="gap:10px;">
-          <span class="cp-code-pill code-pill" style="font-size:12.5px; padding:4px 10px;">{{ selected_course.course_code }}</span>
-          <h2 style="margin:0; font-size:20px; font-weight:800; color:var(--cp-ink);">{{ session.title }}</h2>
-          <span class="cp-badge badge {% if session.attendance_open %}VERIFIED{% else %}ABSENT{% endif %}">
-            {% if session.attendance_open %}LIVE SESSION ({{ session.session_code }}){% else %}CLOSED ({{ session.session_code }}){% endif %}
-          </span>
+      <div class="cp-row-wrap" style="min-width:0; flex:1 1 300px; gap:12px;">
+        <button type="button"
+                id="lecturer-back-btn"
+                class="cp-back-btn cp-m-back-btn"
+                aria-label="Go back"
+                onclick="handleLecturerBack()"
+                hidden>
+          {{ cp_icon('arrow-left', 17) }}
+          <span>Back</span>
+        </button>
+        <div style="min-width:0;">
+          <h2 id="lecturer-header-course" style="margin:0; font-size:20px; font-weight:800; color:var(--cp-ink); overflow-wrap:anywhere;">
+            {{ selected_course.name }}
+          </h2>
+          <div id="lecturer-header-sub" class="cp-muted" style="font-size:13.5px; margin-top:2px;">
+            {% if session.lecture_number and not session.title.lower().startswith('lecture') %}Lecture {{ session.lecture_number }} &mdash; {% endif %}{{ session.title }}
+          </div>
         </div>
       </div>
 
       <div class="cp-row-wrap">
         <a class="cp-btn cp-btn--primary cp-btn--sm" href="/projector/{{ session.session_code }}?ptok={{ projector_token }}" target="_blank">
           {{ cp_icon('monitor', 15) }}
-          <span>Launch Projector QR</span>
+          <span>Projector QR</span>
         </a>
-        <a class="cp-btn cp-btn--white cp-btn--sm" href="/lecturer/chat-popout/{{ session.session_code }}" target="_blank">
-          {{ cp_icon('message-square', 15) }}
-          <span>Q&amp;A Pop-Out</span>
-        </a>
-        <a class="cp-btn cp-btn--white cp-btn--sm" href="/student?session={{ session.session_code }}" target="_blank">
+        <a class="cp-btn cp-btn--white cp-btn--sm" href="/student?course_id={{ selected_course.id }}&session={{ session.session_code }}" target="_blank">
           {{ cp_icon('smartphone', 15) }}
-          <span>Preview Student App</span>
+          <span>Student App</span>
         </a>
       </div>
     </header>
 
-    <!-- TAB 1: Live Attendance & CV Headcount (Feature 1 P0) -->
-    <section id="tab-attendance" class="cp-tab-pane tab-pane active">
+    <!-- HUB: Course Overview Tiles (Default) -->
+    <section id="tab-overview" class="cp-tab-pane tab-pane active">
+      <div class="cp-card cp-card--compact" style="margin-bottom:16px;">
+        <div class="cp-row-between">
+          <div>
+            <div class="cp-eyebrow">Active Lecture</div>
+            <div style="font-size:18px; font-weight:800; color:var(--cp-ink); margin-top:2px;">
+              {% if session.lecture_number and not session.title.lower().startswith('lecture') %}Lecture {{ session.lecture_number }} &mdash; {% endif %}{{ session.title }}
+            </div>
+          </div>
+          <div class="cp-row-wrap">
+            <button type="button" class="cp-btn cp-btn--secondary cp-btn--sm" onclick="switchTab('tab-lectures')">
+              <span>Switch Lecture</span>
+            </button>
+            <button type="button" class="cp-btn cp-btn--green cp-btn--sm" onclick="openModal('modal-new-lecture')">
+              {{ cp_icon('plus', 14) }}
+              <span>New Lecture</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="cp-hub-grid">
+        <button type="button" class="cp-hub-tile" onclick="switchTab('tab-lectures')">
+          <div class="cp-tile-head">
+            <span class="cp-tile-icon cp-tile-icon--indigo">{{ cp_icon('play', 20) }}</span>
+          </div>
+          <div>
+            <div class="cp-tile-title">Lectures</div>
+            <div class="cp-tile-sub">{{ course_sessions|length }} lecture{{ '' if course_sessions|length == 1 else 's' }}</div>
+          </div>
+        </button>
+
+        <button type="button" class="cp-hub-tile" onclick="switchTab('tab-attendance')">
+          <div class="cp-tile-head">
+            <span class="cp-tile-icon cp-tile-icon--coral">{{ cp_icon('qr', 20) }}</span>
+          </div>
+          <div>
+            <div class="cp-tile-title">Attendance &amp; QR</div>
+            <div class="cp-tile-sub">{{ verdict.qr_count }} QR check-ins</div>
+          </div>
+        </button>
+
+        <button type="button" class="cp-hub-tile" onclick="switchTab('tab-polls')">
+          <div class="cp-tile-head">
+            <span class="cp-tile-icon cp-tile-icon--green">{{ cp_icon('bar-chart', 20) }}</span>
+          </div>
+          <div>
+            <div class="cp-tile-title">Polls</div>
+            <div class="cp-tile-sub">Create &amp; review polls</div>
+          </div>
+        </button>
+
+        <button type="button" class="cp-hub-tile" onclick="switchTab('tab-chat')">
+          <div class="cp-tile-head">
+            <span class="cp-tile-icon cp-tile-icon--amber">{{ cp_icon('message-square', 20) }}</span>
+          </div>
+          <div>
+            <div class="cp-tile-title">Q&amp;A</div>
+            <div class="cp-tile-sub">Lecture &amp; offline questions</div>
+          </div>
+        </button>
+
+        <button type="button" class="cp-hub-tile" onclick="switchTab('tab-ai-lectures')">
+          <div class="cp-tile-head">
+            <span class="cp-tile-icon cp-tile-icon--purple">{{ cp_icon('sparkles', 20) }}</span>
+          </div>
+          <div>
+            <div class="cp-tile-title">AI Summary</div>
+            <div class="cp-tile-sub">Summaries &amp; transcripts</div>
+          </div>
+        </button>
+
+        <button type="button" class="cp-hub-tile" onclick="switchTab('tab-homework')">
+          <div class="cp-tile-head">
+            <span class="cp-tile-icon cp-tile-icon--coral">{{ cp_icon('award', 20) }}</span>
+          </div>
+          <div>
+            <div class="cp-tile-title">Homework</div>
+            <div class="cp-tile-sub">Assignments &amp; grading</div>
+          </div>
+        </button>
+
+        <button type="button" class="cp-hub-tile" onclick="switchTab('tab-course-roster')">
+          <div class="cp-tile-head">
+            <span class="cp-tile-icon cp-tile-icon--indigo">{{ cp_icon('users', 20) }}</span>
+          </div>
+          <div>
+            <div class="cp-tile-title">Roster</div>
+            <div class="cp-tile-sub">{{ selected_course.students|length }} enrolled students</div>
+          </div>
+        </button>
+
+        <button type="button" class="cp-hub-tile" onclick="switchTab('tab-course-details')">
+          <div class="cp-tile-head">
+            <span class="cp-tile-icon cp-tile-icon--green">{{ cp_icon('file-text', 20) }}</span>
+          </div>
+          <div>
+            <div class="cp-tile-title">Course Details</div>
+            <div class="cp-tile-sub">Course number &amp; info</div>
+          </div>
+        </button>
+      </div>
+    </section>
+
+    <!-- PANE: Course Lectures List -->
+    <section id="tab-lectures" class="cp-tab-pane tab-pane">
+      <div class="cp-card">
+        <div class="cp-card-header">
+          <h2>{{ cp_icon('play', 18) }} <span>Course Lectures ({{ course_sessions|length }})</span></h2>
+          <button type="button" class="cp-btn cp-btn--green cp-btn--sm" onclick="openModal('modal-new-lecture')">
+            {{ cp_icon('plus', 14) }}
+            <span>New Lecture</span>
+          </button>
+        </div>
+        <div class="cp-m-lecture-list">
+          {% for s in course_sessions %}
+            <a class="cp-m-lecture-row {% if s.session_code == session.session_code %}active{% endif %}"
+               style="text-decoration:none;"
+               data-session-code="{{ s.session_code }}"
+               href="/teacher?course_id={{ selected_course.id }}&session={{ s.session_code }}&tab=tab-attendance">
+              <div class="cp-m-lecture-main">
+                <div class="cp-m-lecture-title">
+                  {% if s.lecture_number and not s.title.lower().startswith('lecture') %}Lecture {{ s.lecture_number }} &mdash; {% endif %}{{ s.title }}
+                </div>
+                <div class="cp-m-lecture-meta cp-tabular">{{ s.started_at.strftime('%Y-%m-%d %H:%M') }}</div>
+              </div>
+              <div class="cp-m-lecture-right">
+                {% if s.session_code == session.session_code %}
+                  <span class="cp-badge cp-badge--indigo">Selected</span>
+                {% endif %}
+                <span class="cp-m-lecture-chev" aria-hidden="true">&#8250;</span>
+              </div>
+            </a>
+          {% endfor %}
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 1: Attendance & CV Headcount -->
+    <section id="tab-attendance" class="cp-tab-pane tab-pane">
       <div class="cp-kpi-grid-4">
         <div class="cp-kpi">
           <div class="cp-kpi-num cp-kpi-num--indigo cp-tabular" id="kpi-roster">{{ verdict.roster_count }}</div>
@@ -274,7 +440,7 @@
         <!-- Left: 5s Rotating QR -->
         <div class="cp-card" style="text-align:center;">
           <div class="cp-card-header">
-            <h2>{{ cp_icon('qr', 18) }} <span>5-Second Rolling QR</span></h2>
+            <h2>{{ cp_icon('qr', 18) }} <span>Attendance QR Code</span></h2>
             <button type="button" class="cp-btn cp-btn--secondary cp-btn--sm" onclick="toggleSessionOpen({{ session.id }})">
               {% if session.attendance_open %}Close Check-In{% else %}Reopen Check-In{% endif %}
             </button>
@@ -308,7 +474,7 @@
 
           <div class="cp-row-wrap" style="margin-bottom:12px;">
             <input type="file" id="photo-input" class="cp-file-input" accept="image/*" style="max-width:100%;" />
-            <button type="button" class="cp-btn cp-btn--primary cp-btn--sm" onclick="uploadClassroomPhoto()">
+            <button type="button" id="btn-upload-headcount" class="cp-btn cp-btn--primary cp-btn--sm" onclick="uploadClassroomPhoto()">
               {{ cp_icon('camera', 14) }}
               <span>Upload &amp; Count Faces</span>
             </button>
@@ -316,7 +482,7 @@
               {{ cp_icon('smartphone', 14) }}
               <span>Phone Camera</span>
             </button>
-            <button type="button" class="cp-btn cp-btn--secondary cp-btn--sm" onclick="runSamplePhoto()">Use Ariel Classroom Sample</button>
+            <button type="button" id="btn-sample-headcount" class="cp-btn cp-btn--secondary cp-btn--sm" onclick="runSamplePhoto()">Use Ariel Classroom Sample</button>
             <span id="cv-status" style="font-size:12px; font-weight:700; color:var(--cp-indigo-ink);"></span>
           </div>
 
@@ -411,19 +577,18 @@
         <!-- Left Column: Simple Custom Poll Launcher + Lecture Polls History -->
         <div class="cp-card">
           <div class="cp-card-header">
-            <h2>{{ cp_icon('plus', 17) }} <span>Launch Custom Poll</span></h2>
-            <span class="cp-code-pill code-pill">{{ session.session_code }}</span>
+            <h2>{{ cp_icon('plus', 17) }} <span>Create Custom Poll</span></h2>
           </div>
           <input type="text" id="poll-question" class="cp-input" placeholder="Ask the class a question..." style="margin-bottom:8px;" />
           <textarea id="poll-options" class="cp-textarea" rows="3" placeholder="Options (one per line):&#10;Option A&#10;Option B&#10;Option C"></textarea>
           <div class="cp-row-between" style="margin-top:8px;">
-            <label class="cp-secondary" for="poll-correct-idx" style="font-size:12px; font-weight:600;">Correct Option # (1-based, optional):</label>
+            <label class="cp-secondary" for="poll-correct-idx" style="font-size:13px; font-weight:600;">Correct Option # (1-based, optional):</label>
             <input type="number" id="poll-correct-idx" class="cp-input" min="1" max="10" placeholder="—" style="width:76px; padding:6px 10px;" />
           </div>
           <div style="margin-top:12px;">
             <button type="button" class="cp-btn cp-btn--green cp-btn--block" onclick="createPoll(true)">
               {{ cp_icon('play', 14) }}
-              <span>Launch Live Poll Now</span>
+              <span>Launch Poll</span>
             </button>
           </div>
 
@@ -470,18 +635,18 @@
       </div>
     </section>
 
-    <!-- TAB 3: Live Classroom Q&A (Feature 2) -->
+    <!-- TAB 3: Classroom Q&A & Offline Questions -->
     <section id="tab-chat" class="cp-tab-pane tab-pane">
       <div class="cp-card">
         <div class="cp-card-header cp-dot-header" style="padding:12px 14px; margin:-4px -4px 14px -4px; background:var(--cp-well); border:1px solid var(--cp-border); border-radius:14px;">
           <h2>
             {{ cp_icon('message-square', 18) }}
-            <span>Timestamped Classroom Q&amp;A</span>
+            <span>Classroom Q&amp;A &amp; Offline Questions</span>
           </h2>
           <div class="cp-row-wrap">
             <a class="cp-btn cp-btn--white cp-btn--sm" href="/lecturer/chat-popout/{{ session.session_code }}" target="_blank">
               {{ cp_icon('external-link', 14) }}
-              <span>Open Live Q&amp;A Companion Pop-Out</span>
+              <span>Open Q&amp;A Pop-Out</span>
             </a>
             <a class="cp-btn cp-btn--secondary cp-btn--sm" href="/api/sessions/{{ session.id }}/chat/export">
               {{ cp_icon('download', 14) }}
@@ -490,13 +655,19 @@
           </div>
         </div>
 
+        <div class="cp-filter-pills" style="margin-bottom:12px;">
+          <button type="button" class="cp-filter-pill active" data-chat-filter="all" onclick="setLecturerChatFilter('all', this)">All Messages</button>
+          <button type="button" class="cp-filter-pill" data-chat-filter="lecture" onclick="setLecturerChatFilter('lecture', this)">Lecture Q&amp;A</button>
+          <button type="button" class="cp-filter-pill" data-chat-filter="offline" onclick="setLecturerChatFilter('offline', this)">Offline Questions</button>
+        </div>
+
         <div class="cp-composer" style="margin-bottom:14px;">
           <select id="lecturer-chat-cat" class="cp-select">
             <option value="Comment">Announcement</option>
             <option value="Question">Question</option>
             <option value="Suggestion">Suggestion</option>
           </select>
-          <input type="text" id="lecturer-chat-body" class="cp-input" placeholder="Post an announcement or answer to the live classroom feed..." onkeydown="if(event.key==='Enter') sendLecturerChat()" />
+          <input type="text" id="lecturer-chat-body" class="cp-input" placeholder="Post an announcement or reply to students..." onkeydown="if(event.key==='Enter') sendLecturerChat()" />
           <button type="button" class="cp-btn cp-btn--primary" onclick="sendLecturerChat()">
             {{ cp_icon('send', 15) }}
             <span>Send</span>
@@ -510,6 +681,55 @@
     {% include "teacher/_tab_lecture_ai.html" %}
     {% include "teacher/_tab_homework.html" %}
     {% include "teacher/_tab_roster.html" %}
+
+    <!-- TAB 7: Course Details (ONLY Lecturer screen showing Course Number & Join Code) -->
+    <section id="tab-course-details" class="cp-tab-pane tab-pane">
+      <div class="cp-card">
+        <div class="cp-card-header">
+          <h2>{{ cp_icon('file-text', 18) }} <span>Course Details</span></h2>
+        </div>
+        <div class="cp-detail-list">
+          <div class="cp-detail-row">
+            <span class="cp-muted">Course Name</span>
+            <strong style="color:var(--cp-ink);">{{ selected_course.name }}</strong>
+          </div>
+          <div class="cp-detail-row">
+            <span class="cp-muted">Course Number</span>
+            <div class="cp-row-wrap" style="gap:8px;">
+              <span id="course-details-number" class="cp-code-pill code-pill" style="font-size:14px; padding:5px 12px;">{{ selected_course.course_code }}</span>
+              <button type="button" class="cp-btn cp-btn--secondary cp-btn--sm" onclick="copyTextValue('{{ selected_course.course_code }}', this)">Copy</button>
+            </div>
+          </div>
+          <div class="cp-detail-row">
+            <span class="cp-muted">Enrollment Join Code</span>
+            <div class="cp-row-wrap" style="gap:8px;">
+              <span class="cp-code-pill code-pill" style="font-size:13.5px; padding:4px 10px;">{{ selected_course.join_code }}</span>
+              <button type="button" class="cp-btn cp-btn--secondary cp-btn--sm" onclick="copyTextValue('{{ selected_course.join_code }}', this)">Copy</button>
+            </div>
+          </div>
+          <div class="cp-detail-row">
+            <span class="cp-muted">Lecturer</span>
+            <strong style="color:var(--cp-ink);">{{ lecturer.full_name if lecturer else selected_course.lecturer_name }}</strong>
+          </div>
+          <div class="cp-detail-row">
+            <span class="cp-muted">Department</span>
+            <strong style="color:var(--cp-ink);">{{ selected_course.department }}</strong>
+          </div>
+          <div class="cp-detail-row">
+            <span class="cp-muted">Semester</span>
+            <strong style="color:var(--cp-ink);">{{ selected_course.semester }}</strong>
+          </div>
+          <div class="cp-detail-row">
+            <span class="cp-muted">Lectures</span>
+            <strong class="cp-tabular" style="color:var(--cp-ink);">{{ course_sessions|length }}</strong>
+          </div>
+          <div class="cp-detail-row">
+            <span class="cp-muted">Enrolled Students</span>
+            <strong class="cp-tabular" style="color:var(--cp-ink);">{{ selected_course.students|length }}</strong>
+          </div>
+        </div>
+      </div>
+    </section>
 
     <!-- Modal: Inspect Student Homework Deep AI Review -->
     <div id="modal-hw-review" class="cp-modal-backdrop modal-backdrop">
@@ -539,7 +759,7 @@
     </div>
     <div class="cp-stack-sm" style="margin-bottom:16px;">
       <div>
-        <label class="cp-label" for="new-course-code">Course Code (e.g. CS305)</label>
+        <label class="cp-label" for="new-course-code">Course Number / Code (e.g. CS305)</label>
         <input type="text" id="new-course-code" class="cp-input" placeholder="CS305" />
       </div>
       <div>
@@ -601,7 +821,7 @@
 <div id="modal-new-lecture" class="cp-modal-backdrop modal-backdrop">
   <div class="cp-modal-card modal-card">
     <div class="cp-card-header">
-      <h3 style="margin:0;">New Lecture in {{ selected_course.course_code }}</h3>
+      <h3 style="margin:0;">New Lecture &mdash; {{ selected_course.name }}</h3>
       <button type="button" class="cp-btn cp-btn--secondary cp-btn--sm" onclick="closeModal('modal-new-lecture')">
         {{ cp_icon('x', 14) }}
         <span>Close</span>
@@ -619,7 +839,7 @@
     </div>
     <div class="cp-row-wrap" style="justify-content:flex-end;">
       <button type="button" class="cp-btn cp-btn--secondary cp-btn--sm" onclick="closeModal('modal-new-lecture')">Cancel</button>
-      <button type="button" class="cp-btn cp-btn--green cp-btn--sm" onclick="submitNewLecture()">Start Lecture Session</button>
+      <button type="button" class="cp-btn cp-btn--green cp-btn--sm" onclick="submitNewLecture()">Create Lecture</button>
     </div>
   </div>
 </div>
@@ -639,7 +859,10 @@
   }{% else %}null{% endif %};
 
   const LECTURER_ID = {{ lecturer.id if lecturer else 'null' }};
-  let activeTabId = "tab-attendance";
+  let activeTabId = "tab-overview";
+  const LECTURER_NAV_STACK = ["tab-overview"];
+  const LECTURER_CLEAN_URL = `/teacher?course_id=${COURSE_ID}&session=${encodeURIComponent(SESSION_CODE)}`;
+  let LECTURER_HISTORY_GUARD_INSTALLED = false;
 
   function escapeHtml(str) {
     return String(str == null ? "" : str)
@@ -650,26 +873,125 @@
       .replace(/'/g, "&#39;");
   }
 
+  function closeMobileSidebar() {
+    const sidebar = document.getElementById("teacher-sidebar");
+    const backdrop = document.getElementById("teacher-sidebar-backdrop");
+    const btn = document.getElementById("mobile-sidebar-toggle");
+    if (sidebar) sidebar.classList.remove("open");
+    if (backdrop) backdrop.classList.remove("open");
+    if (btn) btn.setAttribute("aria-expanded", "false");
+  }
+
   function toggleMobileSidebar() {
     const sidebar = document.getElementById("teacher-sidebar");
+    const backdrop = document.getElementById("teacher-sidebar-backdrop");
     const btn = document.getElementById("mobile-sidebar-toggle");
     if (!sidebar) return;
     const isOpen = sidebar.classList.toggle("open");
+    if (backdrop) backdrop.classList.toggle("open", isOpen);
     if (btn) btn.setAttribute("aria-expanded", isOpen ? "true" : "false");
   }
 
-  function switchTab(tabId, btnEl) {
+  document.addEventListener("keydown", (evt) => {
+    if (evt.key === "Escape") closeMobileSidebar();
+  });
+
+  function updateLecturerBackButton() {
+    const backBtn = document.getElementById("lecturer-back-btn");
+    if (!backBtn) return;
+    backBtn.hidden = activeTabId === "tab-overview";
+  }
+
+  function switchTab(tabId, btnEl, opts = {}) {
     const targetPane = document.getElementById(tabId);
     if (!targetPane) return;
+    const prevTabId = activeTabId;
     activeTabId = tabId;
+
+    if (!opts.fromHistory && tabId !== prevTabId) {
+      if (tabId === "tab-overview") {
+        LECTURER_NAV_STACK.splice(0, LECTURER_NAV_STACK.length, "tab-overview");
+      } else if (LECTURER_NAV_STACK[LECTURER_NAV_STACK.length - 1] !== tabId) {
+        LECTURER_NAV_STACK.push(tabId);
+        if (window.history && window.history.pushState) {
+          window.history.pushState({ cpLecturerTab: tabId }, "", LECTURER_CLEAN_URL);
+        }
+      }
+    }
+
     document.querySelectorAll(".tab-pane").forEach(el => el.classList.remove("active"));
-    document.querySelectorAll(".tab-btn").forEach(el => el.classList.remove("active"));
+    document.querySelectorAll("#teacher-sidebar .cp-nav-item[data-tab-target]").forEach(el => el.classList.remove("active"));
     targetPane.classList.add("active");
-    const targetBtn = btnEl || document.querySelector(`.tab-btn[data-tab-target="${tabId}"]`);
+    const targetBtn =
+      (btnEl && btnEl.dataset && btnEl.dataset.tabTarget === tabId ? btnEl : null) ||
+      document.querySelector(`#teacher-sidebar .cp-nav-item[data-tab-target="${tabId}"]`);
     if (targetBtn) targetBtn.classList.add("active");
+
+    updateLecturerBackButton();
+    closeMobileSidebar();
+
     if (tabId === "tab-chat" && window.ClassPulseNotify) {
       window.ClassPulseNotify.clearUnread();
     }
+  }
+
+  function handleLecturerBack() {
+    const sidebar = document.getElementById("teacher-sidebar");
+    if (sidebar && sidebar.classList.contains("open")) {
+      closeMobileSidebar();
+      return;
+    }
+    if (LECTURER_NAV_STACK.length <= 1) return;
+    LECTURER_NAV_STACK.pop();
+    const prevTab = LECTURER_NAV_STACK[LECTURER_NAV_STACK.length - 1] || "tab-overview";
+    switchTab(prevTab, null, { fromHistory: true });
+    if (window.history && window.history.replaceState) {
+      window.history.replaceState({ cpLecturerTab: prevTab }, "", LECTURER_CLEAN_URL);
+    }
+  }
+
+  function initLecturerHistoryGuard() {
+    if (window.history && window.history.replaceState && window.history.pushState) {
+      window.history.replaceState({ cpLecturerTab: activeTabId, cpRoot: true }, "", LECTURER_CLEAN_URL);
+      window.history.pushState({ cpLecturerTab: activeTabId, cpGuard: true }, "", LECTURER_CLEAN_URL);
+    }
+    if (LECTURER_HISTORY_GUARD_INSTALLED) return;
+    LECTURER_HISTORY_GUARD_INSTALLED = true;
+    window.addEventListener("popstate", () => {
+      const sidebar = document.getElementById("teacher-sidebar");
+      if (sidebar && sidebar.classList.contains("open")) {
+        closeMobileSidebar();
+        if (window.history && window.history.pushState) {
+          window.history.pushState({ cpLecturerTab: activeTabId, cpGuard: true }, "", LECTURER_CLEAN_URL);
+        }
+        return;
+      }
+      if (LECTURER_NAV_STACK.length > 1) {
+        LECTURER_NAV_STACK.pop();
+        const prevTab = LECTURER_NAV_STACK[LECTURER_NAV_STACK.length - 1] || "tab-overview";
+        switchTab(prevTab, null, { fromHistory: true });
+        if (prevTab === "tab-overview" && window.history && window.history.pushState) {
+          window.history.pushState({ cpLecturerTab: "tab-overview", cpGuard: true }, "", LECTURER_CLEAN_URL);
+        }
+        return;
+      }
+      if (window.history && window.history.pushState) {
+        window.history.pushState({ cpLecturerTab: "tab-overview", cpGuard: true }, "", LECTURER_CLEAN_URL);
+      }
+    });
+  }
+
+  async function copyTextValue(val, btnEl) {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(val);
+      }
+      if (btnEl) {
+        const orig = btnEl.textContent;
+        btnEl.textContent = "Copied";
+        setTimeout(() => { btnEl.textContent = orig; }, 1400);
+      }
+    } catch (_err) {}
   }
 
   function openModal(id) {
@@ -830,14 +1152,33 @@
     setTimeout(() => window.location.reload(), 600);
   }
 
-  // Start 5-second QR rotation + smooth loading bar + 1-second visual countdown
-  const QR_STEP_MS = 5000;
-  let lastQrRotateTs = Date.now();
+  // Start synced QR rotation + smooth loading bar + 1-second visual countdown
+  const QR_STEP_MS = {{ qr_payload.step_seconds * 1000 }};
+  const INITIAL_QR_EXPIRES_MS = {{ qr_payload.expires_in_ms | default(qr_payload.step_seconds * 1000) }};
+  let nextQrRotateAt = Date.now() + INITIAL_QR_EXPIRES_MS;
+  let qrWindowDurationMs = INITIAL_QR_EXPIRES_MS;
+  let qrRotateTimer = null;
+  let qrInFlight = false;
+
+  function scheduleNextQrRotate(delayMs) {
+    if (qrRotateTimer) clearTimeout(qrRotateTimer);
+    const safeDelay = Math.max(300, Number(delayMs) || QR_STEP_MS);
+    qrWindowDurationMs = safeDelay;
+    nextQrRotateAt = Date.now() + safeDelay;
+    qrRotateTimer = setTimeout(() => {
+      rotateQR();
+    }, safeDelay);
+  }
 
   async function rotateQR() {
+    if (qrInFlight) return null;
+    qrInFlight = true;
     try {
-      const resp = await fetch(`/api/sessions/${SESSION_CODE}/qr?_ts=${Date.now()}`, { cache: "no-store" });
-      if (!resp.ok) return null;
+      const resp = await fetch(`/api/sessions/${encodeURIComponent(SESSION_CODE)}/qr?_ts=${Date.now()}`, { cache: "no-store" });
+      if (!resp.ok) {
+        scheduleNextQrRotate(1500);
+        return null;
+      }
       const data = await resp.json();
       const qrImg = document.getElementById("dash-qr-img");
       if (qrImg && data.svg_data_uri) qrImg.src = data.svg_data_uri;
@@ -857,11 +1198,14 @@
           }
         } catch (_e) {}
       }
-      lastQrRotateTs = Date.now();
+      scheduleNextQrRotate(data.expires_in_ms || QR_STEP_MS);
       return targetUrl;
     } catch (err) {
       console.error("QR rotation error:", err);
+      scheduleNextQrRotate(1500);
       return null;
+    } finally {
+      qrInFlight = false;
     }
   }
 
@@ -877,17 +1221,19 @@
     }
   }
 
+  scheduleNextQrRotate(INITIAL_QR_EXPIRES_MS);
+
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) rotateQR();
+  });
+
   setInterval(() => {
-    const elapsed = Date.now() - lastQrRotateTs;
-    if (elapsed >= QR_STEP_MS) {
-      lastQrRotateTs = Date.now();
-      rotateQR();
-    }
-    const pct = Math.max(0, 100 - (elapsed / QR_STEP_MS) * 100);
+    const remaining = Math.max(0, nextQrRotateAt - Date.now());
+    const pct = Math.max(0, Math.min(100, (remaining / Math.max(500, qrWindowDurationMs)) * 100));
     const barEl = document.getElementById("dash-qr-progress");
     if (barEl) barEl.style.width = `${pct}%`;
 
-    const secsLeft = Math.max(1, Math.ceil((QR_STEP_MS - elapsed) / 1000));
+    const secsLeft = Math.max(1, Math.ceil(remaining / 1000));
     const cdEl = document.getElementById("qr-countdown-badge");
     if (cdEl) cdEl.textContent = `Refreshing in ${secsLeft}s`;
   }, 80);
@@ -1122,28 +1468,98 @@
 
   async function uploadClassroomPhoto() {
     const input = document.getElementById("photo-input");
-    if (!input.files.length) return alert("Select a classroom photo first.");
     const statusEl = document.getElementById("cv-status");
-    statusEl.textContent = "Running Tiled SCRFD face detection...";
-    const fd = new FormData();
-    fd.append("photo", input.files[0]);
-    const resp = await fetch(`/api/sessions/${SESSION_ID}/headcount`, { method: "POST", body: fd });
-    const data = await resp.json();
-    statusEl.textContent = `Detected ${data.auto_count} faces!`;
-    applyIncomingHeadcountUpdate(data);
+    const uploadBtn = document.getElementById("btn-upload-headcount");
+    if (!input || !input.files || !input.files.length) {
+      if (statusEl) {
+        statusEl.style.color = "var(--cp-red-ink)";
+        statusEl.textContent = "Select a classroom photo first.";
+      }
+      return;
+    }
+
+    const rawFile = input.files[0];
+    if (uploadBtn) uploadBtn.disabled = true;
+    if (statusEl) {
+      statusEl.style.color = "var(--cp-indigo-ink)";
+      statusEl.textContent = "Compressing photo...";
+    }
+
+    try {
+      const uploadBlob = window.ClassPulseImage
+        ? await window.ClassPulseImage.compressToJpeg(rawFile, { maxEdge: 1600, quality: 0.82 })
+        : rawFile;
+      if (statusEl) statusEl.textContent = "Uploading & counting faces...";
+
+      const fd = new FormData();
+      fd.append("photo", uploadBlob, "classroom_upload.jpg");
+      const resp = window.ClassPulseImage
+        ? await window.ClassPulseImage.fetchWithTimeout(`/api/sessions/${SESSION_ID}/headcount`, { method: "POST", body: fd }, 45000)
+        : await fetch(`/api/sessions/${SESSION_ID}/headcount`, { method: "POST", body: fd });
+      const rawText = await resp.text();
+      let data = {};
+      try {
+        data = rawText ? JSON.parse(rawText) : {};
+      } catch (_e) {
+        data = { error: `Unexpected server response (HTTP ${resp.status}).` };
+      }
+      if (!resp.ok) {
+        if (statusEl) {
+          statusEl.style.color = "var(--cp-red-ink)";
+          statusEl.textContent = data.error || `Face count failed (HTTP ${resp.status}).`;
+        }
+        return;
+      }
+      if (statusEl) {
+        statusEl.style.color = "var(--cp-green-ink)";
+        statusEl.textContent = `Detected ${Number(data.auto_count ?? data.auto_face_count ?? 0)} face(s)!`;
+      }
+      applyIncomingHeadcountUpdate(data);
+    } catch (err) {
+      if (statusEl) {
+        statusEl.style.color = "var(--cp-red-ink)";
+        statusEl.textContent = (err && err.message) || "Could not upload classroom photo. Please retry.";
+      }
+    } finally {
+      if (uploadBtn) uploadBtn.disabled = false;
+    }
   }
 
   async function runSamplePhoto() {
     const statusEl = document.getElementById("cv-status");
-    statusEl.textContent = "Running Tiled SCRFD on Ariel University sample...";
-    const resp = await fetch(`/api/sessions/${SESSION_ID}/headcount`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ use_sample: true }),
-    });
-    const data = await resp.json();
-    statusEl.textContent = `Detected ${data.auto_count} faces on Ariel sample!`;
-    applyIncomingHeadcountUpdate(data);
+    const sampleBtn = document.getElementById("btn-sample-headcount");
+    if (sampleBtn) sampleBtn.disabled = true;
+    if (statusEl) {
+      statusEl.style.color = "var(--cp-indigo-ink)";
+      statusEl.textContent = "Running face detection on Ariel University sample...";
+    }
+    try {
+      const resp = await fetch(`/api/sessions/${SESSION_ID}/headcount`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ use_sample: true }),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        if (statusEl) {
+          statusEl.style.color = "var(--cp-red-ink)";
+          statusEl.textContent = data.error || `Sample scan failed (HTTP ${resp.status}).`;
+        }
+        return;
+      }
+      if (statusEl) {
+        statusEl.style.color = "var(--cp-green-ink)";
+        statusEl.textContent = `Detected ${Number(data.auto_count ?? data.auto_face_count ?? 0)} faces on Ariel sample!`;
+      }
+      applyIncomingHeadcountUpdate(data);
+    } catch (_err) {
+      if (statusEl) {
+        statusEl.style.color = "var(--cp-red-ink)";
+        statusEl.textContent = "Network error while scanning sample photo.";
+      }
+    } finally {
+      if (sampleBtn) sampleBtn.disabled = false;
+    }
   }
 
   // Polls & Chat JS
@@ -1237,11 +1653,11 @@
     const statusPill = document.getElementById("live-poll-status-pill");
     if (statusPill) {
       if (poll.status === "ACTIVE") {
-        statusPill.textContent = "LIVE ON STUDENT PHONES";
+        statusPill.textContent = "Open";
         statusPill.className = "cp-badge cp-badge--green";
       } else {
-        statusPill.textContent = `SAVED POLL RESULTS (${poll.status})`;
-        statusPill.className = "cp-badge cp-badge--indigo";
+        statusPill.textContent = "Closed";
+        statusPill.className = "cp-badge cp-badge--neutral";
       }
     }
     document.getElementById("live-poll-title").textContent = poll.question;
@@ -1332,21 +1748,35 @@
     }
   }
 
+  let lecturerChatFilter = "all";
+
+  function setLecturerChatFilter(mode, btnEl) {
+    lecturerChatFilter = mode || "all";
+    document.querySelectorAll(".cp-filter-pill[data-chat-filter]").forEach(el => el.classList.remove("active"));
+    if (btnEl) btnEl.classList.add("active");
+    renderChatFeed();
+  }
+
   function renderChatFeed() {
     const feed = document.getElementById("lecturer-chat-feed");
     if (!feed) return;
-    if (!chatMessages.length) {
-      feed.innerHTML = `<div class="cp-well cp-muted" style="text-align:center; font-size:13px;">No student messages yet.</div>`;
+    const filtered = chatMessages.filter(m => {
+      if (lecturerChatFilter === "offline") return m.category === "Offline Question";
+      if (lecturerChatFilter === "lecture") return m.category !== "Offline Question";
+      return true;
+    });
+    if (!filtered.length) {
+      feed.innerHTML = `<div class="cp-well cp-muted" style="text-align:center; font-size:13.5px;">No messages in this view yet.</div>`;
       return;
     }
-    const sorted = [...chatMessages].sort((a, b) => (b.is_pinned - a.is_pinned) || (a.id - b.id));
+    const sorted = [...filtered].sort((a, b) => (b.is_pinned - a.is_pinned) || (a.id - b.id));
     feed.innerHTML = sorted.map(m => `
       <div class="cp-chat-msg msg ${m.is_pinned ? 'pinned' : ''}" data-msg-id="${escapeHtml(m.id)}">
         <div class="cp-row-between" style="margin-bottom:4px;">
           <div class="cp-row-wrap" style="gap:6px;">
             <span class="cp-ts ts">[${escapeHtml(m.offset_mmss)}]</span>
             <strong>${escapeHtml(m.author_name)}</strong>
-            <span class="cp-cat-pill cat">${escapeHtml(m.category)}</span>
+            <span class="${m.category === 'Offline Question' ? 'cp-badge cp-badge--purple' : 'cp-cat-pill cat'}">${escapeHtml(m.category)}</span>
             ${m.is_pinned ? '<span class="cp-badge cp-badge--amber">Pinned</span>' : ''}
           </div>
           <div class="cp-row-wrap" style="gap:6px;">
@@ -1772,7 +2202,13 @@
     const params = new URLSearchParams(window.location.search);
     const targetTab = params.get("tab");
     const targetMsgId = params.get("msg_id");
-    if (targetTab) switchTab(targetTab);
+    if (targetTab && document.getElementById(targetTab)) {
+      if (targetTab !== "tab-overview") {
+        switchTab(targetTab);
+      }
+    }
+    initLecturerHistoryGuard();
+    updateLecturerBackButton();
     if (targetMsgId && window.ClassPulseNotify) {
       setTimeout(() => {
         if (!window.ClassPulseNotify.highlightMessage(targetMsgId)) {

@@ -2,7 +2,7 @@
 {% set cp_use_socketio = true %}
 {% from "macros/icons.html" import cp_icon %}
 
-{% block title %}ClassPulse — Live Classroom Q&amp;A Popout ({{ session.session_code }}){% endblock %}
+{% block title %}ClassPulse — Classroom Q&amp;A ({{ session.title }}){% endblock %}
 
 {% block body %}
 <div class="cp-shell cp-shell--popout">
@@ -11,8 +11,7 @@
       <span class="cp-orb cp-orb--xs" aria-hidden="true"></span>
       <div>
         <div class="cp-row-wrap" style="gap:6px;">
-          <strong style="font-size:15px; color:var(--cp-ink);">Live Q&amp;A Companion Feed</strong>
-          <span class="cp-code-pill">({{ session.session_code }})</span>
+          <strong style="font-size:15px; color:var(--cp-ink);">Classroom Q&amp;A Feed</strong>
         </div>
         <div class="cp-brand-sub">{{ session.title }}</div>
       </div>

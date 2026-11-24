@@ -22,7 +22,8 @@ def discover_active_cloudflared_url(ttl_sec: float = 10.0) -> Optional[str]:
     global _TUNNEL_URL_CACHE
     now = time.time()
     cached_ts, cached_url = _TUNNEL_URL_CACHE
-    if cached_url and (now - cached_ts) < ttl_sec:
+    effective_ttl = ttl_sec if cached_url else 5.0
+    if cached_ts > 0.0 and (now - cached_ts) < effective_ttl:
         return cached_url
 
     for endpoint in (
@@ -50,7 +51,8 @@ def discover_active_cloudflared_url(ttl_sec: float = 10.0) -> Optional[str]:
         except Exception:
             continue
 
-    return cached_url
+    _TUNNEL_URL_CACHE = (now, None)
+    return None
 
 
 def get_lan_ip() -> str:
@@ -134,7 +136,7 @@ class RollingQRService:
     ) -> str:
         """Issue a short-lived signed grant when a first-time student scans a valid QR.
 
-        Allows the student 90 seconds to type their Name + Email without failing the 5s QR window.
+        Allows the student 300 seconds to type their Name + Email without failing the 5s QR window.
         """
         return self._grant_serializer.dumps(
             {
@@ -148,7 +150,7 @@ class RollingQRService:
         self,
         grant_token: str,
         session_code: str,
-        max_age_sec: int = 90,
+        max_age_sec: int = 300,
     ) -> Optional[dict[str, Any]]:
         """Validate a short-lived onboarding grant token."""
         if not grant_token:

@@ -31,6 +31,7 @@ from app.services.identity_helpers import (
     EMAIL_RE,
     RESERVED_USERNAMES,
     USERNAME_RE,
+    generate_deterministic_session_code,
     parse_roster_csv_rows,
     record_audit_event,
     resolve_or_upsert_student,
@@ -129,6 +130,7 @@ class CourseService:
         else:
             s1 = ClassSession(
                 course_id=cs204.id,
+                lecture_number=1,
                 session_code="ARIEL1",
                 title="Lecture 1 — OOD & Architecture",
                 attendance_open=True,
@@ -137,6 +139,7 @@ class CourseService:
 
         s2 = ClassSession(
             course_id=cs101.id,
+            lecture_number=1,
             session_code="ALGO01",
             title="Lecture 1 — Asymptotic Complexity & Graphs",
             attendance_open=True,
@@ -200,8 +203,46 @@ class CourseService:
         if password.lower() in (norm_username, norm_email):
             raise CourseError("Password cannot be the same as your username or email.", status_code=400)
 
-        if self.db.query(Lecturer).filter(func.lower(Lecturer.email) == norm_email).first():
-            raise CourseError("An account with this email already exists.", status_code=409)
+        existing_by_email = (
+            self.db.query(Lecturer)
+            .filter(func.lower(Lecturer.email) == norm_email)
+            .order_by(Lecturer.id.asc())
+            .first()
+        )
+        if existing_by_email is not None:
+            if existing_by_email.password_hash:
+                raise CourseError("An account with this email already exists.", status_code=409)
+            username_conflict = (
+                self.db.query(Lecturer)
+                .filter(
+                    func.lower(Lecturer.username) == norm_username,
+                    Lecturer.id != existing_by_email.id,
+                )
+                .first()
+            )
+            if username_conflict is not None:
+                raise CourseError(f"Username '@{norm_username}' is already taken.", status_code=409)
+            existing_by_email.username = norm_username
+            existing_by_email.full_name = clean_name
+            existing_by_email.department = clean_dept
+            existing_by_email.password_hash = generate_password_hash(password, method="scrypt")
+            existing_by_email.is_active = True
+            existing_by_email.failed_login_attempts = 0
+            existing_by_email.locked_until = None
+            existing_by_email.last_login_at = datetime.now(timezone.utc)
+            record_audit_event(
+                self.db,
+                actor_type="lecturer",
+                actor_id=existing_by_email.id,
+                action="lecturer.legacy_account_activated",
+                target_type="lecturer",
+                target_id=existing_by_email.id,
+                detail=f"Activated @{norm_username} ({norm_email})",
+                ip_address=ip_address,
+            )
+            self.db.commit()
+            return existing_by_email
+
         if self.db.query(Lecturer).filter(func.lower(Lecturer.username) == norm_username).first():
             raise CourseError(f"Username '@{norm_username}' is already taken.", status_code=409)
 
@@ -251,7 +292,8 @@ class CourseService:
                 (func.lower(Lecturer.email) == clean_id)
                 | (func.lower(Lecturer.username) == clean_id)
             )
-            .one_or_none()
+            .order_by(Lecturer.id.asc())
+            .first()
         )
         if lecturer is None or not lecturer.is_active:
             record_audit_event(
@@ -263,6 +305,22 @@ class CourseService:
             )
             self.db.commit()
             raise CourseError("Invalid username/email or password.", status_code=401)
+
+        if not lecturer.password_hash:
+            record_audit_event(
+                self.db,
+                actor_type="lecturer",
+                actor_id=lecturer.id,
+                action="lecturer.login_legacy_unclaimed",
+                target_type="lecturer",
+                target_id=lecturer.id,
+                ip_address=ip_address,
+            )
+            self.db.commit()
+            raise CourseError(
+                "This legacy account does not have a password set yet. Switch to 'Create Account' with this email to activate your password and keep your courses.",
+                status_code=401,
+            )
 
         now_dt = datetime.now(timezone.utc)
         if lecturer.locked_until is not None:
@@ -278,7 +336,7 @@ class CourseService:
             lecturer.locked_until = None
             lecturer.failed_login_attempts = 0
 
-        if not lecturer.password_hash or not check_password_hash(lecturer.password_hash, password):
+        if not check_password_hash(lecturer.password_hash, password):
             lecturer.failed_login_attempts = int(lecturer.failed_login_attempts or 0) + 1
             if lecturer.failed_login_attempts >= MAX_LOGIN_FAILURES:
                 lecturer.locked_until = now_dt + timedelta(minutes=LOCKOUT_MINUTES)
@@ -643,15 +701,15 @@ class CourseService:
         code = (course_code or "").strip().upper()
         clean_name = (name or "").strip()
         if not code or not clean_name:
-            raise CourseError("Course code and course name are required.")
+            raise CourseError("Course code and course name are required.", status_code=400)
+        if len(code) > 32:
+            raise CourseError("Course code must be 32 characters or fewer.", status_code=400)
 
         existing = self.db.query(Course).filter_by(course_code=code).one_or_none()
         if existing is not None:
             if lecturer_id is not None:
-                if existing.lecturer_id == lecturer_id:
-                    return existing
                 raise CourseError(
-                    f"Course code '{code}' is already registered by another lecturer. Please choose a unique course code.",
+                    f"Course code '{code}' already exists. Please choose a unique course number.",
                     status_code=409,
                 )
             return existing
@@ -669,17 +727,11 @@ class CourseService:
         self.db.flush()
 
         # Automatically create an initial Lecture 1 session for the new course
-        initial_code = f"{code[:4]}01"
-        suffix = 1
-        while (
-            self.db.query(ClassSession).filter_by(session_code=initial_code).first()
-            is not None
-        ):
-            suffix += 1
-            initial_code = f"{code[:4]}{suffix:02d}"
+        initial_code = generate_deterministic_session_code(self.db, code, 1)
 
         first_session = ClassSession(
             course_id=course.id,
+            lecture_number=1,
             session_code=initial_code,
             title=(initial_lecture_title or f"Lecture 1 — {clean_name}").strip(),
             attendance_open=True,
@@ -715,6 +767,7 @@ class CourseService:
             "sessions": [
                 {
                     "id": s.id,
+                    "lecture_number": s.lecture_number,
                     "session_code": s.session_code,
                     "title": s.title,
                     "started_at": s.started_at.isoformat(),
@@ -1037,10 +1090,15 @@ class CourseService:
                     if rec is not None
                     else None
                 )
+                checked_in_iso = (
+                    rec.checked_in_at.isoformat() if rec is not None else None
+                )
                 started_str = s.started_at.strftime("%Y-%m-%d %H:%M") if s.started_at else ""
                 started_iso = s.started_at.isoformat() if s.started_at else ""
                 s_card = {
                     "id": s.id,
+                    "lecture_number": s.lecture_number,
+                    "course_name": c.name,
                     "session_code": s.session_code,
                     "title": s.title,
                     "started_at": started_str,
@@ -1049,8 +1107,12 @@ class CourseService:
                     "checked_in": checked_in,
                     "attendance_status": status_label,
                     "checked_in_at": checked_in_time,
+                    "checked_in_at_iso": checked_in_iso,
                     "chat_count": self.db.query(ChatMessage)
                     .filter_by(session_id=s.id)
+                    .count(),
+                    "poll_count": self.db.query(Poll)
+                    .filter(Poll.session_id == s.id, Poll.status != "DRAFT")
                     .count(),
                     "active_poll": self.db.query(Poll)
                     .filter_by(session_id=s.id, status="ACTIVE")
@@ -1065,6 +1127,7 @@ class CourseService:
                 attendance_logs.append(
                     {
                         "session_id": s.id,
+                        "lecture_number": s.lecture_number,
                         "session_code": s.session_code,
                         "lecture_title": s.title,
                         "lecture_date": started_str,

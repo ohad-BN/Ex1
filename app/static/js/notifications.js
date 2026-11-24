@@ -247,9 +247,14 @@
     const stack = document.getElementById("cp-toast-stack");
     const toast = document.createElement("div");
     toast.className = "cp-toast";
-    const courseLabel = payload.course_code ? `${payload.course_code} • ` : "";
-    const sessionLabel = payload.session_code || "";
-    const lectureLabel = payload.lecture_title ? ` — ${payload.lecture_title}` : "";
+    const titleParts = [];
+    if (payload.course_name) titleParts.push(payload.course_name);
+    if (payload.lecture_title) {
+      titleParts.push(payload.lecture_title);
+    } else if (payload.lecture_number) {
+      titleParts.push(`Lecture ${payload.lecture_number}`);
+    }
+    const headerText = titleParts.join(" \u2014 ") || "Classroom Q&A";
     const rawBody = String(payload.body != null ? payload.body : (payload.text || ""));
     const snippet = rawBody.length > 90
       ? rawBody.slice(0, 87) + "..."
@@ -259,7 +264,7 @@
       <div class="cp-toast-hdr">
         <span class="cp-toast-title">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-          ${_escape(courseLabel + sessionLabel)}${_escape(lectureLabel)}
+          ${_escape(headerText)}
         </span>
         <button type="button" class="cp-toast-close" aria-label="Dismiss">&times;</button>
       </div>

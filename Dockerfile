@@ -27,4 +27,4 @@ EXPOSE 5000
 HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=3 \
     CMD curl -f http://localhost:5000/health || exit 1
 
-CMD ["gunicorn", "--worker-class", "gthread", "-w", "1", "--threads", "100", "--bind", "0.0.0.0:5000", "app:create_app()"]
+CMD ["gunicorn", "--worker-class", "gthread", "-w", "1", "--threads", "100", "--timeout", "120", "--bind", "0.0.0.0:5000", "app:create_app()"]

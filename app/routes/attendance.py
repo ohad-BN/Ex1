@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import quote
 
+import cv2
+
 from flask import (
     Blueprint,
     Response,
@@ -27,6 +29,7 @@ from app import socketio
 from app.models import (
     AttendanceRecord,
     ClassSession,
+    Course,
     HeadcountSnapshot,
     Student,
 )
@@ -34,10 +37,16 @@ from app.routes.guards import get_current_lecturer, require_session_access
 from app.services.attendance_service import (
     AttendanceError,
     AttendanceService,
+    ProxyAttendanceBlockedError,
 )
 from app.services.course_service import CourseService
 from app.services.identity_helpers import validate_image_magic_bytes
-from app.services.face_counter import BoundingBox, read_image_unicode
+from app.services.face_counter import (
+    BoundingBox,
+    TiledSCRFDDetector,
+    read_image_unicode,
+    write_image_unicode,
+)
 from app.services.qr_service import DeviceBindingManager, resolve_effective_base_url
 from app.services.report_exporter import SpreadsheetExporter
 
@@ -87,14 +96,66 @@ def projector_view(session_code: str):
             if err[1] == 401:
                 return redirect(url_for("courses.teacher_login_page"))
             return "Access denied: projector display belongs to another lecturer.", 403
+    course = db.get(Course, session.course_id) if session.course_id else None
     qr_payload = qr_service.build_qr_payload(_resolve_base_url(), session.session_code)
     qr_count = db.query(AttendanceRecord).filter_by(session_id=session.id).count()
     return render_template(
         "projector.html",
+        course=course,
         session=session,
         qr_payload=qr_payload,
         qr_count=qr_count,
         projector_token=ptok or device_mgr.create_projector_token(session.session_code),
+    )
+
+
+def _build_checkin_banner(
+    session: ClassSession,
+    course: Optional[Course],
+    student: Optional[Student],
+    *,
+    attendance_recorded: bool,
+) -> dict[str, Any]:
+    lecture_num = session.lecture_number
+    lecture_label = session.title or (
+        f"Lecture {lecture_num}" if lecture_num else "Lecture"
+    )
+    return {
+        "student_name": student.full_name if student else "Student",
+        "course_name": course.name if course else "",
+        "lecture_number": lecture_num,
+        "lecture_label": lecture_label,
+        "session_code": session.session_code,
+        "session_title": session.title,
+        "attendance_recorded": attendance_recorded,
+    }
+
+
+def _render_student_app_for_session(
+    db: Any,
+    session: ClassSession,
+    student: Optional[Student],
+    *,
+    attendance_recorded: bool,
+) -> str:
+    course = db.get(Course, session.course_id) if session.course_id else None
+    course_svc = CourseService(db=db)
+    student_dashboard = course_svc.build_student_dashboard_payload(
+        student_id=student.id if student else None
+    )
+    return render_template(
+        "student_app.html",
+        dashboard=student_dashboard,
+        initial_session_code=session.session_code,
+        initial_course_id=session.course_id,
+        initial_session_id=session.id,
+        checked_in_banner=_build_checkin_banner(
+            session,
+            course,
+            student,
+            attendance_recorded=attendance_recorded,
+        ),
+        from_qr_route=True,
     )
 
 
@@ -108,11 +169,13 @@ def student_entry(session_code: str):
     if session is None:
         return render_template(
             "student_checkin.html",
-            error_title="Session Not Found",
-            error_message=f"No classroom session exists with code '{code}'.",
+            error_title="Lecture Not Found",
+            error_message=f"No lecture was found for code '{code}'.",
             session=None,
+            course=None,
         ), 404
 
+    course = db.get(Course, session.course_id) if session.course_id else None
     cookie_raw = request.cookies.get(DeviceBindingManager.COOKIE_NAME)
     parsed_cookie = device_mgr.parse_device_cookie(cookie_raw)
     device_id = parsed_cookie[0] if parsed_cookie else uuid.uuid4().hex
@@ -122,46 +185,47 @@ def student_entry(session_code: str):
     sig_param = request.args.get("sig", "")
     bucket_val: Optional[int] = int(t_param) if (t_param and t_param.isdigit()) else None
 
-    # Case 1: Student already checked into this session on this device and refreshes page
+    # Case 1: Student already checked into this session (by device or signed-in student)
     existing_rec = (
         db.query(AttendanceRecord)
         .filter_by(session_id=session.id, device_id=device_id)
         .one_or_none()
     )
+    if existing_rec is None and existing_student_id is not None:
+        existing_rec = (
+            db.query(AttendanceRecord)
+            .filter_by(session_id=session.id, student_id=existing_student_id)
+            .one_or_none()
+        )
     if existing_rec is not None:
         student = db.get(Student, existing_rec.student_id)
-        course_svc = CourseService(db=db)
-        student_dashboard = course_svc.build_student_dashboard_payload(
-            student_id=student.id if student else None
-        )
-        return render_template(
-            "student_app.html",
-            dashboard=student_dashboard,
-            initial_session_code=session.session_code,
-            checked_in_banner={
-                "student_name": student.full_name if student else "Student",
-                "session_code": session.session_code,
-                "session_title": session.title,
-                "checked_in_at": existing_rec.checked_in_at.strftime("%H:%M:%S UTC"),
-            },
-            from_qr_route=True,
+        return _render_student_app_for_session(
+            db, session, student, attendance_recorded=True
         )
 
     if not session.attendance_open:
+        if existing_student_id is not None:
+            known_student = db.get(Student, existing_student_id)
+            if known_student is not None:
+                return _render_student_app_for_session(
+                    db, session, known_student, attendance_recorded=False
+                )
         return render_template(
             "student_checkin.html",
             session=session,
+            course=course,
             error_title="Attendance Closed",
-            error_message="The lecturer has locked attendance check-in for this session.",
+            error_message="The lecturer has locked attendance check-in for this lecture.",
         ), 403
 
-    # Verify the 5-second rotating QR token
+    # Verify the rotating QR token
     if bucket_val is None or not qr_service.verify_token(code, sig_param, bucket_val):
         return render_template(
             "student_checkin.html",
             session=session,
+            course=course,
             error_title="QR Code Expired",
-            error_message="This 5-second QR token has expired. Please point your camera at the live projector screen and scan again.",
+            error_message="This QR code has expired. Please point your camera at the screen and scan again.",
         ), 410
 
     # Case 2: Returning student with a valid signed device cookie -> instant auto check-in!
@@ -169,7 +233,7 @@ def student_entry(session_code: str):
         known_student = db.get(Student, existing_student_id)
         if known_student is not None:
             try:
-                rec, st, _is_new = att_service.process_checkin(
+                _rec, st, _is_new = att_service.process_checkin(
                     session_code=code,
                     bucket=bucket_val,
                     token=sig_param,
@@ -197,22 +261,9 @@ def student_entry(session_code: str):
                     checkin_event,
                     to=f"session_{code}",
                 )
-                course_svc = CourseService(db=db)
-                student_dashboard = course_svc.build_student_dashboard_payload(
-                    student_id=st.id
-                )
                 resp = make_response(
-                    render_template(
-                        "student_app.html",
-                        dashboard=student_dashboard,
-                        initial_session_code=session.session_code,
-                        checked_in_banner={
-                            "student_name": st.full_name,
-                            "session_code": session.session_code,
-                            "session_title": session.title,
-                            "checked_in_at": rec.checked_in_at.strftime("%H:%M:%S UTC"),
-                        },
-                        from_qr_route=True,
+                    _render_student_app_for_session(
+                        db, session, st, attendance_recorded=True
                     )
                 )
                 resp.set_cookie(
@@ -228,22 +279,25 @@ def student_entry(session_code: str):
                 return render_template(
                     "student_checkin.html",
                     session=session,
+                    course=course,
                     error_title="Check-In Blocked",
                     error_message=exc.message,
                 ), exc.status_code
 
-    # Case 3: First-time student -> issue 90s onboarding grant so typing Name + Email won't fail the 5s QR
+    # Case 3: First-time student -> issue 300s onboarding grant so typing details won't fail the rotating QR
     onboarding_grant = qr_service.create_onboarding_grant(
         session_code=code, device_id=device_id, bucket=bucket_val
     )
     return render_template(
         "student_checkin.html",
         session=session,
+        course=course,
         checked_in=False,
         onboarding_grant=onboarding_grant,
         bucket=bucket_val,
         sig=sig_param,
         device_id=device_id,
+        form_values={},
     )
 
 
@@ -303,7 +357,7 @@ def get_rotating_qr(session_code: str):
 
 @attendance_bp.post("/api/attendance/checkin")
 def api_student_checkin():
-    att_service, _qr_service, device_mgr, _exporter = _get_services()
+    att_service, qr_service, device_mgr, _exporter = _get_services()
     db = current_app.extensions["db_session"]
 
     data = request.get_json(silent=True) or request.form.to_dict()
@@ -344,9 +398,52 @@ def api_student_checkin():
         session = (
             db.query(ClassSession).filter_by(session_code=session_code).one_or_none()
         )
+        course = (
+            db.get(Course, session.course_id)
+            if (session is not None and session.course_id)
+            else None
+        )
+        can_retry_inline = bool(
+            session is not None
+            and session.attendance_open
+            and not isinstance(exc, ProxyAttendanceBlockedError)
+            and (
+                (
+                    onboarding_grant
+                    and qr_service.verify_onboarding_grant(onboarding_grant, session_code)
+                    is not None
+                )
+                or (
+                    bucket is not None
+                    and sig
+                    and qr_service.verify_token(session_code, sig, bucket)
+                )
+            )
+        )
+        if can_retry_inline:
+            return (
+                render_template(
+                    "student_checkin.html",
+                    session=session,
+                    course=course,
+                    checked_in=False,
+                    inline_error=exc.message,
+                    form_values={
+                        "full_name": full_name or "",
+                        "student_id_number": student_id_number or "",
+                        "email": email or "",
+                    },
+                    onboarding_grant=onboarding_grant or "",
+                    bucket=bucket if bucket is not None else "",
+                    sig=sig or "",
+                    device_id=device_id,
+                ),
+                exc.status_code,
+            )
         return render_template(
             "student_checkin.html",
             session=session,
+            course=course,
             error_title="Check-In Failed",
             error_message=exc.message,
         ), exc.status_code
@@ -385,24 +482,13 @@ def api_student_checkin():
             }
         )
     else:
-        course_svc = CourseService(db=db)
-        student_dashboard = course_svc.build_student_dashboard_payload(
-            student_id=student.id
+        target_url = url_for(
+            "courses.student_app",
+            course_id=session.course_id if (session and session.course_id is not None) else None,
+            session=session.session_code if session else session_code,
+            checked_in=1,
         )
-        resp = make_response(
-            render_template(
-                "student_app.html",
-                dashboard=student_dashboard,
-                initial_session_code=session.session_code if session else "",
-                checked_in_banner={
-                    "student_name": student.full_name,
-                    "session_code": session.session_code if session else "",
-                    "session_title": session.title if session else "",
-                    "checked_in_at": rec.checked_in_at.strftime("%H:%M:%S UTC"),
-                },
-                from_qr_route=True,
-            )
-        )
+        resp = make_response(redirect(target_url, code=303))
 
     resp.set_cookie(
         DeviceBindingManager.COOKIE_NAME,
@@ -477,8 +563,27 @@ def _run_headcount_detection_and_persist(
 ) -> tuple[HeadcountSnapshot, dict[str, Any]]:
     """Run face detection on raw_dest, save HeadcountSnapshot, broadcast headcount:updated, and return payload."""
     img = read_image_unicode(raw_dest)
-    boxes = detector.detect(img)
-    detector.render_annotated_image(raw_dest, boxes, ann_dest)
+    h, w = img.shape[:2]
+    if max(h, w) > 1920:
+        scale = 1920.0 / float(max(h, w))
+        img = cv2.resize(
+            img,
+            (max(1, int(round(w * scale))), max(1, int(round(h * scale)))),
+            interpolation=cv2.INTER_AREA,
+        )
+        write_image_unicode(raw_dest, img)
+
+    if hasattr(detector, "detect_with_orientation"):
+        boxes, img, was_rotated = detector.detect_with_orientation(img)
+        if was_rotated:
+            write_image_unicode(raw_dest, img)
+    else:
+        boxes = detector.detect(img)
+
+    if isinstance(detector, TiledSCRFDDetector):
+        detector.render_annotated_image(raw_dest, boxes, ann_dest, image=img)
+    else:
+        detector.render_annotated_image(raw_dest, boxes, ann_dest)
     boxes_dicts = [b.to_dict() for b in boxes]
 
     snap = HeadcountSnapshot(
@@ -891,6 +996,7 @@ def phone_headcount_cam_view(session_code: str):
                 "phone_headcount_cam.html",
                 error_title="Camera Link Unavailable",
                 error_message=msg,
+                course=None,
                 session=session,
                 ctok="",
                 latest_snap=None,
@@ -952,10 +1058,12 @@ def phone_headcount_cam_view(session_code: str):
         else None
     )
 
+    course = db.get(Course, session.course_id) if session.course_id else None
     return render_template(
         "phone_headcount_cam.html",
         error_title=None,
         error_message=None,
+        course=course,
         session=session,
         ctok=ctok,
         latest_snap=latest_snap,

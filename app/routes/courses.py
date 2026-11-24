@@ -13,8 +13,9 @@ from flask import (
     request,
     url_for,
 )
+from sqlalchemy import func
 
-from app.models import ClassSession, Course, HeadcountSnapshot, Lecturer, Student
+from app.models import AttendanceRecord, ClassSession, Course, HeadcountSnapshot, Lecturer, Student
 from app.routes.guards import (
     get_client_ip,
     get_current_lecturer,
@@ -22,12 +23,17 @@ from app.routes.guards import (
     require_course_access,
 )
 from app.schemas import (
+    CourseCreateSchema,
     CourseStaffAddSchema,
     parse_schema,
 )
 from app.services.attendance_service import AttendanceService
 from app.services.course_service import CourseError, CourseService
-from app.services.identity_helpers import parse_roster_upload, resolve_or_upsert_student
+from app.services.identity_helpers import (
+    normalize_student_id,
+    parse_roster_upload,
+    resolve_or_upsert_student,
+)
 from app.services.qr_service import DeviceBindingManager, resolve_effective_base_url
 from app.services.rate_limiter import SlidingWindowRateLimiter
 
@@ -114,22 +120,49 @@ def _check_auth_rate_limit(bucket: str, limit: int = 15, window_sec: float = 60.
     return None
 
 
+def _maybe_seed_demo_if_empty(svc: CourseService) -> None:
+    cfg = current_app.config["CLASSPULSE_CONFIG"]
+    if not cfg.ENABLE_DEMO_SEED or current_app.config.get("TESTING"):
+        return
+    db = current_app.extensions["db_session"]
+    if db.query(Lecturer).count() == 0:
+        svc.ensure_default_school_courses()
+
+
 @courses_bp.get("/teacher/login")
 def teacher_login_page():
     """Dedicated Lecturer Sign-In & Registration Page."""
     svc = _get_course_service()
+    _maybe_seed_demo_if_empty(svc)
+    force_setup = bool(request.args.get("setup"))
+    switch_mode = bool(request.args.get("switch"))
+    has_cookie = DeviceBindingManager.LECTURER_COOKIE_NAME in request.cookies
     lecturer = get_current_lecturer()
     lecturer_courses = (
         [svc.serialize_course_summary(c) for c in svc.list_lecturer_courses(lecturer.id)]
         if lecturer is not None
         else []
     )
-    return render_template(
-        "teacher_login.html",
-        lecturer=lecturer,
-        lecturer_courses=lecturer_courses,
-        force_setup=bool(request.args.get("setup")),
+    if lecturer is not None and lecturer_courses and not force_setup and not switch_mode:
+        return redirect(url_for("courses.teacher_portal"))
+
+    resp = make_response(
+        render_template(
+            "teacher_login.html",
+            lecturer=lecturer,
+            lecturer_courses=lecturer_courses,
+            force_setup=force_setup,
+        )
     )
+    if lecturer is None and has_cookie:
+        resp.delete_cookie(
+            DeviceBindingManager.LECTURER_COOKIE_NAME,
+            path="/",
+            httponly=True,
+            samesite="Lax",
+            secure=request.is_secure,
+        )
+    return resp
 
 
 @courses_bp.post("/api/auth/lecturer/register")
@@ -181,6 +214,7 @@ def api_teacher_login():
     remember_me = remember_raw not in ("0", "false", "no")
 
     svc = _get_course_service()
+    _maybe_seed_demo_if_empty(svc)
     try:
         lecturer = svc.authenticate_lecturer(
             identifier=identifier,
@@ -197,7 +231,13 @@ def api_teacher_login():
 @courses_bp.post("/api/teacher/logout")
 def api_teacher_logout():
     resp = make_response(jsonify({"status": "logged_out"}), 200)
-    resp.delete_cookie(DeviceBindingManager.LECTURER_COOKIE_NAME)
+    resp.delete_cookie(
+        DeviceBindingManager.LECTURER_COOKIE_NAME,
+        path="/",
+        httponly=True,
+        samesite="Lax",
+        secure=request.is_secure,
+    )
     return resp
 
 
@@ -209,7 +249,13 @@ def api_lecturer_logout_all():
     svc = _get_course_service()
     svc.invalidate_all_lecturer_sessions(lecturer.id, ip_address=get_client_ip())
     resp = make_response(jsonify({"status": "all_sessions_revoked"}), 200)
-    resp.delete_cookie(DeviceBindingManager.LECTURER_COOKIE_NAME)
+    resp.delete_cookie(
+        DeviceBindingManager.LECTURER_COOKIE_NAME,
+        path="/",
+        httponly=True,
+        samesite="Lax",
+        secure=request.is_secure,
+    )
     return resp
 
 
@@ -431,11 +477,48 @@ def student_app():
 
     dashboard = svc.build_student_dashboard_payload(student_id=student_id)
     active_session_code = request.args.get("session", "").strip().upper()
+    req_course_id = request.args.get("course_id", type=int)
+    checked_in_param = request.args.get("checked_in", "").strip().lower() in ("1", "true", "yes")
+
+    checked_in_banner = None
+    initial_session_id = None
+    initial_course_id = req_course_id
+    if active_session_code:
+        db = current_app.extensions["db_session"]
+        sess = db.query(ClassSession).filter_by(session_code=active_session_code).one_or_none()
+        if sess is not None:
+            initial_session_id = sess.id
+            if initial_course_id is None:
+                initial_course_id = sess.course_id
+            if checked_in_param and student_id is not None:
+                st = db.get(Student, int(student_id))
+                rec = (
+                    db.query(AttendanceRecord)
+                    .filter_by(session_id=sess.id, student_id=int(student_id))
+                    .one_or_none()
+                )
+                if rec is not None and st is not None:
+                    course = db.get(Course, sess.course_id) if sess.course_id else None
+                    lecture_label = sess.title or (
+                        f"Lecture {sess.lecture_number}" if sess.lecture_number else "Lecture"
+                    )
+                    checked_in_banner = {
+                        "student_name": st.full_name,
+                        "course_name": course.name if course else "",
+                        "lecture_number": sess.lecture_number,
+                        "lecture_label": lecture_label,
+                        "session_code": sess.session_code,
+                        "session_title": sess.title,
+                        "attendance_recorded": True,
+                    }
 
     return render_template(
         "student_app.html",
         dashboard=dashboard,
         initial_session_code=active_session_code,
+        initial_course_id=initial_course_id,
+        initial_session_id=initial_session_id,
+        checked_in_banner=checked_in_banner,
     )
 
 
@@ -481,17 +564,27 @@ def api_create_course():
     if lecturer is None:
         return jsonify({"error": "Lecturer sign-in required to create a course."}), 401
 
-    lecturer_name = str(payload.get("lecturer_name") or lecturer.full_name)
-    department = str(payload.get("department") or lecturer.department)
+    schema_in = {
+        "course_code": str(payload.get("course_code") or payload.get("course_number") or "").strip(),
+        "name": str(payload.get("name") or "").strip(),
+        "department": str(payload.get("department") or lecturer.department).strip() or None,
+        "semester": str(payload.get("semester") or "Fall 2026").strip() or "Fall 2026",
+        "lecturer_name": str(payload.get("lecturer_name") or lecturer.full_name).strip() or None,
+        "initial_lecture_title": payload.get("initial_lecture_title"),
+    }
+    parsed, schema_err = parse_schema(CourseCreateSchema, schema_in)
+    if schema_err is not None or parsed is None:
+        return jsonify({"error": schema_err or "Invalid course details."}), 400
+
     try:
         course = svc.create_course(
-            course_code=str(payload.get("course_code", "")),
-            name=str(payload.get("name", "")),
-            department=department,
-            semester=str(payload.get("semester", "Fall 2026")),
-            lecturer_name=lecturer_name,
+            course_code=parsed.course_code,  # type: ignore[attr-defined]
+            name=parsed.name,  # type: ignore[attr-defined]
+            department=parsed.department or lecturer.department,  # type: ignore[attr-defined]
+            semester=parsed.semester,  # type: ignore[attr-defined]
+            lecturer_name=parsed.lecturer_name or lecturer.full_name,  # type: ignore[attr-defined]
             lecturer_id=lecturer.id,
-            initial_lecture_title=payload.get("initial_lecture_title"),
+            initial_lecture_title=parsed.initial_lecture_title,  # type: ignore[attr-defined]
         )
     except CourseError as exc:
         return jsonify({"error": exc.message}), exc.status_code
@@ -533,6 +626,7 @@ def api_create_course_session(course_id: int):
             {
                 "id": sess.id,
                 "course_id": sess.course_id,
+                "lecture_number": sess.lecture_number,
                 "session_code": sess.session_code,
                 "title": sess.title,
                 "started_at": sess.started_at.isoformat(),
@@ -684,6 +778,20 @@ def api_student_me():
     return jsonify(svc.build_student_dashboard_payload(student_id=student_id))
 
 
+@courses_bp.post("/api/student/logout")
+def api_student_logout():
+    """Clear the student device cookie so another student or fresh session can sign in."""
+    resp = make_response(jsonify({"status": "logged_out"}), 200)
+    resp.delete_cookie(
+        DeviceBindingManager.COOKIE_NAME,
+        path="/",
+        httponly=True,
+        samesite="Lax",
+        secure=request.is_secure,
+    )
+    return resp
+
+
 @courses_bp.post("/api/student/login")
 def api_student_login():
     """Sign in or register a student with Student ID + Email into the Student App and set cp_device cookie."""
@@ -691,6 +799,7 @@ def api_student_login():
     full_name = str(payload.get("full_name", "")).strip()
     email = str(payload.get("email", "")).strip().lower()
     student_id_number = str(payload.get("student_id_number", "")).strip() or None
+    norm_sid = normalize_student_id(student_id_number)
     course_code = str(payload.get("course_code", "")).strip().upper()
 
     db = current_app.extensions["db_session"]
@@ -698,32 +807,55 @@ def api_student_login():
     svc = _get_course_service()
     svc.ensure_default_school_courses()
 
+    by_email = (
+        db.query(Student)
+        .filter(func.lower(Student.email) == email)
+        .order_by(Student.id.asc())
+        .first()
+        if email
+        else None
+    )
+    by_sid = (
+        db.query(Student)
+        .filter_by(student_id_number=norm_sid)
+        .order_by(Student.id.asc())
+        .first()
+        if norm_sid
+        else None
+    )
+    if by_email is not None and by_sid is not None and by_email.id != by_sid.id:
+        return jsonify({"error": "Student ID and Email belong to different registered accounts."}), 409
+
+    existing_student = by_email or by_sid
+    resolved_name = full_name or (existing_student.full_name if existing_student else "")
+    resolved_email = email or (existing_student.email if existing_student else "")
+
     cookie_val = request.cookies.get(DeviceBindingManager.COOKIE_NAME)
     parsed = device_mgr.parse_device_cookie(cookie_val)
-    device_id = (
-        parsed[0]
-        if parsed
-        else str(payload.get("device_id") or secrets.token_hex(12))
-    )
+    explicit_device = str(payload.get("device_id") or "").strip()
+    if explicit_device:
+        device_id = explicit_device
+    elif parsed and existing_student is not None and int(existing_student.id) == int(parsed[1]):
+        device_id = parsed[0]
+    else:
+        device_id = secrets.token_hex(12)
 
     if course_code:
         try:
             _course, student = svc.enroll_student_by_code(
                 course_code=course_code,
-                full_name=full_name,
-                email=email,
+                full_name=resolved_name,
+                email=resolved_email,
                 student_id_number=student_id_number,
                 device_id=device_id,
             )
         except CourseError as exc:
             return jsonify({"error": exc.message}), exc.status_code
     else:
-        existing_by_email = db.query(Student).filter_by(email=email).one_or_none() if email else None
-        resolved_name = full_name or (existing_by_email.full_name if existing_by_email else "")
         student, err = resolve_or_upsert_student(
             db,
             full_name=resolved_name,
-            email=email,
+            email=resolved_email,
             student_id_number=student_id_number,
             device_id=device_id,
         )

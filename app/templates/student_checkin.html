@@ -65,13 +65,24 @@
       </div>
 
       <div class="cp-checkin-session">
-        <span style="color:var(--cp-ink); font-weight:600; min-width:0; overflow-wrap:anywhere;">
-          {{ session.title }}
-        </span>
-        <span class="cp-code-pill code-pill" style="flex-shrink:0;">{{ session.session_code }}</span>
+        <div style="min-width:0; flex:1; overflow-wrap:anywhere;">
+          {% if course and course.name %}
+          <div class="cp-muted" style="font-size:11.5px; font-weight:700;">{{ course.name }}</div>
+          {% endif %}
+          <div style="color:var(--cp-ink); font-weight:700;">
+            {% if session.lecture_number %}Lecture {{ session.lecture_number }} &mdash; {% endif %}{{ session.title }}
+          </div>
+        </div>
       </div>
 
+      {% if inline_error %}
+      <div class="cp-alert cp-alert--err" role="alert" style="margin-bottom:14px;">
+        {{ inline_error }}
+      </div>
+      {% endif %}
+
       <form method="post" action="{{ url_for('attendance.api_student_checkin') }}" class="cp-stack-md">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
         <input type="hidden" name="session_code" value="{{ session.session_code }}" />
         <input type="hidden" name="onboarding_grant" value="{{ onboarding_grant }}" />
         <input type="hidden" name="t" value="{{ bucket }}" />
@@ -80,17 +91,17 @@
 
         <div>
           <label class="cp-label" for="full_name">Full Name</label>
-          <input type="text" id="full_name" name="full_name" class="cp-input" placeholder="e.g. Ohad Ben Nun" required autofocus />
+          <input type="text" id="full_name" name="full_name" class="cp-input" placeholder="e.g. Ohad Ben Nun" value="{{ form_values.full_name if form_values else '' }}" required autofocus />
         </div>
 
         <div>
           <label class="cp-label" for="student_id_number">Student ID</label>
-          <input type="text" id="student_id_number" name="student_id_number" class="cp-input" placeholder="e.g. 208123456" required />
+          <input type="text" id="student_id_number" name="student_id_number" class="cp-input" placeholder="e.g. 208123456" value="{{ form_values.student_id_number if form_values else '' }}" required />
         </div>
 
         <div>
           <label class="cp-label" for="email">University / Personal Email</label>
-          <input type="email" id="email" name="email" class="cp-input" placeholder="e.g. ohad@ariel.ac.il" required />
+          <input type="email" id="email" name="email" class="cp-input" placeholder="e.g. ohad@ariel.ac.il" value="{{ form_values.email if form_values else '' }}" required />
         </div>
 
         <button type="submit" class="cp-btn cp-btn--green cp-btn--block" style="margin-top:6px; min-height:46px;">

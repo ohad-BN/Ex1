@@ -108,7 +108,7 @@ def test_first_time_onboarding_and_returning_student_auto_checkin(app_ctx) -> No
     return_scan = client.get(f"/s/LEC02?t={b2}&sig={sig2}")
     assert return_scan.status_code == 200
     # Returning student is automatically checked in without showing the registration form!
-    assert b"Attendance Verified!" in return_scan.data
+    assert b"Attendance Recorded" in return_scan.data
     assert b"Ohad Ben Nun" in return_scan.data
 
 
@@ -187,3 +187,81 @@ def test_roster_csv_import_and_merged_attendance_rows(app_ctx) -> None:
     rows_by_email = {r["email"]: r for r in status_data["rows"]}
     assert rows_by_email["alice@ariel.ac.il"]["attendance_status"] == "Present"
     assert rows_by_email["bob@ariel.ac.il"]["attendance_status"] == "Absent"
+
+
+def test_qr_form_csrf_inline_error_recovery_303_redirect_and_expired_reentry(app_ctx) -> None:
+    """Phase 2: Verify CSRF token hydration, inline form retry on bad email, 303 PRG redirect, and expired-QR re-entry."""
+    import re
+
+    app_ctx.config["TEST_ENFORCE_CSRF"] = True
+    try:
+        client = app_ctx.test_client()
+        qr: RollingQRService = app_ctx.extensions["qr_service"]
+
+        client.post("/api/sessions", json={"title": "Lecture 1 — Routing", "session_code": "ROUTE1"})
+        b = qr.compute_bucket()
+        sig = qr.sign_token("ROUTE1", b)
+
+        scan = client.get(f"/s/ROUTE1?t={b}&sig={sig}")
+        assert scan.status_code == 200
+        html = scan.data.decode("utf-8")
+        csrf_cookie = client.get_cookie("cp_csrf")
+        assert csrf_cookie is not None
+        assert f'name="csrf_token" value="{csrf_cookie.value}"' in html
+
+        grant_m = re.search(r'name="onboarding_grant" value="([^"]+)"', html)
+        dev_m = re.search(r'name="device_id" value="([^"]+)"', html)
+        assert grant_m and dev_m
+
+        # Submitting invalid email keeps the onboarding form intact with preserved values
+        bad_form = client.post(
+            "/api/attendance/checkin",
+            data={
+                "csrf_token": csrf_cookie.value,
+                "session_code": "ROUTE1",
+                "onboarding_grant": grant_m.group(1),
+                "t": str(b),
+                "sig": sig,
+                "device_id": dev_m.group(1),
+                "full_name": "Dana Levi",
+                "student_id_number": "209123456",
+                "email": "not-an-email",
+            },
+        )
+        assert bad_form.status_code == 400
+        bad_html = bad_form.data.decode("utf-8")
+        assert "First-Time Student Sign-In" in bad_html
+        assert 'value="Dana Levi"' in bad_html
+        assert 'value="209123456"' in bad_html
+
+        # Valid submit returns 303 redirect to /student?session=ROUTE1&checked_in=1
+        good_form = client.post(
+            "/api/attendance/checkin",
+            data={
+                "csrf_token": csrf_cookie.value,
+                "session_code": "ROUTE1",
+                "onboarding_grant": grant_m.group(1),
+                "t": str(b),
+                "sig": sig,
+                "device_id": dev_m.group(1),
+                "full_name": "Dana Levi",
+                "student_id_number": "209123456",
+                "email": "dana.levi@ariel.ac.il",
+            },
+            follow_redirects=False,
+        )
+        assert good_form.status_code == 303
+        loc = good_form.headers["Location"]
+        assert "/student" in loc and "session=ROUTE1" in loc
+
+        landed = client.get(loc)
+        assert landed.status_code == 200
+        assert b"Attendance Recorded" in landed.data
+        assert b"Dana Levi" in landed.data
+
+        # Already checked-in student scanning an old/expired QR token still enters lecture cleanly
+        reenter = client.get("/s/ROUTE1?t=1&sig=expired")
+        assert reenter.status_code == 200
+        assert b"Attendance Recorded" in reenter.data
+    finally:
+        app_ctx.config["TEST_ENFORCE_CSRF"] = False

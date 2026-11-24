@@ -218,3 +218,58 @@ def test_teacher_portal_splits_tab5_and_includes_notifications(notify_app) -> No
     assert b"/static/js/notifications.js" in html.data
     assert b'id="tab-ai-hub"' not in html.data
     assert b"/chat/export.txt" not in html.data
+
+
+def test_offline_question_category_and_lecturer_sidebar_redesign(notify_app) -> None:
+    """Phase 5: Verify Offline Question category, Lecturer sidebar, Course Details isolation & clean copy."""
+    prof = notify_app.test_client()
+    prof.post(
+        "/api/auth/lecturer/register",
+        json={
+            "full_name": "Prof. Sidebar",
+            "username": "prof.sidebar",
+            "email": "sidebar@ariel.ac.il",
+            "password": "Password1!",
+        },
+    )
+    c = prof.post(
+        "/api/courses",
+        json={"course_code": "COURSE77", "name": "Software Testing Course"},
+    ).get_json()
+    sid = c["sessions"][0]["id"]
+
+    # Offline Question category is accepted and serialized cleanly
+    oq_resp = prof.post(
+        f"/api/sessions/{sid}/chat",
+        json={
+            "author_name": "Ohad Ben Nun",
+            "category": "Offline Question",
+            "body": "Can you clarify slide 14 before next week?",
+        },
+    )
+    assert oq_resp.status_code == 201
+    oq = oq_resp.get_json()
+    assert oq["category"] == "Offline Question"
+    assert oq["course_name"] == "Software Testing Course"
+
+    portal_html = prof.get(f"/teacher?course_id={c['id']}").data.decode("utf-8")
+    for expected in (
+        'id="lecturer-back-btn"',
+        'id="tab-overview"',
+        'id="tab-lectures"',
+        'id="tab-course-details"',
+        "Offline Questions",
+        "COURSE77",
+    ):
+        assert expected in portal_html
+
+    for forbidden in ("LIVE SESSION", "LIVE ON STUDENT PHONES"):
+        assert forbidden not in portal_html
+
+    import re
+
+    # Course number appears inside #tab-course-details, NOT visibly in the topbar header
+    topbar_segment = portal_html.split('<header class="cp-topbar', 1)[1].split("</header>", 1)[0]
+    topbar_visible = re.sub(r"<[^>]+>", " ", topbar_segment)
+    assert "COURSE77" not in topbar_visible
+    assert "cp-code-pill" not in topbar_segment

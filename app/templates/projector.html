@@ -2,7 +2,7 @@
 {% set cp_use_socketio = true %}
 {% from "macros/icons.html" import cp_icon %}
 
-{% block title %}ClassPulse Projector — {{ session.session_code }}{% endblock %}
+{% block title %}ClassPulse Projector — {{ session.title }}{% endblock %}
 
 {% block styles %}
 <style>
@@ -35,16 +35,18 @@
 <main class="cp-projector-stage">
   <div class="cp-projector-eyebrow">
     <span class="cp-orb cp-orb--xs" aria-hidden="true"></span>
-    <span class="cp-code-pill">{{ session.session_code }}</span>
     <span class="cp-badge cp-badge--coral">
       {{ cp_icon('qr', 13) }}
-      <span>Live Rolling QR</span>
+      <span>Attendance QR</span>
     </span>
   </div>
 
-  <h1 class="cp-projector-title">{{ session.title }}</h1>
+  {% if course and course.name %}
+  <div class="cp-muted" style="font-size:16px; font-weight:700; margin-bottom:4px;">{{ course.name }}</div>
+  {% endif %}
+  <h1 class="cp-projector-title">{% if session.lecture_number and not session.title.lower().startswith('lecture') %}Lecture {{ session.lecture_number }} &mdash; {% endif %}{{ session.title }}</h1>
   <div class="cp-projector-subtitle">
-    Scan with your smartphone camera &mdash; QR rotates every <span class="cp-tabular">{{ qr_payload.step_seconds }}</span> seconds
+    Scan with your smartphone camera to open the lecture &amp; record attendance
   </div>
 
   <div class="cp-qr-island cp-qr-island--projector">
@@ -67,28 +69,86 @@
   const SESSION_CODE = {{ session.session_code | tojson }};
   const PROJECTOR_TOKEN = {{ (projector_token or '') | tojson }};
   const STEP_MS = {{ qr_payload.step_seconds * 1000 }};
-  let lastRotate = Date.now();
+  const INITIAL_EXPIRES_MS = {{ qr_payload.expires_in_ms | default(qr_payload.step_seconds * 1000) }};
+  let nextRotateAt = Date.now() + INITIAL_EXPIRES_MS;
+  let windowDurationMs = INITIAL_EXPIRES_MS;
+  let refreshTimer = null;
+  let httpFallbackTimer = null;
+  let httpFetching = false;
+
+  function applyQrPayload(data) {
+    if (!data || data.session_code !== SESSION_CODE || !data.svg_data_uri) return;
+    document.getElementById("proj-qr").src = data.svg_data_uri;
+    scheduleNextRefresh(data.expires_in_ms || STEP_MS);
+  }
+
+  async function fetchQrViaHttp() {
+    if (httpFetching) return;
+    httpFetching = true;
+    try {
+      const resp = await fetch(`/api/sessions/${encodeURIComponent(SESSION_CODE)}/qr?_ts=${Date.now()}`, { cache: "no-store" });
+      if (resp.ok) {
+        const data = await resp.json();
+        applyQrPayload(data);
+        return;
+      }
+    } catch (_err) {
+    } finally {
+      httpFetching = false;
+    }
+    scheduleNextRefresh(1500);
+  }
+
+  function refreshProjectorQrNow() {
+    if (httpFallbackTimer) {
+      clearTimeout(httpFallbackTimer);
+      httpFallbackTimer = null;
+    }
+    if (socket && socket.connected) {
+      socket.emit("qr:request_refresh", { session_code: SESSION_CODE, projector_token: PROJECTOR_TOKEN });
+      httpFallbackTimer = setTimeout(fetchQrViaHttp, 1200);
+    } else {
+      fetchQrViaHttp();
+    }
+  }
+
+  function scheduleNextRefresh(delayMs) {
+    if (refreshTimer) clearTimeout(refreshTimer);
+    if (httpFallbackTimer) {
+      clearTimeout(httpFallbackTimer);
+      httpFallbackTimer = null;
+    }
+    const safeDelay = Math.max(300, Number(delayMs) || STEP_MS);
+    windowDurationMs = safeDelay;
+    nextRotateAt = Date.now() + safeDelay;
+    refreshTimer = setTimeout(refreshProjectorQrNow, safeDelay);
+  }
 
   const socket = window.cpCreateSocket();
   socket.on("connect", () => {
     socket.emit("join_session", { session_code: SESSION_CODE, projector_token: PROJECTOR_TOKEN });
   });
   socket.on("qr:rotate", (data) => {
-    if (!data || data.session_code !== SESSION_CODE) return;
-    document.getElementById("proj-qr").src = data.svg_data_uri;
-    lastRotate = Date.now();
+    if (httpFallbackTimer) {
+      clearTimeout(httpFallbackTimer);
+      httpFallbackTimer = null;
+    }
+    applyQrPayload(data);
   });
   socket.on("attendance:count_update", (data) => {
     if (!data || data.session_code !== SESSION_CODE) return;
     document.getElementById("proj-count").textContent = data.qr_count;
   });
 
-  setInterval(() => {
-    socket.emit("qr:request_refresh", { session_code: SESSION_CODE, projector_token: PROJECTOR_TOKEN });
-  }, STEP_MS);
+  scheduleNextRefresh(INITIAL_EXPIRES_MS);
+
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) refreshProjectorQrNow();
+  });
 
   setInterval(() => {
-    const pct = Math.max(0, 100 - ((Date.now() - lastRotate) / STEP_MS) * 100);
+    const remaining = Math.max(0, nextRotateAt - Date.now());
+    const pct = Math.max(0, Math.min(100, (remaining / Math.max(500, windowDurationMs)) * 100));
     document.getElementById("proj-timer").style.width = pct + "%";
   }, 80);
 </script>

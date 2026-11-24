@@ -127,12 +127,13 @@ def test_qr_checkin_auto_enrolls_student_in_course_and_populates_student_app(
     assert "CS204" in updated_codes
     assert "CS101" in updated_codes
 
-    # Render /student HTML app (with 3-mode Slido/Study Hub tabs)
+    # Render /student HTML app (with progressive-disclosure sidebar sections)
     student_html = client.get("/student")
     assert student_html.status_code == 200
     assert b"ClassPulse Student App" in student_html.data
     assert b"Ohad Ben Nun" in student_html.data
-    assert b"AI Study Hub" in student_html.data
+    assert b"Assignments" in student_html.data
+    assert b"Summaries" in student_html.data
 
 
 def test_lecturer_signin_and_class_lecture_creation_workflow(school_app) -> None:
@@ -275,3 +276,49 @@ def test_course_attendance_monitor_tab_excel_import_and_remove_student(school_ap
     remaining_emails = {s["email"] for s in del_resp.get_json()["course"]["students"]}
     assert "enav_mon@ariel.ac.il" not in remaining_emails
     assert remaining_emails == {"ohad_mon@ariel.ac.il", "dana_mon@ariel.ac.il"}
+
+
+def test_exact_course_number_mapping_sequential_lectures_and_duplicate_409(school_app) -> None:
+    """Phase 1: Course creation preserves exact user course number, assigns sequential lecture_number, and rejects duplicates with 409."""
+    client = school_app.test_client()
+    reg = client.post(
+        "/api/auth/lecturer/register",
+        json={
+            "full_name": "Prof. Exact ID",
+            "username": "exact.id",
+            "email": "exact@ariel.ac.il",
+            "password": "Password1!",
+        },
+    )
+    assert reg.status_code == 201
+
+    # Create course with numeric course_number alias and exact C0001 style code
+    c1_resp = client.post(
+        "/api/courses",
+        json={
+            "course_number": "123456",
+            "name": "Exact Course Number Test",
+        },
+    )
+    assert c1_resp.status_code == 201
+    c1 = c1_resp.get_json()
+    assert c1["course_code"] == "123456"
+    assert c1["sessions"][0]["lecture_number"] == 1
+    assert c1["sessions"][0]["session_code"] == "123456-L1"
+
+    # Creating Lecture 2 without explicit session_code increments lecture_number and avoids random hex
+    s2_resp = client.post(
+        f"/api/courses/{c1['id']}/sessions",
+        json={"title": "Lecture 2 — Continuity"},
+    )
+    assert s2_resp.status_code == 201
+    s2 = s2_resp.get_json()
+    assert s2["lecture_number"] == 2
+    assert s2["session_code"] == "123456-L2"
+
+    # Duplicate course_code by the SAME lecturer returns 409 instead of silently colliding
+    dup_resp = client.post(
+        "/api/courses",
+        json={"course_code": "123456", "name": "Different Name Same Code"},
+    )
+    assert dup_resp.status_code == 409

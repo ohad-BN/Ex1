@@ -8,6 +8,7 @@ import re
 import secrets
 from typing import Any, Optional
 
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -20,7 +21,11 @@ from app.models import (
     RosterEntry,
     Student,
 )
-from app.services.identity_helpers import parse_roster_csv_rows, resolve_or_upsert_student
+from app.services.identity_helpers import (
+    generate_deterministic_session_code,
+    parse_roster_csv_rows,
+    resolve_or_upsert_student,
+)
 from app.services.qr_service import DeviceBindingManager, RollingQRService
 from app.services.reconciler import AttendanceReconciler, AuditVerdict
 
@@ -80,24 +85,55 @@ class AttendanceService:
         late_after_minutes: int = 15,
         course_id: Optional[int] = None,
     ) -> ClassSession:
-        """Create a new classroom session with a unique 6-character code."""
+        """Create a new classroom session with a clean code and sequential lecture_number."""
         clean_title = (title or "Classroom Lecture").strip()
-        code = (
-            session_code.strip().upper()
-            if session_code
-            else secrets.token_hex(3).upper()
-        )
+        next_lecture_number = 1
+        course_code_for_session = ""
+        if course_id is not None:
+            max_num = (
+                self.db.query(func.max(ClassSession.lecture_number))
+                .filter_by(course_id=course_id)
+                .scalar()
+            )
+            if max_num is not None:
+                next_lecture_number = int(max_num) + 1
+            else:
+                existing_count = (
+                    self.db.query(ClassSession).filter_by(course_id=course_id).count()
+                )
+                next_lecture_number = existing_count + 1
+            parent_course = self.db.get(Course, course_id)
+            if parent_course is not None:
+                course_code_for_session = parent_course.course_code
+
+        raw_code = (session_code or "").strip().upper()
+        if raw_code:
+            code = raw_code
+        elif course_id is not None and course_code_for_session:
+            code = generate_deterministic_session_code(
+                self.db, course_code_for_session, next_lecture_number
+            )
+        else:
+            code = secrets.token_hex(3).upper()
+
         existing = (
             self.db.query(ClassSession).filter_by(session_code=code).one_or_none()
         )
         if existing is not None:
+            changed = False
             if course_id is not None and existing.course_id is None:
                 existing.course_id = course_id
+                changed = True
+            if existing.lecture_number is None:
+                existing.lecture_number = next_lecture_number
+                changed = True
+            if changed:
                 self.db.commit()
             return existing
 
         session = ClassSession(
             course_id=course_id,
+            lecture_number=next_lecture_number,
             session_code=code,
             title=clean_title,
             attendance_open=True,

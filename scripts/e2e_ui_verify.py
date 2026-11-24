@@ -121,18 +121,21 @@ THEME_TOKENS: tuple[str, ...] = (
 )
 
 TEACHER_TABS: list[tuple[str, str]] = [
-    ("tab-attendance", "Attendance"),
+    ("tab-overview", "Overview"),
+    ("tab-lectures", "Lectures"),
+    ("tab-attendance", "Attendance & QR"),
     ("tab-polls", "Polls"),
     ("tab-chat", "Q&A"),
     ("tab-ai-lectures", "AI Summary"),
     ("tab-homework", "Homework"),
     ("tab-course-roster", "Roster"),
+    ("tab-course-details", "Course Details"),
 ]
 
 STUDENT_VIEWS: list[tuple[str, str]] = [
-    ("tab-btn-live", "view-live"),
-    ("tab-btn-classes", "view-classes"),
-    ("tab-btn-study", "view-study"),
+    ("nav-student-courses", "screen-courses"),
+    ("nav-student-assignments", "screen-course-assignments"),
+    ("nav-student-summaries", "screen-course-summaries"),
 ]
 
 
@@ -1474,7 +1477,7 @@ def run_tier1(
     assert_http(results, r_403_proj, 403, "/projector (cross-tenant 403)")
 
     r_pop = s_lec.get(f"{seed.base_url}/lecturer/chat-popout/{seed.ariel1_code}", timeout=5)
-    assert_http(results, r_pop, 200, "/lecturer/chat-popout", contains="Live Q&amp;A Companion Feed")
+    assert_http(results, r_pop, 200, "/lecturer/chat-popout", contains="Classroom Q&amp;A Feed")
 
     r_proj = s_anon.get(
         f"{seed.base_url}/projector/{seed.ariel1_code}?ptok={seed.projector_token}",
@@ -1486,16 +1489,16 @@ def run_tier1(
     s_alice.cookies.set("cp_device", seed.alice_device_cookie)
     r_stu = s_alice.get(f"{seed.base_url}/student", timeout=5)
     assert_http(results, r_stu, 200, "/student", contains="ClassPulse Student App")
-    if "Alice Cohen" in r_stu.text and "AI Study Hub" in r_stu.text:
-        results.ok("/student renders student full_name and AI Study Hub")
+    if "Alice Cohen" in r_stu.text and "Assignments" in r_stu.text and "Summaries" in r_stu.text:
+        results.ok("/student renders student full_name and card navigation sections")
     else:
-        results.fail("/student missing Alice Cohen or AI Study Hub")
+        results.fail("/student missing Alice Cohen or Assignments/Summaries sections")
 
     r_chk_new = s_anon.get(seed.fresh_checkin_url(seed.ariel1_code), timeout=5)
     assert_http(results, r_chk_new, 200, "/s/ARIEL1 (first-time)", contains="First-Time Student Sign-In")
 
     r_chk_ret = s_alice.get(seed.fresh_checkin_url(seed.ariel1_code), timeout=5)
-    assert_http(results, r_chk_ret, 200, "/s/ARIEL1 (returning Alice)", contains="Attendance Verified!")
+    assert_http(results, r_chk_ret, 200, "/s/ARIEL1 (returning Alice)", contains="Attendance Recorded")
 
     audit_lecturer_dashboard_template(srv.app, seed, results, allow_theme_fail)
 
@@ -1511,7 +1514,7 @@ def run_tier1(
     # Verify strict tab label order & absence of forbidden strings
     tab_check = cdp.eval_js(
         """(() => {
-            const labels = Array.from(document.querySelectorAll(".cp-tab-bar [data-tab-target], .tab-bar [data-tab-target]")).map(b => b.innerText.trim());
+            const labels = Array.from(document.querySelectorAll("#teacher-sidebar [data-tab-target], .cp-tab-bar [data-tab-target]")).map(b => b.innerText.trim());
             const html = document.documentElement.outerHTML;
             return { labels, html };
         })()"""
@@ -1763,7 +1766,7 @@ def run_tier2(
         else:
             time.sleep(0.28)
             audit_geometry(cdp, vp, "student_drawer_open", results)
-            cdp.eval_js("document.getElementById('tab-btn-live').click()")
+            cdp.eval_js("document.getElementById('nav-student-courses').click()")
             time.sleep(0.28)
             results.ok(f"[student_app @ {vp}] Slide-over drawer toggle & auto-close verified")
 
@@ -1790,7 +1793,7 @@ def run_tier2(
     cdp.set_role_cookies("anonymous", seed)
     s_err = requests.Session()
     r404 = s_err.get(f"{seed.base_url}/s/NOPE999", timeout=5)
-    assert_http(results, r404, 404, "checkin 404", contains="Session Not Found")
+    assert_http(results, r404, 404, "checkin 404", contains="Lecture Not Found")
     r403 = s_err.get(seed.fresh_checkin_url(seed.closed1_code), timeout=5)
     assert_http(results, r403, 403, "checkin 403", contains="Attendance Closed")
     r410 = s_err.get(f"{seed.base_url}/s/{seed.ariel1_code}?t=1&sig=bad", timeout=5)
@@ -1844,24 +1847,14 @@ def run_tier3(
             if (btn) btn.click();
         }})()"""
     )
-    step2_ok = cdp.wait_for(
-        "window.getComputedStyle(document.getElementById('card-step-2')).display !== 'none' && document.querySelectorAll('#my-courses-list a').length >= 2",
-        timeout=6.0,
-    )
-    if step2_ok:
-        results.ok("teacher_login interactive sign-in revealed #card-step-2 courses")
-    else:
-        results.fail("teacher_login sign-in did not reveal #card-step-2")
-
-    cdp.eval_js("document.getElementById('btn-open-existing').click()")
     landed = cdp.wait_for("window.location.pathname === '/teacher'", timeout=6.0)
     ev_login = cdp.classify_events(cdp.drain_events(0.6))
     if ev_login["fatal_errors"]:
         results.fail(f"Post-login /teacher errors: {ev_login['fatal_errors']}")
     if landed:
-        results.ok("teacher_login #btn-open-existing navigated to /teacher")
+        results.ok("teacher_login returning lecturer sign-in redirected directly to /teacher")
     else:
-        results.fail("teacher_login #btn-open-existing failed to navigate to /teacher")
+        results.fail("teacher_login returning lecturer sign-in failed to navigate to /teacher")
 
     # Course switch CS204 -> CS101 -> CS204
     cdp.eval_js(
@@ -1888,10 +1881,12 @@ def run_tier3(
     else:
         results.fail("Course switch back to CS204 failed")
 
-    # Lecture switch ARIEL1 -> ARIEL2 -> ARIEL1
+    # Lecture switch via #tab-lectures ARIEL2 -> /teacher
     cdp.eval_js(
         f"""(() => {{
-            const link = document.querySelector('aside.cp-sidebar a[href*="session={seed.ariel2_code}"], aside.sidebar a[href*="session={seed.ariel2_code}"], aside a[href*="session={seed.ariel2_code}"]');
+            const lecBtn = document.querySelector('[data-tab-target="tab-lectures"]');
+            if (lecBtn) lecBtn.click();
+            const link = document.querySelector('#tab-lectures a[href*="session={seed.ariel2_code}"]');
             if (link) link.click();
         }})()"""
     )
@@ -1900,6 +1895,24 @@ def run_tier3(
         results.ok("Lecture switch to ARIEL2 succeeded")
     else:
         results.fail("Lecture switch to ARIEL2 failed")
+
+    # Verify lecturer Back button steps back through visited stack cleanly on desktop
+    back_lec_ok = cdp.eval_js(
+        """(() => {
+            document.querySelector('[data-tab-target="tab-course-details"]').click();
+            const b = document.getElementById("lecturer-back-btn");
+            const vis = Boolean(b && !b.hidden && getComputedStyle(b).display !== "none");
+            b.click();
+            const midActive = document.getElementById("tab-attendance").classList.contains("active");
+            b.click();
+            const rootActive = document.getElementById("tab-overview").classList.contains("active") && b.hidden;
+            return vis && midActive && rootActive;
+        })()"""
+    )
+    if back_lec_ok:
+        results.ok("Lecturer desktop Back button steps back cleanly without losing session")
+    else:
+        results.fail("Lecturer desktop Back button check failed")
 
     nav_tp = cdp.goto(f"{seed.base_url}/teacher", settle_s=0.7, results=results, label="t3_teacher_portal")
     audit_theme_and_r2_dom(cdp, "teacher_portal", results, allow_theme_fail, nav_tp)
@@ -2059,7 +2072,7 @@ def run_tier3(
         }})()"""
     )
     poll_launched = cdp.wait_for(
-        f"document.getElementById('live-poll-title').innerText.includes({json.dumps(poll_title)}) && document.getElementById('live-poll-status-pill').innerText.includes('LIVE')",
+        f"document.getElementById('live-poll-title').innerText.includes({json.dumps(poll_title)}) && document.getElementById('live-poll-status-pill').innerText.includes('Open')",
         timeout=6.0,
     )
     if poll_launched:
@@ -2067,7 +2080,7 @@ def run_tier3(
     else:
         results.fail("Lecturer failed to create & launch live poll on #tab-polls")
 
-    # Student votes on /student
+    # Student navigates Course -> Course Hub -> Lectures -> Lecture View on /student
     cdp.set_viewport("mobile")
     cdp.set_role_cookies("alice", seed)
     nav_stu = cdp.goto(f"{seed.base_url}/student", settle_s=0.7, results=results, label="t3_student_app")
@@ -2080,8 +2093,14 @@ def run_tier3(
         if ev_sv["fatal_errors"]:
             results.fail(f"[t3_student_app:{view_id}] Runtime/Network error: {ev_sv['fatal_errors']}")
         audit_theme_and_r2_dom(cdp, f"student_app:{view_id}", results, allow_theme_fail)
-    cdp.eval_js("document.getElementById('tab-btn-live').click()")
-    time.sleep(0.1)
+    cdp.eval_js(
+        f"""(() => {{
+            openCourseHub({seed.cs204_id});
+            navigateStudent({{ screen: 'course-lectures', courseId: {seed.cs204_id} }});
+            openStudentLecture({seed.cs204_id}, {json.dumps(seed.ariel1_code)});
+        }})()"""
+    )
+    time.sleep(0.25)
 
     poll_seen = cdp.wait_for(
         f"document.getElementById('student-poll-box').innerText.includes({json.dumps(poll_title)}) && document.querySelectorAll('#student-poll-box button.cp-poll-opt, #student-poll-box button.poll-opt').length >= 3",
@@ -2091,27 +2110,27 @@ def run_tier3(
         cdp.clear_buffers()
         cdp.eval_js("document.querySelectorAll('#student-poll-box button.cp-poll-opt, #student-poll-box button.poll-opt')[0].click()")
         voted = cdp.wait_for(
-            "document.getElementById('student-poll-badge').innerText.includes('Vote Recorded') && Boolean(document.querySelector('#student-poll-box button.cp-poll-opt.selected, #student-poll-box button.poll-opt.selected'))",
+            "document.getElementById('student-poll-badge').innerText.includes('Vote Recorded') && !document.getElementById('student-poll-badge').innerText.includes('Live') && Boolean(document.querySelector('#student-poll-box button.cp-poll-opt.selected, #student-poll-box button.poll-opt.selected'))",
             timeout=5.0,
         )
         ev_vote = cdp.classify_events(cdp.drain_events(0.3))
         if ev_vote["fatal_errors"]:
             results.fail(f"Student poll vote errors: {ev_vote['fatal_errors']}")
         if voted:
-            results.ok("Student mobile vote recorded live on #student-poll-box")
+            results.ok("Student vote recorded cleanly on #student-poll-box without Live badge clutter")
         else:
             results.fail("Student poll vote UI did not update to Vote Recorded")
     else:
-        results.fail("Launched live poll did not appear on /student")
+        results.fail("Launched poll did not appear on #screen-lecture")
 
-    # 5. Student Q&A post & upvote + chat_popout verification
+    # 5. Student Q&A post & upvote + Offline Question post + chat_popout verification
     qa_text = "E2E Question: Does Adapter support async summaries?"
     cdp.clear_buffers()
     cdp.eval_js(
         f"""(() => {{
             document.getElementById("student-chat-cat").value = "Question";
             document.getElementById("student-chat-body").value = {json.dumps(qa_text)};
-            document.querySelector("#view-live .cp-composer button, #view-live .chat-composer button, #view-live button[onclick*='sendStudentChat']").click();
+            document.querySelector("#screen-lecture .chat-composer button[onclick*='sendStudentChat']").click();
         }})()"""
     )
     msg_posted = cdp.wait_for(
@@ -2137,6 +2156,22 @@ def run_tier3(
             results.fail(f"Student Q&A upvote did not observe HTTP 200 ({ev_up['responses']})")
     else:
         results.fail("Student Q&A post did not render in #student-chat-feed")
+
+    offline_q_text = "E2E Offline Question: Will slides be uploaded?"
+    cdp.eval_js(
+        f"""(() => {{
+            document.getElementById("student-offline-body").value = {json.dumps(offline_q_text)};
+            document.getElementById("btn-send-offline-q").click();
+        }})()"""
+    )
+    offline_ok = cdp.wait_for(
+        f"Array.from(document.querySelectorAll('#student-offline-feed [data-msg-id]')).some(el => el.innerText.includes({json.dumps(offline_q_text)}))",
+        timeout=5.0,
+    )
+    if offline_ok:
+        results.ok("Student Offline Question submitted and rendered in #student-offline-feed")
+    else:
+        results.fail("Student Offline Question did not render in #student-offline-feed")
 
     # Lecturer chat_popout
     cdp.set_viewport("popout")
@@ -2187,109 +2222,83 @@ def run_tier3(
         })()"""
     )
     onboard_ok = cdp.wait_for(
-        "document.body.innerText.includes('Attendance Verified!') && document.body.innerText.includes('Ohad Ben Nun') && Boolean(document.getElementById('student-nav-drawer')) && Boolean(document.getElementById('view-live')) && window.location.pathname === '/student'",
+        "document.body.innerText.includes('Attendance Recorded') && (document.getElementById('student-identity-line')?.textContent || '').includes('Ohad Ben Nun') && Boolean(document.getElementById('student-nav-drawer')) && Boolean(document.getElementById('screen-lecture')) && document.getElementById('screen-lecture').classList.contains('active') && window.location.pathname === '/student'",
         timeout=6.0,
     )
     ev_onb = cdp.classify_events(cdp.drain_events(0.5))
     if ev_onb["fatal_errors"]:
         results.fail(f"Student onboarding submit errors: {ev_onb['fatal_errors']}")
     if onboard_ok:
-        results.ok("First-time student onboarding form submitted -> Full Student App with Attendance Verified!")
+        results.ok("First-time student onboarding form submitted -> Direct Lecture View with Attendance Recorded")
     else:
-        results.fail("First-time student onboarding failed to open Full Student App with Attendance Verified!")
+        results.fail("First-time student onboarding failed to open Lecture View with Attendance Recorded!")
 
-    # 6b. Mobile Student Fix Verifications (390x844): Back button, Home sign-in guard, no Join/Loading, date-grouped timeline
+    # 6b. Progressive Disclosure Drill-Down, Web+Mobile Back Button & Upload Dropzone Verifications
     if onboard_ok:
-        home_guard = cdp.eval_js(
+        # Back steps cleanly from Lecture -> Lectures -> Course Hub -> Courses Home (where Back hides)
+        back_steps_ok = cdp.eval_js(
             """(() => {
                 const backBtn = document.getElementById("student-back-btn");
-                const hiddenOnHome = Boolean(backBtn && backBtn.hidden && getComputedStyle(backBtn).display === "none");
-                const noJoin = !document.getElementById("join-code-input");
-                return { hiddenOnHome, noJoin };
+                const vLecture = Boolean(backBtn && !backBtn.hidden && getComputedStyle(backBtn).display !== "none" && document.getElementById("screen-lecture").classList.contains("active"));
+                backBtn.click();
+                const vLectures = Boolean(document.getElementById("screen-course-lectures").classList.contains("active"));
+                backBtn.click();
+                const vHub = Boolean(document.getElementById("screen-course-hub").classList.contains("active"));
+                backBtn.click();
+                const vCourses = Boolean(document.getElementById("screen-courses").classList.contains("active") && backBtn.hidden);
+                return { vLecture, vLectures, vHub, vCourses };
             })()"""
         )
-        if home_guard["hiddenOnHome"] and home_guard["noJoin"]:
-            results.ok("Mobile Student App hides Back button on Home and omits + Join bar")
+        if all(back_steps_ok.values()):
+            results.ok("Student Back stack traverses Lecture -> Lectures -> Course Hub -> Courses cleanly")
         else:
-            results.fail(f"Mobile Student Home/Join check failed: {home_guard}")
+            results.fail(f"Student Back stack traversal failed: {back_steps_ok}")
 
-        # Pressing browser/hardware Back on Home right after sign-in must NOT return to sign-in
+        # Verify hardware/browser Back on Level 0 stays inside /student Courses
         cdp.eval_js("window.history.back()")
         time.sleep(0.35)
         stayed_on_home = cdp.eval_js(
-            "window.location.pathname === '/student' && document.getElementById('view-live').classList.contains('active')"
+            "window.location.pathname === '/student' && document.getElementById('screen-courses').classList.contains('active')"
         )
         if stayed_on_home:
-            results.ok("Mobile hardware/browser Back on Home stays on Live Class (never returns to sign-in)")
+            results.ok("Hardware/browser Back on Courses Home stays inside Student App (never returns to sign-in)")
         else:
-            results.fail("Browser Back on Home left Student App or navigated back to sign-in!")
+            results.fail("Browser Back on Courses Home left Student App!")
 
-        # Multi-tab navigation: Live -> Courses -> Study -> Back (Courses) -> Drawer+Back (closes drawer) -> Back (Live)
-        cdp.eval_js("document.getElementById('tab-btn-classes').click()")
-        time.sleep(0.2)
-        classes_state = cdp.eval_js(
-            """(() => {
-                const backBtn = document.getElementById("student-back-btn");
-                const backVisible = Boolean(backBtn && !backBtn.hidden && getComputedStyle(backBtn).display !== "none");
-                const acc = document.querySelector("#courses-list details.cp-m-accordion");
-                if (acc) acc.open = true;
-                const groups = Array.from(document.querySelectorAll("#courses-list .cp-m-date-group")).map(g => g.dataset.dateKey);
-                const codes = Array.from(document.querySelectorAll("#courses-list .cp-m-lecture-row")).map(r => r.dataset.sessionCode);
-                const uniqueCodes = new Set(codes).size === codes.length;
-                const sortedDesc = groups.every((k, i) => i === 0 || groups[i - 1] >= k);
-                return { backVisible, groupCount: groups.length, rowCount: codes.length, uniqueCodes, sortedDesc };
-            })()"""
+        # Level 0 omits raw course codes; Level 2 Course Info displays it
+        drill_ok = cdp.eval_js(
+            f"""(() => {{
+                const lvl0Text = document.getElementById("courses-list").innerText;
+                const noCodeOnLvl0 = !lvl0Text.includes("CS204");
+                openCourseHub({seed.cs204_id});
+                document.getElementById("hub-tile-info").click();
+                const infoCode = document.getElementById("course-info-number")?.innerText?.trim() || "";
+                document.getElementById("student-back-btn").click();
+                document.getElementById("hub-tile-assignments").click();
+                return {{ noCodeOnLvl0, infoCode, hasAssignmentsScreen: document.getElementById("screen-course-assignments").classList.contains("active") }};
+            }})()"""
         )
-        if (
-            classes_state["backVisible"]
-            and classes_state["groupCount"] >= 1
-            and classes_state["rowCount"] >= 1
-            and classes_state["uniqueCodes"]
-            and classes_state["sortedDesc"]
-        ):
-            results.ok(f"Mobile Courses & Logs renders unified date-grouped list ({classes_state['rowCount']} lectures, {classes_state['groupCount']} date groups)")
+        if drill_ok["noCodeOnLvl0"] and drill_ok["infoCode"] == "CS204" and drill_ok["hasAssignmentsScreen"]:
+            results.ok("Student Course Info isolates course number while Level 0 hides raw codes & Assignments opens cleanly")
         else:
-            results.fail(f"Mobile Courses & Logs timeline/back check failed: {classes_state}")
+            results.fail(f"Student drill-down / Course Info check failed: {drill_ok}")
 
-        cdp.eval_js("document.getElementById('tab-btn-study').click()")
-        time.sleep(0.3)
-        no_loading_txt = cdp.eval_js(
-            """(() => {
-                const txt = document.body.innerText || "";
-                return !txt.includes("Loading course assignments...") && !txt.includes("Loading lecture summaries...");
-            })()"""
-        )
-        if no_loading_txt:
-            results.ok("Mobile AI Study Hub displays zero 'Loading ...' placeholder text")
-        else:
-            results.fail("Found 'Loading ...' placeholder text on Mobile AI Study Hub!")
-
-        # Click Back from Study -> returns to Courses
-        cdp.eval_js("document.getElementById('student-back-btn').click()")
-        time.sleep(0.2)
-        back_to_classes = cdp.eval_js("document.getElementById('view-classes').classList.contains('active')")
-
-        # Open drawer on Courses and trigger Back -> closes drawer without leaving Courses
+        # Check drawer Back closes drawer without losing screen, AND check Desktop Back button visibility
         cdp.eval_js("document.getElementById('student-drawer-toggle').click()")
         time.sleep(0.15)
         cdp.eval_js("handleStudentBack()")
         time.sleep(0.15)
         drawer_closed_stayed = cdp.eval_js(
-            "!document.getElementById('student-nav-drawer').classList.contains('open') && document.getElementById('view-classes').classList.contains('active')"
+            "!document.getElementById('student-nav-drawer').classList.contains('open') && document.getElementById('screen-course-assignments').classList.contains('active')"
         )
-
-        # Click Back again -> returns to Live (Home) and hides Back button
-        cdp.eval_js("document.getElementById('student-back-btn').click()")
-        time.sleep(0.2)
-        back_to_home = cdp.eval_js(
-            "document.getElementById('view-live').classList.contains('active') && document.getElementById('student-back-btn').hidden"
+        cdp.set_viewport("desktop")
+        desktop_back_vis = cdp.eval_js(
+            "Boolean(!document.getElementById('student-back-btn').hidden && getComputedStyle(document.getElementById('student-back-btn')).display !== 'none')"
         )
-        if back_to_classes and drawer_closed_stayed and back_to_home:
-            results.ok("Mobile Back button traverses Study -> Courses -> Drawer close -> Home cleanly")
+        if drawer_closed_stayed and desktop_back_vis:
+            results.ok("Student persistent Back button verified on BOTH Mobile (drawer close) and Desktop")
         else:
-            results.fail(
-                f"Mobile Back stack traversal failed (back_to_classes={back_to_classes}, drawer_closed_stayed={drawer_closed_stayed}, back_to_home={back_to_home})"
-            )
+            results.fail(f"Student Back button check failed (drawer={drawer_closed_stayed}, desktop={desktop_back_vis})")
 
     # 7. Remaining views theme & R2 audit: portal_home & projector
     cdp.set_viewport("desktop")
@@ -2352,12 +2361,14 @@ def run_tier4(
     cdp.goto(f"{seed.base_url}/teacher", settle_s=0.75, results=results, label="shot_teacher_portal")
 
     tab_shots = [
-        ("tab-attendance", "04_teacher_tab1_attendance_1440x900.png"),
+        ("tab-overview", "04_teacher_tab0_overview_1440x900.png"),
+        ("tab-attendance", "04b_teacher_tab1_attendance_1440x900.png"),
         ("tab-polls", "05_teacher_tab2_polls_1440x900.png"),
         ("tab-chat", "06_teacher_tab3_chat_1440x900.png"),
         ("tab-ai-lectures", "07_teacher_tab4_ai_lectures_1440x900.png"),
         ("tab-homework", "08_teacher_tab5_homework_1440x900.png"),
         ("tab-course-roster", "09_teacher_tab6_roster_1440x900.png"),
+        ("tab-course-details", "09b_teacher_tab7_details_1440x900.png"),
     ]
     for tab_id, fname in tab_shots:
         cdp.eval_js(f'document.querySelector(\'[data-tab-target="{tab_id}"]\').click()')
@@ -2413,30 +2424,27 @@ def run_tier4(
     )
     cdp.capture_png(shots_dir / "16_chat_popout_480x800.png", (480, 800), results)
 
-    # 6. Student App Mobile (all 3 views + small mobile)
+    # 6. Student App Mobile (Courses Home, Assignments, Summaries + Lecture View)
     cdp.set_role_cookies("alice", seed)
     cdp.set_viewport("mobile")
     cdp.goto(f"{seed.base_url}/student", settle_s=0.7, results=results, label="shot_student_app")
     for btn_id, fname in (
-        ("tab-btn-live", "17_student_live_mobile_390x844.png"),
-        ("tab-btn-classes", "18_student_classes_mobile_390x844.png"),
-        ("tab-btn-study", "19_student_study_mobile_390x844.png"),
+        ("nav-student-courses", "17_student_courses_mobile_390x844.png"),
+        ("nav-student-assignments", "18_student_assignments_mobile_390x844.png"),
+        ("nav-student-summaries", "19_student_summaries_mobile_390x844.png"),
     ):
         cdp.eval_js(f"document.getElementById('{btn_id}').click()")
         time.sleep(0.2)
-        if btn_id == "tab-btn-classes":
-            cdp.eval_js("const a = document.querySelector('#courses-list details.cp-m-accordion'); if (a) a.open = true;")
-            time.sleep(0.15)
         cdp.capture_png(shots_dir / fname, (390, 844), results)
 
-    cdp.eval_js("document.getElementById('tab-btn-live').click()")
+    cdp.eval_js("document.getElementById('nav-student-courses').click()")
     cdp.eval_js("document.getElementById('student-drawer-toggle').click()")
     time.sleep(0.3)
     cdp.capture_png(shots_dir / "20b_student_drawer_mobile_390x844.png", (390, 844), results)
-    cdp.eval_js("document.getElementById('tab-btn-live').click()")
+    cdp.eval_js("document.getElementById('nav-student-courses').click()")
     time.sleep(0.25)
     cdp.set_viewport("mobile_sm")
-    cdp.capture_png(shots_dir / "20_student_live_small_360x740.png", (360, 740), results)
+    cdp.capture_png(shots_dir / "20_student_courses_small_360x740.png", (360, 740), results)
 
     # 7. Student Check-In (verified, onboarding, 403 error)
     cdp.set_viewport("mobile")

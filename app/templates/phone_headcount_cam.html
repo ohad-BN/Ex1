@@ -1,5 +1,6 @@
 {% extends "layouts/base.html" %}
 {% set cp_use_csrf = true %}
+{% set cp_use_image_compress = true %}
 {% from "macros/icons.html" import cp_icon %}
 
 {% block title %}ClassPulse — Phone Headcount Camera{% endblock %}
@@ -19,13 +20,17 @@
       <div class="cp-brand-lockup" style="gap:10px; min-width:0; flex:1;">
         <span class="cp-orb cp-orb--xs" aria-hidden="true"></span>
         <div style="min-width:0; flex:1;">
+          {% if course and course.name %}
+          <div class="cp-muted" style="font-size:12px; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+            {{ course.name }}
+          </div>
+          {% endif %}
           <div style="font-size:14px; font-weight:800; color:var(--cp-ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
             {{ session.title }}
           </div>
-          <div class="cp-muted" style="font-size:11.5px;">Phone Headcount Camera</div>
+          <div class="cp-muted" style="font-size:12px;">Phone Headcount Camera</div>
         </div>
       </div>
-      <span class="cp-code-pill code-pill" style="flex-shrink:0;">{{ session.session_code }}</span>
     </header>
 
     <!-- Hidden native camera & gallery file inputs -->
@@ -222,80 +227,33 @@
     }
   }
 
-  async function normalizePhotoToJpeg(file, maxEdge = 2560, quality = 0.90) {
-    let source = null;
-    let width = 0;
-    let height = 0;
-    let cleanup = () => {};
-
-    if (typeof createImageBitmap === "function") {
-      try {
-        source = await createImageBitmap(file, { imageOrientation: "from-image" });
-        width = source.width;
-        height = source.height;
-        cleanup = () => {
-          if (source && typeof source.close === "function") source.close();
-        };
-      } catch (_bitmapErr) {
-        source = null;
-      }
-    }
-
-    if (!source) {
-      const objUrl = URL.createObjectURL(file);
-      source = await new Promise((resolve, reject) => {
-        const img = new Image();
-        img.onload = () => resolve(img);
-        img.onerror = () => reject(new Error("Could not decode captured photo."));
-        img.src = objUrl;
-      });
-      width = source.naturalWidth || source.width;
-      height = source.naturalHeight || source.height;
-      cleanup = () => URL.revokeObjectURL(objUrl);
-    }
-
-    try {
-      const longest = Math.max(width, height, 1);
-      const scale = longest > maxEdge ? (maxEdge / longest) : 1;
-      const targetW = Math.max(1, Math.round(width * scale));
-      const targetH = Math.max(1, Math.round(height * scale));
-
-      const canvas = document.createElement("canvas");
-      canvas.width = targetW;
-      canvas.height = targetH;
-      const ctx = canvas.getContext("2d");
-      ctx.drawImage(source, 0, 0, targetW, targetH);
-
-      const blob = await new Promise((resolve, reject) => {
-        canvas.toBlob(
-          (b) => (b ? resolve(b) : reject(new Error("Failed to encode JPEG."))),
-          "image/jpeg",
-          quality
-        );
-      });
-      return blob;
-    } finally {
-      cleanup();
-    }
-  }
-
   async function uploadNormalizedBlob(blob) {
     hideCamError();
     document.getElementById("cam-ready-panel").style.display = "none";
     document.getElementById("cam-result-panel").style.display = "flex";
-    setOverlay(true, "Scanning classroom faces...");
+    setOverlay(true, "Uploading & counting faces...");
 
     const fd = new FormData();
     fd.append("photo", blob, "classroom_phone.jpg");
     fd.append("ctok", CTOK);
 
     try {
-      const resp = await fetch(`/api/headcount-cam/${encodeURIComponent(SESSION_CODE)}`, {
-        method: "POST",
-        headers: { "X-Headcount-Token": CTOK },
-        body: fd,
-      });
-      const data = await resp.json().catch(() => ({}));
+      const resp = await window.ClassPulseImage.fetchWithTimeout(
+        `/api/headcount-cam/${encodeURIComponent(SESSION_CODE)}`,
+        {
+          method: "POST",
+          headers: { "X-Headcount-Token": CTOK },
+          body: fd,
+        },
+        35000
+      );
+      const rawText = await resp.text();
+      let data = {};
+      try {
+        data = rawText ? JSON.parse(rawText) : {};
+      } catch (_parseErr) {
+        data = { error: `Unexpected server response (HTTP ${resp.status}).` };
+      }
       if (!resp.ok) {
         setOverlay(false);
         showCamError(data.error || `Upload failed (HTTP ${resp.status}).`, true);
@@ -312,9 +270,12 @@
       }
       setOverlay(false);
       renderCountUI("✓ Synced to Lecture Laptop", false);
-    } catch (_err) {
+    } catch (err) {
       setOverlay(false);
-      showCamError("Network error while sending photo. Check Wi-Fi and tap Retry Upload.", true);
+      showCamError(
+        (err && err.message) || "Network error while sending photo. Check Wi-Fi and tap Retry Upload.",
+        true
+      );
     }
   }
 
@@ -323,7 +284,7 @@
     const rawFile = inputEl.files[0];
     hideCamError();
 
-    // Immediately show preview & optimize -> auto-upload (Flavor 1)
+    // Immediately show preview & compress -> auto-upload (Flavor 1)
     document.getElementById("cam-ready-panel").style.display = "none";
     document.getElementById("cam-result-panel").style.display = "flex";
     const imgEl = document.getElementById("cam-preview-img");
@@ -332,16 +293,22 @@
       imgEl.onload = () => URL.revokeObjectURL(tempPreviewUrl);
       imgEl.src = tempPreviewUrl;
     }
-    setOverlay(true, "Optimizing photo...");
+    setOverlay(true, "Compressing photo...");
 
     try {
-      const jpegBlob = await normalizePhotoToJpeg(rawFile);
+      const jpegBlob = await window.ClassPulseImage.compressToJpeg(rawFile, {
+        maxEdge: 1600,
+        quality: 0.82,
+        decodeTimeoutMs: 8000,
+      });
       lastNormalizedBlob = jpegBlob;
       await uploadNormalizedBlob(jpegBlob);
-    } catch (_normErr) {
-      // If browser couldn't decode via canvas (rare), upload original file directly
-      lastNormalizedBlob = rawFile;
-      await uploadNormalizedBlob(rawFile);
+    } catch (normErr) {
+      setOverlay(false);
+      showCamError(
+        (normErr && normErr.message) || "Could not prepare photo for upload. Please try retaking.",
+        false
+      );
     }
   }
 
