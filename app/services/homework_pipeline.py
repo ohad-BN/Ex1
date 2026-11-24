@@ -692,10 +692,8 @@ class HomeworkReviewService:
             raise HomeworkPipelineError("Course not found.", status_code=404)
         clean_title = (title or "").strip()
         clean_rubric = (rubric_text or "").strip()
-        if not clean_title or not clean_rubric:
-            raise HomeworkPipelineError(
-                "Assignment title and rubric are required.", status_code=400
-            )
+        if not clean_title:
+            raise HomeworkPipelineError("Assignment title is required.", status_code=400)
         clean_topics = [str(t).strip() for t in (topics or []) if str(t).strip()]
 
         max_num = (

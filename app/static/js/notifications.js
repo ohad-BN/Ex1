@@ -103,6 +103,14 @@
       hasUnreadItem: (kind, idOrCode) =>
         items.has(`${kind}:${idOrCode}`) || items.has(`${kind}:sess:${idOrCode}`),
       hasUnreadAny: (kind) => (kind ? (byKind[kind] || 0) > 0 : _unreadMap.size > 0),
+      countWhere: (predFn) => {
+        if (typeof predFn !== "function") return _unreadMap.size;
+        let c = 0;
+        for (const item of _unreadMap.values()) {
+          if (predFn(item)) c += 1;
+        }
+        return c;
+      },
     };
   }
 
@@ -279,13 +287,15 @@
     _drawFavicon(_unreadCount);
     document.title = _unreadCount > 0 ? `(${_unreadCount}) 🔴 ${_cfg.baseTitle}` : _cfg.baseTitle;
 
-    const tabBadge = document.getElementById("tab-chat-badge");
-    if (tabBadge) {
-      if (_unreadCount > 0) {
-        tabBadge.textContent = _unreadCount > 99 ? "99+" : String(_unreadCount);
-        tabBadge.style.display = "inline-flex";
-      } else {
-        tabBadge.style.display = "none";
+    if (typeof _cfg.onUnreadChange !== "function") {
+      const tabBadge = document.getElementById("tab-chat-badge");
+      if (tabBadge) {
+        if (_unreadCount > 0) {
+          tabBadge.textContent = _unreadCount > 99 ? "99+" : String(_unreadCount);
+          tabBadge.style.display = "inline-flex";
+        } else {
+          tabBadge.style.display = "none";
+        }
       }
     }
   }
@@ -390,7 +400,12 @@
 
     toast.addEventListener("click", () => {
       toast.remove();
-      clearUnread();
+      clearUnreadWhere((item) => {
+        if (item.kind !== "qa") return false;
+        if (msgId && String(item.itemId) === String(msgId)) return true;
+        if (payload.session_code && item.sessionCode === payload.session_code) return true;
+        return false;
+      });
       if (typeof _cfg.onOpenMessage === "function") {
         _cfg.onOpenMessage(payload);
       }
@@ -414,7 +429,11 @@
 
     document.addEventListener("visibilitychange", () => {
       if (!document.hidden && typeof _cfg.isChatVisibleFn === "function" && _cfg.isChatVisibleFn(null)) {
-        setUnreadCount(0);
+        if (typeof _cfg.onVisibleClear === "function") {
+          _cfg.onVisibleClear();
+        } else {
+          clearUnreadWhere((item) => item.kind === "qa");
+        }
       }
     });
   }

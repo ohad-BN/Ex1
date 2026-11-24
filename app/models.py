@@ -204,6 +204,7 @@ class CourseEnrollment(Base):
     student_id: Mapped[int] = mapped_column(
         ForeignKey("students.id", ondelete="CASCADE"), index=True, nullable=False
     )
+    status: Mapped[str] = mapped_column(String(16), default="approved", nullable=False)
     enrolled_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False
     )
@@ -569,6 +570,7 @@ def _migrate_sqlite_columns(engine: Engine) -> None:
         ("class_sessions", "lecture_number", "INTEGER"),
         ("assignments", "course_id", "INTEGER REFERENCES courses(id) ON DELETE SET NULL"),
         ("assignments", "assignment_number", "INTEGER"),
+        ("course_enrollments", "status", "VARCHAR(16) NOT NULL DEFAULT 'approved'"),
         ("courses", "lecturer_id", "INTEGER REFERENCES lecturers(id) ON DELETE SET NULL"),
         ("lecture_artifacts", "error_message", "TEXT"),
         ("lecturers", "username", "VARCHAR(40)"),

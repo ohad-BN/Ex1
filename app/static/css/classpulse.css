@@ -388,13 +388,14 @@ textarea:focus-visible,
 
 .cp-teacher-shell {
   display: grid;
-  grid-template-columns: 268px minmax(0, 1fr);
-  gap: 18px;
+  grid-template-columns: 248px minmax(0, 1fr);
+  gap: 20px;
   align-items: start;
   width: 100%;
-  max-width: 1520px;
-  margin: 14px auto;
-  padding: 16px;
+  max-width: 100%;
+  margin: 0 auto;
+  padding: 16px 20px;
+  min-height: 100vh;
 }
 
 .cp-sidebar {
@@ -404,15 +405,14 @@ textarea:focus-visible,
   border: var(--cp-shell-border);
   border-radius: var(--cp-radius-card);
   box-shadow: var(--cp-card-shadow);
-  padding: 16px 14px;
+  padding: 12px 12px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
   min-width: 0;
   position: sticky;
-  top: 14px;
-  max-height: calc(100vh - 28px);
-  overflow-y: auto;
+  top: 16px;
+  overflow: visible;
 }
 
 .cp-sidebar-backdrop {
@@ -468,14 +468,14 @@ textarea:focus-visible,
   justify-content: space-between;
   align-items: center;
   gap: 10px;
-  min-height: 40px;
-  padding: 8px 12px;
+  min-height: 35px;
+  padding: 6px 11px;
   border-radius: var(--cp-radius-pill);
   text-decoration: none;
   color: var(--cp-ink-secondary);
-  font-size: 14px;
+  font-size: 13.5px;
   font-weight: 600;
-  margin-bottom: 2px;
+  margin-bottom: 1px;
   border: 1px solid transparent;
   transition: background 0.14s ease, color 0.14s ease, box-shadow 0.14s ease;
   min-width: 0;
@@ -515,8 +515,9 @@ textarea:focus-visible,
 .cp-workspace {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 16px;
   min-width: 0;
+  min-height: calc(100vh - 32px);
 }
 
 .cp-topbar {
@@ -2081,14 +2082,14 @@ canvas#headcount-canvas {
 
 .cp-student-shell {
   width: 100%;
-  max-width: 1520px;
-  min-height: calc(100vh - 28px);
-  min-height: calc(100dvh - 28px);
-  margin: 14px auto;
-  padding: 16px;
+  max-width: 100%;
+  min-height: 100vh;
+  min-height: 100dvh;
+  margin: 0 auto;
+  padding: 16px 20px;
   display: grid;
-  grid-template-columns: 268px minmax(0, 1fr);
-  gap: 18px;
+  grid-template-columns: 248px minmax(0, 1fr);
+  gap: 20px;
   align-items: start;
   background: transparent;
   border: none;
@@ -2107,7 +2108,7 @@ canvas#headcount-canvas {
   border: var(--cp-shell-border);
   border-radius: var(--cp-radius-shell);
   box-shadow: var(--cp-shell-shadow);
-  min-height: calc(100vh - 60px);
+  min-height: calc(100vh - 32px);
 }
 
 .cp-m-appbar {
@@ -2643,18 +2644,20 @@ canvas#headcount-canvas {
 @media (min-width: 901px) {
   .cp-student-shell .cp-m-drawer {
     position: sticky;
-    top: 14px;
+    top: 16px;
     bottom: auto;
     left: auto;
     z-index: 10;
     width: 100%;
     max-width: 100%;
-    max-height: calc(100vh - 28px);
+    max-height: none;
+    overflow: visible;
     background: var(--cp-shell-bg);
     border: var(--cp-shell-border);
     border-radius: var(--cp-radius-card);
     box-shadow: var(--cp-card-shadow);
-    padding: 18px 14px;
+    padding: 14px 12px;
+    gap: 10px;
     transform: none;
     visibility: visible;
     pointer-events: auto;
@@ -2730,30 +2733,123 @@ canvas#headcount-canvas {
    Progressive Disclosure Card Grids, Tiles, Context Banner & Upload Zone
    ========================================================================== */
 
+/* Profile Trigger + Popover + Collapsible Accordion + Large Tiles */
+.cp-profile-wrap {
+  position: relative;
+  width: 100%;
+}
+
+.cp-profile-trigger {
+  width: 100%;
+  margin-top: 6px;
+  padding: 6px 10px;
+  border-radius: 11px;
+  border: 1px solid var(--cp-border);
+  background: var(--cp-well);
+  color: var(--cp-ink);
+  font-family: var(--cp-font-sans);
+  font-size: 13px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.14s ease, border-color 0.14s ease;
+}
+
+.cp-profile-trigger:hover {
+  background: var(--cp-surface-solid);
+  border-color: var(--cp-indigo);
+}
+
+.cp-profile-popover {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 6px);
+  width: 236px;
+  z-index: 1200;
+  background: var(--cp-surface-solid);
+  border: 1px solid var(--cp-border-strong);
+  border-radius: 16px;
+  padding: 10px;
+  box-shadow: 0 18px 42px rgba(31, 34, 51, 0.16);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.cp-profile-popover[hidden] {
+  display: none !important;
+}
+
+.cp-popover-action {
+  width: 100%;
+  justify-content: flex-start !important;
+  min-height: 36px;
+  font-size: 13px;
+}
+
+.cp-accordion-toggle {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  padding: 4px 2px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-family: var(--cp-font-sans);
+  color: var(--cp-ink-muted);
+  text-align: left;
+}
+
+.cp-accordion-chev {
+  display: inline-block;
+  font-size: 11px;
+  transition: transform 0.15s ease;
+}
+
+.cp-accordion-toggle[aria-expanded="true"] .cp-accordion-chev {
+  transform: rotate(90deg);
+}
+
+.cp-courses-collapse {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 210px;
+  overflow-y: auto;
+  padding-top: 2px;
+}
+
+.cp-courses-collapse[hidden] {
+  display: none !important;
+}
+
+.cp-closed-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
+  background: var(--cp-bg-mesh);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
 .cp-course-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 20px;
 }
 
 .cp-hub-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
-  gap: 16px;
-}
-
-@media (min-width: 1120px) {
-  .cp-hub-grid {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 18px;
-  }
-  .cp-hub-grid--student {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-  .cp-hub-tile {
-    min-height: 154px;
-    padding: 22px;
-  }
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 20px;
 }
 
 .cp-notif-dot {
@@ -2815,6 +2911,37 @@ canvas#headcount-canvas {
   box-shadow: 0 12px 28px rgba(91, 95, 239, 0.14);
 }
 
+@media (min-width: 1024px) {
+  .cp-hub-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 20px;
+  }
+  .cp-hub-grid--student {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .cp-hub-tile {
+    min-height: 220px;
+    padding: 28px 26px;
+    border-radius: 22px;
+  }
+}
+
+@media (min-width: 1280px) {
+  .cp-hub-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 22px;
+  }
+  .cp-hub-grid--student {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 22px;
+  }
+  .cp-hub-tile {
+    min-height: 242px;
+    padding: 30px 28px;
+    border-radius: 22px;
+  }
+}
+
 .cp-tile-head {
   display: flex;
   align-items: center;
@@ -2825,9 +2952,9 @@ canvas#headcount-canvas {
 }
 
 .cp-tile-icon {
-  width: 42px;
-  height: 42px;
-  border-radius: 13px;
+  width: 52px;
+  height: 52px;
+  border-radius: 15px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2841,7 +2968,7 @@ canvas#headcount-canvas {
 .cp-tile-icon--purple { background: var(--cp-purple-soft); color: var(--cp-purple-ink); }
 
 .cp-tile-title {
-  font-size: 16px;
+  font-size: 19px;
   font-weight: 800;
   color: var(--cp-ink);
   line-height: 1.25;
@@ -2849,9 +2976,9 @@ canvas#headcount-canvas {
 }
 
 .cp-tile-sub {
-  font-size: 13.5px;
+  font-size: 14.5px;
   color: var(--cp-ink-muted);
-  line-height: 1.35;
+  line-height: 1.4;
   overflow-wrap: anywhere;
 }
 

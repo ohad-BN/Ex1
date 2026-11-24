@@ -62,11 +62,24 @@ class BoundingBox:
 
 
 def read_image_unicode(path: str | Path) -> np.ndarray:
-    """Read an image from disk supporting Windows paths with Hebrew/Unicode characters."""
+    """Read an image from disk supporting Unicode paths, EXIF orientation, and WebP/PNG modes."""
     file_path = Path(path)
     if not file_path.exists():
         raise FileNotFoundError(f"Image not found: {file_path}")
     raw_bytes = np.fromfile(str(file_path), dtype=np.uint8)
+    try:
+        import io
+        from PIL import Image, ImageOps
+
+        with Image.open(io.BytesIO(raw_bytes)) as pil_img:
+            pil_img = ImageOps.exif_transpose(pil_img)
+            if pil_img.mode != "RGB":
+                pil_img = pil_img.convert("RGB")
+            rgb = np.asarray(pil_img)
+            if rgb.size > 0:
+                return cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+    except Exception:
+        pass
     img = cv2.imdecode(raw_bytes, cv2.IMREAD_COLOR)
     if img is None:
         raise ValueError(f"Failed to decode image file: {file_path}")
@@ -104,11 +117,11 @@ class TiledSCRFDDetector(FaceDetector):
     def __init__(
         self,
         model_path: Optional[str | Path] = None,
-        conf_threshold: float = 0.35,
+        conf_threshold: float = 0.30,
         nms_iou_threshold: float = 0.40,
         grid_shape: tuple[int, int] = (3, 2),
         tile_overlap: float = 0.20,
-        fallback_conf_threshold: float = 0.22,
+        fallback_conf_threshold: float = 0.20,
     ) -> None:
         self.model_path = Path(model_path) if model_path else None
         self.conf_threshold = conf_threshold
@@ -153,10 +166,12 @@ class TiledSCRFDDetector(FaceDetector):
                 "SCRFD face detection model det_10g.onnx not found in models_cache."
             )
 
-        # Copy to an ASCII-safe temp path on Windows in case workspace contains Hebrew chars
+        # Copy atomically to an ASCII-safe temp path on Windows in case workspace contains Hebrew chars
         ascii_model_path = Path(tempfile.gettempdir()) / "classpulse_det_10g.onnx"
         if not ascii_model_path.exists() or ascii_model_path.stat().st_size != onnx_file.stat().st_size:
-            shutil.copy2(onnx_file, ascii_model_path)
+            tmp_onnx = ascii_model_path.with_suffix(".onnx.tmp")
+            shutil.copy2(onnx_file, tmp_onnx)
+            os.replace(tmp_onnx, ascii_model_path)
 
         sess_opts = ort.SessionOptions()
         sess_opts.intra_op_num_threads = min(4, max(1, os.cpu_count() or 2))
@@ -351,7 +366,7 @@ class TiledSCRFDDetector(FaceDetector):
     def detect(
         self, image: np.ndarray, *, conf_threshold: Optional[float] = None
     ) -> list[BoundingBox]:
-        """Run full-frame + overlapping tiled SCRFD detection plus fast close-up recovery."""
+        """Run full-frame + overlapping tiled SCRFD detection plus close-up & contrast recovery."""
         if image is None or image.size == 0:
             return []
         eff_thresh = self.conf_threshold if conf_threshold is None else float(conf_threshold)
@@ -359,10 +374,21 @@ class TiledSCRFDDetector(FaceDetector):
             boxes = self._detect_at_threshold_locked(image, eff_thresh, include_tiles=True)
             if not boxes and conf_threshold is None:
                 boxes = self._detect_at_threshold_locked(
-                    image, self.fallback_conf_threshold, include_tiles=False
+                    image, self.fallback_conf_threshold, include_tiles=True
                 )
             if not boxes and conf_threshold is None:
-                boxes = self._detect_padded_closeup_locked(image, threshold=0.18)
+                boxes = self._detect_padded_closeup_locked(image, threshold=0.16)
+            if not boxes and conf_threshold is None:
+                try:
+                    lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+                    l_ch, a_ch, b_ch = cv2.split(lab)
+                    clahe = cv2.createCLAHE(clipLimit=2.2, tileGridSize=(8, 8))
+                    enhanced = cv2.cvtColor(
+                        cv2.merge((clahe.apply(l_ch), a_ch, b_ch)), cv2.COLOR_LAB2BGR
+                    )
+                    boxes = self._detect_padded_closeup_locked(enhanced, threshold=0.16)
+                except Exception:
+                    pass
             return boxes
 
     def detect_with_orientation(

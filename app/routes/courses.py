@@ -15,7 +15,8 @@ from flask import (
 )
 from sqlalchemy import func
 
-from app.models import AttendanceRecord, ClassSession, Course, HeadcountSnapshot, Lecturer, Student
+from app import socketio
+from app.models import AttendanceRecord, ClassSession, Course, CourseStaff, HeadcountSnapshot, Lecturer, Student
 from app.routes.guards import (
     get_client_ip,
     get_current_lecturer,
@@ -371,6 +372,7 @@ def teacher_portal():
         return redirect(url_for("courses.teacher_login_page"))
 
     req_course_id = request.args.get("course_id", type=int)
+    req_session_id = request.args.get("session_id", type=int)
     req_session_code = request.args.get("session", "").strip().upper()
 
     courses = svc.list_lecturer_courses(lecturer.id)
@@ -378,14 +380,16 @@ def teacher_portal():
     selected_session = None
     selected_course = None
 
-    if req_session_code:
+    if req_session_code or req_session_id:
         selected_session = (
             db.query(ClassSession).filter_by(session_code=req_session_code).one_or_none()
+            if req_session_code
+            else db.get(ClassSession, int(req_session_id))
         )
         if selected_session is None or selected_session.course_id is None:
             return (
                 make_response(
-                    f"Access denied: lecture '{req_session_code}' does not belong to your lecturer account. "
+                    f"Access denied: lecture '{req_session_code or req_session_id}' does not belong to your lecturer account. "
                     f"<a href='/teacher'>Return to your dashboard</a>",
                     403,
                 )
@@ -921,5 +925,150 @@ def api_student_enroll():
         {
             "enrolled_course": svc.serialize_course_summary(course),
             "dashboard": svc.build_student_dashboard_payload(student_id=student.id),
+        }
+    )
+
+
+def _emit_lecturer_roster_notifications(db: Any, course: Course, event: str, payload: dict[str, Any]) -> None:
+    ids: list[int] = []
+    if course.lecturer_id is not None:
+        ids.append(course.lecturer_id)
+    for row in db.query(CourseStaff).filter_by(course_id=course.id).all():
+        if row.lecturer_id not in ids:
+            ids.append(row.lecturer_id)
+    for lid in ids:
+        socketio.emit(event, payload, to=f"lecturer_notify_{lid}")
+
+
+@courses_bp.post("/api/student/enroll-request")
+def api_student_enroll_request():
+    """Submit a pending join request for a course, notifying the lecturer's Roster."""
+    payload: dict[str, Any] = request.get_json(silent=True) or {}
+    raw_course_id = payload.get("course_id")
+    try:
+        course_id_val = int(raw_course_id)
+    except (TypeError, ValueError):
+        return jsonify({"error": "Invalid course_id."}), 400
+
+    db = current_app.extensions["db_session"]
+    device_mgr: DeviceBindingManager = current_app.extensions["device_mgr"]
+    svc = _get_course_service()
+
+    cookie_val = request.cookies.get(DeviceBindingManager.COOKIE_NAME)
+    parsed = device_mgr.parse_device_cookie(cookie_val)
+    student_id = parsed[1] if parsed else payload.get("student_id")
+    student = db.get(Student, int(student_id)) if student_id else None
+    if student is None:
+        return jsonify({"error": "Please sign in first."}), 401
+
+    try:
+        course, student_obj, status_val = svc.request_course_enrollment(
+            course_id=course_id_val, student_id=student.id
+        )
+    except CourseError as exc:
+        return jsonify({"error": exc.message}), exc.status_code
+
+    if status_val == "pending":
+        _emit_lecturer_roster_notifications(
+            db,
+            course,
+            "roster:enrollment_request",
+            {
+                "course_id": course.id,
+                "course_name": course.name,
+                "student_id": student_obj.id,
+                "full_name": student_obj.full_name,
+                "student_id_number": student_obj.student_id_number or "-",
+            },
+        )
+
+    return (
+        jsonify(
+            {
+                "status": status_val,
+                "course_id": course.id,
+                "dashboard": svc.build_student_dashboard_payload(student_id=student_obj.id),
+            }
+        ),
+        202 if status_val == "pending" else 200,
+    )
+
+
+@courses_bp.get("/api/courses/<int:course_id>/enrollment-requests")
+def api_list_enrollment_requests(course_id: int):
+    _course, _lec, err = require_course_access(course_id)
+    if err is not None:
+        return err
+    svc = _get_course_service()
+    overview = svc.get_course_overview(course_id)
+    return jsonify(
+        {
+            "course_id": course_id,
+            "pending_requests": overview.get("pending_requests", []),
+            "students": overview.get("students", []),
+        }
+    )
+
+
+@courses_bp.post("/api/courses/<int:course_id>/enrollment-requests/<int:student_id>/approve")
+def api_approve_enrollment_request(course_id: int, student_id: int):
+    _course, lecturer, err = require_course_access(course_id)
+    if err is not None:
+        return err
+    assert lecturer is not None
+    svc = _get_course_service()
+    try:
+        course, st = svc.approve_enrollment_request(
+            course_id=course_id,
+            student_id=student_id,
+            lecturer_id=lecturer.id,
+            ip_address=get_client_ip(),
+        )
+        overview = svc.get_course_overview(course_id)
+    except CourseError as exc:
+        return jsonify({"error": exc.message}), exc.status_code
+
+    socketio.emit(
+        "enrollment:updated",
+        {"course_id": course.id, "student_id": st.id, "status": "approved"},
+    )
+    return jsonify(
+        {
+            "status": "approved",
+            "student_id": st.id,
+            "pending_requests": overview.get("pending_requests", []),
+            "students": overview.get("students", []),
+        }
+    )
+
+
+@courses_bp.post("/api/courses/<int:course_id>/enrollment-requests/<int:student_id>/reject")
+def api_reject_enrollment_request(course_id: int, student_id: int):
+    _course, lecturer, err = require_course_access(course_id)
+    if err is not None:
+        return err
+    assert lecturer is not None
+    svc = _get_course_service()
+    try:
+        course, st = svc.reject_enrollment_request(
+            course_id=course_id,
+            student_id=student_id,
+            lecturer_id=lecturer.id,
+            ip_address=get_client_ip(),
+        )
+        overview = svc.get_course_overview(course_id)
+    except CourseError as exc:
+        return jsonify({"error": exc.message}), exc.status_code
+
+    socketio.emit(
+        "enrollment:updated",
+        {"course_id": course.id, "student_id": st.id, "status": "rejected"},
+    )
+    return jsonify(
+        {
+            "status": "rejected",
+            "student_id": st.id,
+            "pending_requests": overview.get("pending_requests", []),
+            "students": overview.get("students", []),
         }
     )

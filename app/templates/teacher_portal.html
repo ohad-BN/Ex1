@@ -109,24 +109,73 @@
   <!-- Mobile Drawer Backdrop -->
   <div id="teacher-sidebar-backdrop" class="cp-sidebar-backdrop" onclick="closeMobileSidebar()" aria-hidden="true"></div>
 
-  <!-- Structured Lecturer Sidebar Menu -->
+  <!-- Structured Lecturer Sidebar Menu (Compact Zero-Scroll + Profile Popover + Collapsible My Courses) -->
   <aside id="teacher-sidebar" class="cp-sidebar sidebar" aria-label="Lecturer navigation sidebar">
-    <div class="cp-row-between cp-sidebar-divider" style="border-top:none; padding-top:0; padding-bottom:12px; border-bottom:1px solid var(--cp-border);">
-      <div class="cp-brand-lockup">
-        <span class="cp-orb cp-orb--sm" aria-hidden="true"></span>
-        <div>
-          <h1 class="cp-brand-title">ClassPulse</h1>
-          <div class="cp-brand-sub">Lecturer Workspace</div>
+    <div style="padding-bottom:10px; border-bottom:1px solid var(--cp-border);">
+      <div class="cp-row-between" style="flex-wrap:nowrap; gap:8px;">
+        <div class="cp-brand-lockup">
+          <span class="cp-orb cp-orb--sm" aria-hidden="true"></span>
+          <div style="min-width:0;">
+            <h1 class="cp-brand-title">ClassPulse</h1>
+            <div class="cp-brand-sub">Lecturer Workspace</div>
+          </div>
+        </div>
+        <button type="button" class="cp-sidebar-close-btn" onclick="closeMobileSidebar()" aria-label="Close menu">
+          {{ cp_icon('x', 18) }}
+        </button>
+      </div>
+
+      <!-- Clickable Lecturer Name -> Compact Auth/Account Popover -->
+      <div class="cp-profile-wrap">
+        <button type="button"
+                id="lecturer-profile-trigger"
+                class="cp-profile-trigger"
+                aria-expanded="false"
+                aria-haspopup="menu"
+                aria-controls="lecturer-profile-popover"
+                onclick="toggleProfilePopover('lecturer-profile-popover', 'lecturer-profile-trigger', event)">
+          <span style="min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+            {{ lecturer.full_name if lecturer else selected_course.lecturer_name }}
+          </span>
+          <span aria-hidden="true" style="font-size:11px; color:var(--cp-ink-muted);">&#9662;</span>
+        </button>
+
+        <div id="lecturer-profile-popover" class="cp-profile-popover" role="menu" hidden>
+          <div style="padding:4px 6px 6px 6px; border-bottom:1px solid var(--cp-border);">
+            <div style="font-size:13px; font-weight:800; color:var(--cp-ink); overflow-wrap:anywhere;">
+              {{ lecturer.full_name if lecturer else selected_course.lecturer_name }}
+            </div>
+            <div class="cp-muted" style="font-size:11.5px;">
+              {{ lecturer.department if lecturer else selected_course.department }} &bull; {{ selected_course.semester }}
+            </div>
+          </div>
+          <button type="button" class="cp-btn cp-btn--white cp-btn--sm cp-popover-action" onclick="closeAllPopovers(); openModal('modal-account-security')">
+            {{ cp_icon('shield', 14) }}
+            <span>Account Security</span>
+          </button>
+          <a class="cp-btn cp-btn--white cp-btn--sm cp-popover-action" href="/teacher/login?switch=1">
+            {{ cp_icon('users', 14) }}
+            <span>Switch Account</span>
+          </a>
+          <a class="cp-btn cp-btn--white cp-btn--sm cp-popover-action" href="/student" target="_blank">
+            {{ cp_icon('external-link', 14) }}
+            <span>Student App</span>
+          </a>
+          <button type="button" class="cp-btn cp-btn--secondary cp-btn--sm cp-popover-action" onclick="logoutLecturer()">
+            {{ cp_icon('log-out', 14) }}
+            <span>Sign Out</span>
+          </button>
+          <button type="button" id="btn-lecturer-close-app" class="cp-btn cp-btn--danger-soft cp-btn--sm cp-popover-action" onclick="closeAppSession('lecturer')">
+            {{ cp_icon('x', 14) }}
+            <span>Close App</span>
+          </button>
         </div>
       </div>
-      <button type="button" class="cp-sidebar-close-btn" onclick="closeMobileSidebar()" aria-label="Close menu">
-        {{ cp_icon('x', 18) }}
-      </button>
     </div>
 
-    <!-- Category 1: Course -->
+    <!-- Category 1: Course (Overview only — redundant Lectures item removed) -->
     <div>
-      <div class="cp-sidebar-section-hdr">
+      <div class="cp-sidebar-section-hdr" style="margin-bottom:4px;">
         <span class="cp-eyebrow">Course</span>
       </div>
       <nav aria-label="Course navigation">
@@ -134,19 +183,15 @@
           {{ cp_icon('book-open', 16) }}
           <span class="cp-nav-label">Overview</span>
         </button>
-        <button type="button" class="cp-nav-item" data-tab-target="tab-lectures" onclick="switchTab('tab-lectures', this)">
-          {{ cp_icon('play', 16) }}
-          <span class="cp-nav-label">Lectures ({{ course_sessions|length }})</span>
-        </button>
       </nav>
     </div>
 
     <!-- Category 2: Lecture Tools -->
     <div>
-      <div class="cp-sidebar-section-hdr" style="margin-bottom:4px;">
+      <div class="cp-sidebar-section-hdr" style="margin-bottom:2px;">
         <span class="cp-eyebrow">Lecture Tools</span>
       </div>
-      <div class="cp-muted" style="font-size:12.5px; padding:0 4px 8px 4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+      <div class="cp-muted" style="font-size:12px; padding:0 4px 4px 4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
         {{ session.title }}
       </div>
       <nav aria-label="Lecture tools navigation">
@@ -172,7 +217,7 @@
 
     <!-- Category 3: Course Management -->
     <div>
-      <div class="cp-sidebar-section-hdr">
+      <div class="cp-sidebar-section-hdr" style="margin-bottom:4px;">
         <span class="cp-eyebrow">Management</span>
       </div>
       <nav aria-label="Course management navigation">
@@ -183,6 +228,9 @@
         <button type="button" id="tab-btn-course-monitor" class="cp-nav-item" data-tab-target="tab-course-roster" onclick="switchTab('tab-course-roster', this)">
           {{ cp_icon('users', 16) }}
           <span class="cp-nav-label">Roster ({{ selected_course.students|length }})</span>
+          <span id="roster-pending-badge" class="cp-red-dot" style="{% if not selected_course.pending_requests %}display:none;{% else %}display:inline-flex;{% endif %}">
+            {{ (selected_course.pending_requests or [])|length }}
+          </span>
         </button>
         <button type="button" class="cp-nav-item" data-tab-target="tab-course-details" onclick="switchTab('tab-course-details', this)">
           {{ cp_icon('file-text', 16) }}
@@ -191,49 +239,33 @@
       </nav>
     </div>
 
-    <!-- Category 4: My Courses -->
-    <div>
-      <div class="cp-sidebar-section-hdr">
-        <span class="cp-eyebrow">My Courses ({{ courses|length }})</span>
-        <button type="button" class="cp-btn cp-btn--primary cp-btn--sm" onclick="openModal('modal-new-course')">
+    <!-- Category 4: Collapsible My Courses Accordion -->
+    <div style="border-top:1px solid var(--cp-border); padding-top:8px;">
+      <div class="cp-sidebar-section-hdr" style="margin-bottom:4px;">
+        <button type="button"
+                id="btn-my-courses-toggle"
+                class="cp-accordion-toggle"
+                aria-expanded="false"
+                aria-controls="my-courses-list"
+                onclick="toggleMyCoursesAccordion()">
+          <span class="cp-accordion-chev" aria-hidden="true">&#9654;</span>
+          <span class="cp-eyebrow">My Courses ({{ courses|length }})</span>
+          <span id="my-courses-unread-dot" class="cp-notif-dot" hidden></span>
+        </button>
+        <button type="button" class="cp-btn cp-btn--primary cp-btn--sm" onclick="openModal('modal-new-course')" title="Create new course">
           {{ cp_icon('plus', 13) }}
           <span>Course</span>
         </button>
       </div>
-      {% for c in courses %}
-        <a class="cp-nav-item course-item {% if c.id == selected_course.id %}active{% endif %}"
-           data-course-id="{{ c.id }}"
-           href="/teacher?course_id={{ c.id }}">
-          <span class="cp-nav-label">{{ c.name }}</span>
-          <span class="cp-notif-dot" data-course-dot="{{ c.id }}" hidden></span>
-        </a>
-      {% endfor %}
-    </div>
-
-    <!-- Category 5: Account -->
-    <div class="cp-well" style="font-size:13px;">
-      <div style="color:var(--cp-ink); font-weight:700;">
-        {{ lecturer.full_name if lecturer else selected_course.lecturer_name }}
-      </div>
-      <div class="cp-muted" style="font-size:12.5px; margin-top:2px;">
-        {{ lecturer.department if lecturer else selected_course.department }} &bull; {{ selected_course.semester }}
-      </div>
-      <div class="cp-row-wrap" style="margin-top:10px; gap:6px;">
-        <button type="button" class="cp-btn cp-btn--white cp-btn--sm" onclick="openModal('modal-account-security')">
-          {{ cp_icon('shield', 13) }}
-          <span>Security</span>
-        </button>
-        <a class="cp-btn cp-btn--white cp-btn--sm" href="/teacher/login?switch=1">
-          <span>Switch Account</span>
-        </a>
-        <a class="cp-btn cp-btn--white cp-btn--sm" href="/student" target="_blank">
-          <span>Student App</span>
-          {{ cp_icon('external-link', 13) }}
-        </a>
-        <button type="button" class="cp-btn cp-btn--secondary cp-btn--sm" onclick="logoutLecturer()">
-          {{ cp_icon('log-out', 13) }}
-          <span>Sign Out</span>
-        </button>
+      <div id="my-courses-list" class="cp-courses-collapse" hidden>
+        {% for c in courses %}
+          <a class="cp-nav-item course-item {% if c.id == selected_course.id %}active{% endif %}"
+             data-course-id="{{ c.id }}"
+             href="/teacher?course_id={{ c.id }}">
+            <span class="cp-nav-label">{{ c.name }}</span>
+            <span class="cp-notif-dot" data-course-dot="{{ c.id }}" hidden></span>
+          </a>
+        {% endfor %}
       </div>
     </div>
   </aside>
@@ -263,7 +295,7 @@
       </div>
 
       <div class="cp-row-wrap">
-        <button type="button" class="cp-btn cp-btn--secondary cp-btn--sm" onclick="switchTab('tab-lectures')">
+        <button type="button" id="btn-switch-lecture" class="cp-btn cp-btn--secondary cp-btn--sm" onclick="openModal('modal-switch-lecture')">
           <span>Switch Lecture</span>
         </button>
         <button type="button" class="cp-btn cp-btn--green cp-btn--sm" onclick="openModal('modal-new-lecture')">
@@ -348,10 +380,11 @@
         <button type="button" class="cp-hub-tile" onclick="switchTab('tab-course-roster')">
           <div class="cp-tile-head">
             <span class="cp-tile-icon cp-tile-icon--indigo">{{ cp_icon('users', 20) }}</span>
+            <span id="overview-roster-dot" class="cp-notif-dot" {% if not selected_course.pending_requests %}hidden{% endif %}></span>
           </div>
           <div>
             <div class="cp-tile-title">Roster</div>
-            <div class="cp-tile-sub">{{ selected_course.students|length }} enrolled students</div>
+            <div class="cp-tile-sub">{{ selected_course.students|length }} enrolled{% if selected_course.pending_requests %} &bull; {{ selected_course.pending_requests|length }} pending{% endif %}</div>
           </div>
         </button>
 
@@ -649,6 +682,7 @@
           <button type="button" class="cp-filter-pill active" data-chat-filter="all" onclick="setLecturerChatFilter('all', this)">All Messages</button>
           <button type="button" class="cp-filter-pill" data-chat-filter="lecture" onclick="setLecturerChatFilter('lecture', this)">Lecture Q&amp;A</button>
           <button type="button" class="cp-filter-pill" data-chat-filter="offline" onclick="setLecturerChatFilter('offline', this)">Offline Questions</button>
+          <button type="button" class="cp-filter-pill" data-chat-filter="course" onclick="setLecturerChatFilter('course', this)">All Course Lectures</button>
         </div>
 
         <div class="cp-composer" style="margin-bottom:14px;">
@@ -833,6 +867,47 @@
     </div>
   </div>
 </div>
+
+<!-- Modal: Switch Active Lecture in Current Course -->
+<div id="modal-switch-lecture" class="cp-modal-backdrop modal-backdrop">
+  <div class="cp-modal-card modal-card">
+    <div class="cp-card-header">
+      <h3 style="margin:0;">{{ cp_icon('play', 17) }} <span>Switch Active Lecture</span></h3>
+      <button type="button" class="cp-btn cp-btn--secondary cp-btn--sm" onclick="closeModal('modal-switch-lecture')">
+        {{ cp_icon('x', 14) }}
+        <span>Close</span>
+      </button>
+    </div>
+    <div class="cp-m-lecture-list" style="max-height:360px; overflow-y:auto; margin-bottom:14px;">
+      {% for s in course_sessions %}
+        <button type="button"
+                class="cp-m-lecture-row {% if s.session_code == session.session_code %}active{% endif %}"
+                data-switch-session-code="{{ s.session_code }}"
+                onclick="switchActiveLecture(this.dataset.switchSessionCode)">
+          <div class="cp-m-lecture-main">
+            <div class="cp-m-lecture-title">
+              {% if s.lecture_number and not s.title.lower().startswith('lecture') %}Lecture {{ s.lecture_number }} &mdash; {% endif %}{{ s.title }}
+            </div>
+            <div class="cp-m-lecture-meta cp-tabular">{{ s.started_at.strftime('%Y-%m-%d %H:%M') }}</div>
+          </div>
+          <div class="cp-m-lecture-right">
+            {% if s.session_code == session.session_code %}
+              <span class="cp-badge cp-badge--indigo">Active</span>
+            {% endif %}
+            <span class="cp-m-lecture-chev" aria-hidden="true">&#8250;</span>
+          </div>
+        </button>
+      {% endfor %}
+    </div>
+    <div class="cp-row-between">
+      <button type="button" class="cp-btn cp-btn--green cp-btn--sm" onclick="closeModal('modal-switch-lecture'); openModal('modal-new-lecture')">
+        {{ cp_icon('plus', 14) }}
+        <span>Create New Lecture</span>
+      </button>
+      <button type="button" class="cp-btn cp-btn--secondary cp-btn--sm" onclick="closeModal('modal-switch-lecture')">Close</button>
+    </div>
+  </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
@@ -883,8 +958,84 @@
   }
 
   document.addEventListener("keydown", (evt) => {
-    if (evt.key === "Escape") closeMobileSidebar();
+    if (evt.key === "Escape") {
+      closeMobileSidebar();
+      closeAllPopovers();
+    }
   });
+
+  document.addEventListener("click", (evt) => {
+    const pop = document.getElementById("lecturer-profile-popover");
+    const trig = document.getElementById("lecturer-profile-trigger");
+    if (pop && !pop.hidden && !pop.contains(evt.target) && (!trig || !trig.contains(evt.target))) {
+      pop.hidden = true;
+      if (trig) trig.setAttribute("aria-expanded", "false");
+    }
+  });
+
+  function closeAllPopovers() {
+    const pop = document.getElementById("lecturer-profile-popover");
+    const trig = document.getElementById("lecturer-profile-trigger");
+    if (pop) pop.hidden = true;
+    if (trig) trig.setAttribute("aria-expanded", "false");
+  }
+
+  function toggleProfilePopover(popoverId, triggerId, evt) {
+    if (evt) evt.stopPropagation();
+    const pop = document.getElementById(popoverId);
+    const trig = document.getElementById(triggerId);
+    if (!pop) return;
+    const willShow = Boolean(pop.hidden);
+    pop.hidden = !willShow;
+    if (trig) trig.setAttribute("aria-expanded", willShow ? "true" : "false");
+  }
+
+  function toggleMyCoursesAccordion() {
+    const list = document.getElementById("my-courses-list");
+    const btn = document.getElementById("btn-my-courses-toggle");
+    if (!list || !btn) return;
+    const willOpen = Boolean(list.hidden);
+    list.hidden = !willOpen;
+    btn.setAttribute("aria-expanded", willOpen ? "true" : "false");
+  }
+
+  function switchActiveLecture(sessionCode, targetTab) {
+    if (!sessionCode) return;
+    closeModal("modal-switch-lecture");
+    const tabParam = targetTab || (activeTabId === "tab-lectures" ? "tab-overview" : activeTabId);
+    window.location.href = `/teacher?course_id=${COURSE_ID}&session=${encodeURIComponent(sessionCode)}&tab=${encodeURIComponent(tabParam)}`;
+  }
+
+  async function closeAppSession(_role) {
+    closeAllPopovers();
+    try {
+      await fetch("/api/auth/lecturer/logout", { method: "POST" });
+    } catch (_err) {}
+    try {
+      if (typeof socket !== "undefined" && socket && typeof socket.disconnect === "function") {
+        socket.disconnect();
+      }
+    } catch (_err) {}
+    try { window.close(); } catch (_err) {}
+    if (!document.getElementById("cp-app-closed-overlay")) {
+      const ov = document.createElement("div");
+      ov.id = "cp-app-closed-overlay";
+      ov.className = "cp-closed-screen";
+      ov.innerHTML = `
+        <div class="cp-card" style="max-width:440px; width:100%; text-align:center;">
+          <div style="display:inline-flex; align-items:center; justify-content:center; margin-bottom:12px;">
+            <span class="cp-orb cp-orb--md" aria-hidden="true"></span>
+          </div>
+          <h2 style="margin:0 0 8px 0; font-size:21px; font-weight:800; color:var(--cp-ink);">ClassPulse Session Closed</h2>
+          <p class="cp-secondary" style="margin:0 0 18px 0; font-size:14px;">
+            You have signed out cleanly. You may close this browser window or reopen the portal below.
+          </p>
+          <a class="cp-btn cp-btn--primary cp-btn--block" href="/portal">Reopen ClassPulse</a>
+        </div>
+      `;
+      document.body.appendChild(ov);
+    }
+  }
 
   function updateLecturerBackButton() {
     const backBtn = document.getElementById("lecturer-back-btn");
@@ -920,10 +1071,15 @@
     updateLecturerBackButton();
     closeMobileSidebar();
 
-    if (tabId === "tab-chat" && window.ClassPulseNotify) {
-      window.ClassPulseNotify.clearUnreadWhere(
-        (item) => item.kind === "qa" && (!item.sessionCode || item.sessionCode === SESSION_CODE)
-      );
+    if (tabId === "tab-chat") {
+      fetchLatestLecturerChat();
+      if (window.ClassPulseNotify) {
+        window.ClassPulseNotify.clearUnreadWhere(
+          (item) => item.kind === "qa" && (!item.courseId || Number(item.courseId) === Number(COURSE_ID))
+        );
+      }
+    } else if (tabId === "tab-course-roster") {
+      loadPendingEnrollmentRequests();
     }
   }
 
@@ -1018,6 +1174,121 @@
     if (!res.ok) return alert(data.error || "Could not update password.");
     alert("Password updated and older sessions rotated.");
     closeModal("modal-account-security");
+  }
+
+  let PENDING_REQUESTS = {{ (selected_course.pending_requests or []) | tojson }};
+
+  function updateRosterPendingBadges(pendingList) {
+    const count = Array.isArray(pendingList) ? pendingList.length : 0;
+    const badge = document.getElementById("roster-pending-badge");
+    if (badge) {
+      badge.textContent = String(count);
+      badge.style.display = count > 0 ? "inline-flex" : "none";
+    }
+    const ovDot = document.getElementById("overview-roster-dot");
+    if (ovDot) ovDot.hidden = count === 0;
+    const pill = document.getElementById("pending-requests-count-pill");
+    if (pill) {
+      pill.textContent = `${count} Pending`;
+      pill.className = `cp-badge ${count > 0 ? "cp-badge--amber" : "cp-badge--neutral"} cp-tabular`;
+    }
+  }
+
+  function renderPendingRequestsList(pendingList) {
+    PENDING_REQUESTS = Array.isArray(pendingList) ? pendingList : [];
+    updateRosterPendingBadges(PENDING_REQUESTS);
+    const box = document.getElementById("pending-enrollment-requests-list");
+    if (!box) return;
+    if (!PENDING_REQUESTS.length) {
+      box.innerHTML = `<div class="cp-well cp-muted" style="font-size:13px; text-align:center;">No pending enrollment requests for this course.</div>`;
+      return;
+    }
+    box.innerHTML = PENDING_REQUESTS.map(req => `
+      <div class="cp-log-row" data-pending-student-id="${Number(req.student_id)}">
+        <div style="min-width:0; flex:1;">
+          <strong style="color:var(--cp-ink);">${escapeHtml(req.full_name)}</strong>
+          <div class="cp-muted cp-tabular" style="font-size:12px;">
+            ID ${escapeHtml(req.student_id_number || "-")}
+          </div>
+        </div>
+        <div class="cp-row-wrap" style="gap:6px;">
+          <button type="button" class="cp-btn cp-btn--green cp-btn--sm" onclick="approveEnrollmentRequest(${Number(req.student_id)}, this)">Approve</button>
+          <button type="button" class="cp-btn cp-btn--danger-soft cp-btn--sm" onclick="rejectEnrollmentRequest(${Number(req.student_id)}, this)">Reject</button>
+        </div>
+      </div>
+    `).join("");
+  }
+
+  function renderEnrolledStudentsTable(studentsList) {
+    const tbody = document.getElementById("course-students-tbody");
+    const countPill = document.getElementById("enrolled-students-count-pill");
+    const rosterNavLabel = document.querySelector('#tab-btn-course-monitor .cp-nav-label');
+    const students = Array.isArray(studentsList) ? studentsList : [];
+    if (countPill) countPill.textContent = `${students.length} Students`;
+    if (rosterNavLabel) rosterNavLabel.textContent = `Roster (${students.length})`;
+    if (!tbody) return;
+    if (!students.length) {
+      tbody.innerHTML = `<tr><td colspan="6" class="cp-muted" style="text-align:center;">No students enrolled yet. Import a CSV/Excel file, approve join requests, or have students scan the lecture QR!</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = students.map(st => {
+      const rate = Number(st.attendance_rate_pct || 0);
+      const cls = rate >= 75 ? "VERIFIED" : (rate >= 50 ? "UNDER_SCANNED" : "ABSENT");
+      return `
+        <tr>
+          <td><strong>${escapeHtml(st.full_name)}</strong></td>
+          <td><code>${escapeHtml(st.student_id_number || "-")}</code></td>
+          <td>${escapeHtml(st.email)}</td>
+          <td class="cp-tabular">${Number(st.attended_sessions || 0)} / ${Number(st.total_sessions || 0)}</td>
+          <td><span class="cp-badge badge cp-tabular ${cls}">${rate}%</span></td>
+          <td><button type="button" class="cp-btn cp-btn--danger-soft cp-btn--sm" onclick='removeStudentFromCourse(${Number(st.student_id)}, ${JSON.stringify(String(st.full_name || ""))})'>Remove Student</button></td>
+        </tr>
+      `;
+    }).join("");
+  }
+
+  async function loadPendingEnrollmentRequests() {
+    try {
+      const res = await fetch(`/api/courses/${COURSE_ID}/enrollment-requests?_ts=${Date.now()}`, { cache: "no-store" });
+      if (!res.ok) return;
+      const data = await res.json();
+      renderPendingRequestsList(data.pending_requests || []);
+      if (Array.isArray(data.students)) renderEnrolledStudentsTable(data.students);
+    } catch (_err) {}
+  }
+
+  async function approveEnrollmentRequest(studentId, btnEl) {
+    if (btnEl) btnEl.disabled = true;
+    try {
+      const res = await fetch(`/api/courses/${COURSE_ID}/enrollment-requests/${studentId}/approve`, { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (btnEl) btnEl.disabled = false;
+        return alert(data.error || "Could not approve student.");
+      }
+      renderPendingRequestsList(data.pending_requests || []);
+      if (Array.isArray(data.students)) renderEnrolledStudentsTable(data.students);
+      refreshOverview();
+    } catch (_err) {
+      if (btnEl) btnEl.disabled = false;
+      alert("Network error while approving request.");
+    }
+  }
+
+  async function rejectEnrollmentRequest(studentId, btnEl) {
+    if (btnEl) btnEl.disabled = true;
+    try {
+      const res = await fetch(`/api/courses/${COURSE_ID}/enrollment-requests/${studentId}/reject`, { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (btnEl) btnEl.disabled = false;
+        return alert(data.error || "Could not reject request.");
+      }
+      renderPendingRequestsList(data.pending_requests || []);
+    } catch (_err) {
+      if (btnEl) btnEl.disabled = false;
+      alert("Network error while rejecting request.");
+    }
   }
 
   async function removeStudentFromCourse(studentId, fullName) {
@@ -1479,7 +1750,7 @@
 
     try {
       const uploadBlob = window.ClassPulseImage
-        ? await window.ClassPulseImage.compressToJpeg(rawFile, { maxEdge: 1600, quality: 0.82 })
+        ? await window.ClassPulseImage.compressToJpeg(rawFile, { maxEdge: 1280, quality: 0.80, decodeTimeoutMs: 6000 })
         : rawFile;
       if (statusEl) statusEl.textContent = "Uploading & counting faces...";
 
@@ -1506,6 +1777,7 @@
         statusEl.style.color = "var(--cp-green-ink)";
         statusEl.textContent = `Detected ${Number(data.auto_count ?? data.auto_face_count ?? 0)} face(s)!`;
       }
+      input.value = "";
       applyIncomingHeadcountUpdate(data);
     } catch (err) {
       if (statusEl) {
@@ -1559,6 +1831,7 @@
   let selectedViewPollId = null;
   let cachedPolls = [];
   let chatMessages = [];
+  let courseChatMessages = [];
   const BAR_COLORS = ["#E87148", "#5B5FEF", "#16A34A", "#D97706", "#0F766E", "#BE185D"];
   const LETTERS = ["A", "B", "C", "D", "E", "F", "G", "H"];
 
@@ -1746,13 +2019,18 @@
     lecturerChatFilter = mode || "all";
     document.querySelectorAll(".cp-filter-pill[data-chat-filter]").forEach(el => el.classList.remove("active"));
     if (btnEl) btnEl.classList.add("active");
-    renderChatFeed();
+    if (lecturerChatFilter === "course") {
+      fetchLatestLecturerChat();
+    } else {
+      renderChatFeed();
+    }
   }
 
   function renderChatFeed() {
     const feed = document.getElementById("lecturer-chat-feed");
     if (!feed) return;
-    const filtered = chatMessages.filter(m => {
+    const pool = lecturerChatFilter === "course" ? (courseChatMessages.length ? courseChatMessages : chatMessages) : chatMessages;
+    const filtered = pool.filter(m => {
       if (lecturerChatFilter === "offline") return m.category === "Offline Question";
       if (lecturerChatFilter === "lecture") return m.category !== "Offline Question";
       return true;
@@ -1769,6 +2047,7 @@
             <span class="cp-ts ts">[${escapeHtml(m.offset_mmss)}]</span>
             <strong>${escapeHtml(m.author_name)}</strong>
             <span class="${m.category === 'Offline Question' ? 'cp-badge cp-badge--purple' : 'cp-cat-pill cat'}">${escapeHtml(m.category)}</span>
+            ${(lecturerChatFilter === 'course' && m.lecture_title) ? `<span class="cp-badge cp-badge--neutral">${escapeHtml(m.lecture_title)}</span>` : ''}
             ${m.is_pinned ? '<span class="cp-badge cp-badge--amber">Pinned</span>' : ''}
           </div>
           <div class="cp-row-wrap" style="gap:6px;">
@@ -1783,10 +2062,21 @@
 
   async function fetchLatestLecturerChat() {
     try {
-      const res = await fetch(`/api/sessions/${SESSION_ID}/chat?_ts=${Date.now()}`, { cache: "no-store" });
-      if (!res.ok) return;
-      const data = await res.json();
-      chatMessages = data.messages || [];
+      const [sessRes, courseRes] = await Promise.all([
+        fetch(`/api/sessions/${SESSION_ID}/chat?_ts=${Date.now()}`, { cache: "no-store" }),
+        fetch(`/api/courses/${COURSE_ID}/chat?_ts=${Date.now()}`, { cache: "no-store" }),
+      ]);
+      if (sessRes.ok) {
+        const data = await sessRes.json();
+        const incoming = data.messages || [];
+        const byId = new Map(chatMessages.map(x => [x.id, x]));
+        incoming.forEach(m => byId.set(m.id, m));
+        chatMessages = Array.from(byId.values());
+      }
+      if (courseRes.ok) {
+        const cdata = await courseRes.json();
+        courseChatMessages = cdata.messages || [];
+      }
       renderChatFeed();
     } catch (_err) {}
   }
@@ -1811,6 +2101,9 @@
       if (!chatMessages.find(x => x.id === data.id)) {
         chatMessages.push(data);
       }
+      if (!courseChatMessages.find(x => x.id === data.id)) {
+        courseChatMessages.push(data);
+      }
       renderChatFeed();
     } catch (_err) {
       bodyEl.value = body;
@@ -1823,13 +2116,32 @@
 
   function renderLecturerNotifications(summary) {
     if (!summary) return;
+    let anyOtherCourse = false;
     document.querySelectorAll("[data-course-dot]").forEach((dot) => {
       const cid = Number(dot.getAttribute("data-course-dot"));
-      dot.hidden = !summary.hasUnreadCourse(cid);
+      const hasUnread = summary.hasUnreadCourse(cid);
+      dot.hidden = !hasUnread;
+      if (hasUnread) anyOtherCourse = true;
     });
+    const myCoursesDot = document.getElementById("my-courses-unread-dot");
+    if (myCoursesDot) {
+      myCoursesDot.hidden = !anyOtherCourse;
+    }
     const ovDot = document.getElementById("overview-qa-dot");
     if (ovDot) {
       ovDot.hidden = !summary.hasUnreadSection(COURSE_ID, "qa");
+    }
+    const tabBadge = document.getElementById("tab-chat-badge");
+    if (tabBadge) {
+      const qaCount = typeof summary.countWhere === "function"
+        ? summary.countWhere((it) => it.kind === "qa" && (!it.courseId || Number(it.courseId) === Number(COURSE_ID)))
+        : 0;
+      if (qaCount > 0) {
+        tabBadge.textContent = qaCount > 99 ? "99+" : String(qaCount);
+        tabBadge.style.display = "inline-flex";
+      } else {
+        tabBadge.style.display = "none";
+      }
     }
   }
 
@@ -1839,7 +2151,12 @@
       baseTitle: document.title,
       currentLecturerId: LECTURER_ID,
       isChatVisibleFn: (payload) =>
-        activeTabId === "tab-chat" && (!payload || payload.session_code === SESSION_CODE),
+        activeTabId === "tab-chat" && (!payload || Number(payload.course_id || COURSE_ID) === Number(COURSE_ID)),
+      onVisibleClear: () => {
+        window.ClassPulseNotify.clearUnreadWhere(
+          (item) => item.kind === "qa" && (!item.courseId || Number(item.courseId) === Number(COURSE_ID))
+        );
+      },
       onUnreadChange: renderLecturerNotifications,
       onOpenMessage: (payload) => {
         const msgId = payload.message_id || payload.id;
@@ -1848,6 +2165,10 @@
           if (!window.ClassPulseNotify.highlightMessage(msgId)) {
             fetchLatestLecturerChat().then(() => window.ClassPulseNotify.highlightMessage(msgId));
           }
+        } else if (Number(payload.course_id) === Number(COURSE_ID)) {
+          switchTab("tab-chat");
+          setLecturerChatFilter("course", document.querySelector('.cp-filter-pill[data-chat-filter="course"]'));
+          setTimeout(() => window.ClassPulseNotify.highlightMessage(msgId), 350);
         } else {
           const cidParam = payload.course_id || COURSE_ID;
           window.location.href = `/teacher?course_id=${cidParam}&session=${encodeURIComponent(payload.session_code)}&tab=tab-chat&msg_id=${encodeURIComponent(msgId)}`;
@@ -1883,9 +2204,19 @@
   socket.on("chat:init", (d) => { chatMessages = d.messages || []; renderChatFeed(); });
   socket.on("chat:new", (m) => {
     if (!chatMessages.find(x => x.id === m.id)) chatMessages.push(m);
+    if (!courseChatMessages.find(x => x.id === m.id)) courseChatMessages.push(m);
     renderChatFeed();
   });
   socket.on("chat:notify", (payload) => {
+    if (payload && Number(payload.course_id) === Number(COURSE_ID)) {
+      if (payload.session_code === SESSION_CODE && !chatMessages.find(x => x.id === payload.id)) {
+        chatMessages.push(payload);
+      }
+      if (!courseChatMessages.find(x => x.id === payload.id)) {
+        courseChatMessages.push(payload);
+      }
+      renderChatFeed();
+    }
     if (window.ClassPulseNotify) {
       window.ClassPulseNotify.pushChatNotification(payload);
     }
@@ -1893,7 +2224,19 @@
   socket.on("chat:updated", (m) => {
     const idx = chatMessages.findIndex(x => x.id === m.id);
     if (idx >= 0) chatMessages[idx] = m;
+    const cidx = courseChatMessages.findIndex(x => x.id === m.id);
+    if (cidx >= 0) courseChatMessages[cidx] = m;
     renderChatFeed();
+  });
+  socket.on("roster:enrollment_request", (payload) => {
+    if (!payload || Number(payload.course_id) === Number(COURSE_ID)) {
+      loadPendingEnrollmentRequests();
+    }
+  });
+  socket.on("enrollment:updated", (payload) => {
+    if (payload && Number(payload.course_id) === Number(COURSE_ID)) {
+      loadPendingEnrollmentRequests();
+    }
   });
 
   // =========================================================================
@@ -2189,7 +2532,7 @@
 
   async function createAssignment() {
     const title = document.getElementById("hw-new-title").value.trim();
-    const rubric_text = document.getElementById("hw-new-rubric").value.trim() || "OOP modularity, automated pytest coverage, error handling.";
+    const rubric_text = document.getElementById("hw-new-rubric").value.trim();
     if (!title) return alert("Enter an assignment title.");
     const res = await fetch(`/api/courses/${COURSE_ID}/assignments`, {
       method: "POST",
@@ -2198,6 +2541,7 @@
     });
     if (res.ok) {
       document.getElementById("hw-new-title").value = "";
+      document.getElementById("hw-new-rubric").value = "";
       loadAssignments();
     }
   }
@@ -2258,6 +2602,11 @@
   setInterval(() => {
     refreshOverview();
     loadPolls();
+    if (activeTabId === "tab-chat") {
+      fetchLatestLecturerChat();
+    } else if (activeTabId === "tab-course-roster") {
+      loadPendingEnrollmentRequests();
+    }
   }, 3500);
 </script>
 {% endblock %}

@@ -590,14 +590,14 @@ def _run_headcount_detection_and_persist(
             (max(1, int(round(w * scale))), max(1, int(round(h * scale)))),
             interpolation=cv2.INTER_AREA,
         )
-        write_image_unicode(raw_dest, img)
 
     if hasattr(detector, "detect_with_orientation"):
-        boxes, img, was_rotated = detector.detect_with_orientation(img)
-        if was_rotated:
-            write_image_unicode(raw_dest, img)
+        boxes, img, _was_rotated = detector.detect_with_orientation(img)
     else:
         boxes = detector.detect(img)
+
+    # Always normalize stored raw_dest as an upright JPEG so web canvas & <img> render identically
+    write_image_unicode(raw_dest, img)
 
     if isinstance(detector, TiledSCRFDDetector):
         detector.render_annotated_image(raw_dest, boxes, ann_dest, image=img)
@@ -663,6 +663,7 @@ def upload_and_count_classroom_photo(session_id: int):
     data = request.get_json(silent=True) or request.form.to_dict()
     use_sample = str(data.get("use_sample", "")).lower() in ("1", "true", "yes")
 
+    cfg.UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     upload_id = uuid.uuid4().hex[:10]
     raw_dest = cfg.UPLOAD_DIR / f"session_{session_id}_{upload_id}_raw.jpg"
     ann_dest = cfg.UPLOAD_DIR / f"session_{session_id}_{upload_id}_annotated.jpg"
@@ -1119,6 +1120,7 @@ def upload_phone_headcount_photo(session_code: str):
     cfg = current_app.config["CLASSPULSE_CONFIG"]
     detector = current_app.extensions["face_detector"]
 
+    cfg.UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     upload_id = uuid.uuid4().hex[:10]
     raw_dest = cfg.UPLOAD_DIR / f"session_{session.id}_{upload_id}_raw.jpg"
     ann_dest = cfg.UPLOAD_DIR / f"session_{session.id}_{upload_id}_annotated.jpg"

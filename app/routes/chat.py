@@ -9,6 +9,7 @@ from app.models import ChatMessage, ClassSession, Course, Student
 from app.routes.guards import (
     get_current_lecturer,
     is_lecturer_authorized_for_course,
+    require_course_access,
     require_session_access,
     verify_session_read_access,
 )
@@ -60,6 +61,15 @@ def list_chat_messages(session_id: int):
         return err
     svc = _get_chat_service()
     return jsonify({"messages": svc.list_messages(session_id)})
+
+
+@chat_bp.get("/api/courses/<int:course_id>/chat")
+def list_course_chat_messages(course_id: int):
+    _course, _lec, err = require_course_access(course_id)
+    if err is not None:
+        return err
+    svc = _get_chat_service()
+    return jsonify({"messages": svc.list_course_messages(course_id)})
 
 
 @chat_bp.post("/api/sessions/<int:session_id>/chat")

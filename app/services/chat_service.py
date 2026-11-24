@@ -156,6 +156,22 @@ class ChatService:
         )
         return [self.serialize_message(m) for m in msgs]
 
+    def list_course_messages(self, course_id: int) -> list[dict[str, Any]]:
+        """Return all chat/Q&A messages across every lecture in a course."""
+        session_ids = [
+            row[0]
+            for row in self.db.query(ClassSession.id).filter_by(course_id=course_id).all()
+        ]
+        if not session_ids:
+            return []
+        msgs = (
+            self.db.query(ChatMessage)
+            .filter(ChatMessage.session_id.in_(session_ids))
+            .order_by(ChatMessage.is_pinned.desc(), ChatMessage.id.asc())
+            .all()
+        )
+        return [self.serialize_message(m) for m in msgs]
+
     def export_timeline_text(self, session_id: int) -> str:
         """Export chronological timestamped chat & Q&A log for download or LLM lecture summary."""
         session = self.db.get(ClassSession, session_id)

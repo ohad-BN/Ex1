@@ -122,7 +122,6 @@ THEME_TOKENS: tuple[str, ...] = (
 
 TEACHER_TABS: list[tuple[str, str]] = [
     ("tab-overview", "Overview"),
-    ("tab-lectures", "Lectures"),
     ("tab-attendance", "Attendance & QR"),
     ("tab-polls", "Polls"),
     ("tab-chat", "Q&A"),
@@ -1529,9 +1528,41 @@ def run_tier1(
         results.fail(f"Broken teacher tab ordering: {labels}")
 
     html_src = tab_check["html"]
-    for bad in ('id="tab-ai-hub"', "Course Overview &amp; Roster", "Course Overview & Roster", "Reset Device", "/chat/export.txt"):
+    for bad in ('id="tab-ai-hub"', "Course Overview &amp; Roster", "Course Overview & Roster", "Reset Device", "/chat/export.txt", "OOP modularity, automated pytest coverage, error handling."):
         if bad in html_src:
             results.fail(f"Forbidden string/ID found in teacher_portal: {bad}")
+
+    # Verify restructured compact zero-scroll sidebar, removed Lectures item, and enlarged tiles
+    ux_metrics = cdp.eval_js(
+        """(() => {
+            const sb = document.getElementById("teacher-sidebar");
+            const lecItem = sb ? sb.querySelector('[data-tab-target="tab-lectures"]') : null;
+            const myCoursesList = document.getElementById("my-courses-list");
+            const profileBtn = document.getElementById("lecturer-profile-trigger");
+            const closeBtn = document.getElementById("btn-lecturer-close-app");
+            const tile = document.querySelector("#tab-overview .cp-hub-tile");
+            return {
+                sidebarScrollH: sb ? sb.scrollHeight : 0,
+                sidebarClientH: sb ? sb.clientHeight : 0,
+                noRedundantLectures: !lecItem,
+                myCoursesInitiallyCollapsed: Boolean(myCoursesList && myCoursesList.hidden),
+                hasProfilePopover: Boolean(profileBtn && closeBtn),
+                tileHeight: tile ? Math.round(tile.getBoundingClientRect().height) : 0,
+            };
+        })()"""
+    )
+    if ux_metrics["sidebarScrollH"] <= ux_metrics["sidebarClientH"] + 2:
+        results.ok(f"Lecturer sidebar has ZERO vertical scrollbar ({ux_metrics['sidebarScrollH']} <= {ux_metrics['sidebarClientH']})")
+    else:
+        results.fail(f"Lecturer sidebar overflows vertically ({ux_metrics['sidebarScrollH']} > {ux_metrics['sidebarClientH']})")
+    if ux_metrics["noRedundantLectures"] and ux_metrics["myCoursesInitiallyCollapsed"] and ux_metrics["hasProfilePopover"]:
+        results.ok("Sidebar restructured cleanly: no Lectures item, collapsible My Courses, Profile popover + Close App")
+    else:
+        results.fail(f"Sidebar structure assertion failed: {ux_metrics}")
+    if ux_metrics["tileHeight"] >= 190:
+        results.ok(f"Dashboard hub tiles enlarged cleanly (height={ux_metrics['tileHeight']}px on 1440x900)")
+    else:
+        results.fail(f"Dashboard hub tiles too small (height={ux_metrics['tileHeight']}px)")
 
     # Click all 6 teacher tabs
     for tab_id, expected_lbl in TEACHER_TABS:
@@ -1552,15 +1583,19 @@ def run_tier1(
         else:
             results.fail(f"Teacher tab failed to activate: #{tab_id}")
 
-    # Open & close all 4 modals
+    # Open & close all static modals (open profile popover first for modal-account-security)
     static_modals = [
         ("modal-new-course", 'button[onclick*="modal-new-course"]:not([onclick*="closeModal"]), [data-modal-open="modal-new-course"]'),
         ("modal-new-lecture", 'button[onclick*="modal-new-lecture"]:not([onclick*="closeModal"]), [data-modal-open="modal-new-lecture"]'),
+        ("modal-switch-lecture", '#btn-switch-lecture'),
         ("modal-account-security", 'button[onclick*="modal-account-security"]:not([onclick*="closeModal"]), [data-modal-open="modal-account-security"]'),
     ]
     for modal_id, open_sel in static_modals:
         opened = cdp.eval_js(
             f"""(() => {{
+                const trig = document.getElementById("lecturer-profile-trigger");
+                const pop = document.getElementById("lecturer-profile-popover");
+                if ({json.dumps(modal_id)} === "modal-account-security" && trig && pop && pop.hidden) trig.click();
                 const b = document.querySelector({json.dumps(open_sel)});
                 if (!b) return false;
                 b.click();
@@ -1856,10 +1891,13 @@ def run_tier3(
     else:
         results.fail("teacher_login returning lecturer sign-in failed to navigate to /teacher")
 
-    # Course switch CS204 -> CS101 -> CS204
+    # Course switch CS204 -> CS101 -> CS204 (expanding collapsible My Courses accordion first)
     cdp.eval_js(
         f"""(() => {{
-            const link = document.querySelector('aside.cp-sidebar a[href*="course_id={seed.cs101_id}"]:not([href*="session="]), aside.sidebar a[href*="course_id={seed.cs101_id}"]:not([href*="session="]), aside a[href*="course_id={seed.cs101_id}"]:not([href*="session="])');
+            const acc = document.getElementById("btn-my-courses-toggle");
+            const list = document.getElementById("my-courses-list");
+            if (acc && list && list.hidden) acc.click();
+            const link = document.querySelector('#my-courses-list a[href*="course_id={seed.cs101_id}"]');
             if (link) link.click();
         }})()"""
     )
@@ -1871,7 +1909,10 @@ def run_tier3(
 
     cdp.eval_js(
         f"""(() => {{
-            const link = document.querySelector('aside.cp-sidebar a[href*="course_id={seed.cs204_id}"]:not([href*="session="]), aside.sidebar a[href*="course_id={seed.cs204_id}"]:not([href*="session="]), aside a[href*="course_id={seed.cs204_id}"]:not([href*="session="])');
+            const acc = document.getElementById("btn-my-courses-toggle");
+            const list = document.getElementById("my-courses-list");
+            if (acc && list && list.hidden) acc.click();
+            const link = document.querySelector('#my-courses-list a[href*="course_id={seed.cs204_id}"]');
             if (link) link.click();
         }})()"""
     )
@@ -1881,24 +1922,24 @@ def run_tier3(
     else:
         results.fail("Course switch back to CS204 failed")
 
-    # Lecture switch via #tab-lectures ARIEL2 -> /teacher
+    # Lecture switch via Switch Lecture modal ARIEL2 -> /teacher
     cdp.eval_js(
         f"""(() => {{
-            const lecBtn = document.querySelector('[data-tab-target="tab-lectures"]');
-            if (lecBtn) lecBtn.click();
-            const link = document.querySelector('#tab-lectures a[href*="session={seed.ariel2_code}"]');
-            if (link) link.click();
+            document.getElementById("btn-switch-lecture")?.click();
+            const btn = document.querySelector('#modal-switch-lecture [data-switch-session-code="{seed.ariel2_code}"]');
+            if (btn) btn.click();
         }})()"""
     )
     if cdp.wait_for(f"window.location.search.includes('session={seed.ariel2_code}')", timeout=5.0):
         cdp.drain_events(0.5)
-        results.ok("Lecture switch to ARIEL2 succeeded")
+        results.ok("Switch Lecture modal switched to ARIEL2 cleanly")
     else:
-        results.fail("Lecture switch to ARIEL2 failed")
+        results.fail("Switch Lecture modal to ARIEL2 failed")
 
     # Verify lecturer Back button steps back through visited stack cleanly on desktop
     back_lec_ok = cdp.eval_js(
         """(() => {
+            document.querySelector('[data-tab-target="tab-attendance"]').click();
             document.querySelector('[data-tab-target="tab-course-details"]').click();
             const b = document.getElementById("lecturer-back-btn");
             const vis = Boolean(b && !b.hidden && getComputedStyle(b).display !== "none");
@@ -1986,6 +2027,9 @@ def run_tier3(
 
     cdp.eval_js(
         """(() => {
+            const trig = document.getElementById("lecturer-profile-trigger");
+            const pop = document.getElementById("lecturer-profile-popover");
+            if (trig && pop && pop.hidden) trig.click();
             const b = document.querySelector('button[onclick*="modal-account-security"]:not([onclick*="closeModal"]), [data-modal-open="modal-account-security"]');
             if (b) b.click();
         })()"""
@@ -2387,6 +2431,9 @@ def run_tier4(
     # Modal Security
     cdp.eval_js(
         """(() => {
+            const trig = document.getElementById("lecturer-profile-trigger");
+            const pop = document.getElementById("lecturer-profile-popover");
+            if (trig && pop && pop.hidden) trig.click();
             const b = document.querySelector('button[onclick*="modal-account-security"]:not([onclick*="closeModal"]), [data-modal-open="modal-account-security"]');
             if (b) b.click();
         })()"""

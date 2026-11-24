@@ -765,7 +765,9 @@ class CourseService:
             .all()
         )
         enrollment_count = (
-            self.db.query(CourseEnrollment).filter_by(course_id=course.id).count()
+            self.db.query(CourseEnrollment)
+            .filter_by(course_id=course.id, status="approved")
+            .count()
         )
         active_session = next((s for s in sessions if s.attendance_open), None)
         return {
@@ -812,8 +814,32 @@ class CourseService:
         total_sessions = len(sessions)
 
         enrollments = (
-            self.db.query(CourseEnrollment).filter_by(course_id=course.id).all()
+            self.db.query(CourseEnrollment)
+            .filter_by(course_id=course.id, status="approved")
+            .all()
         )
+        pending_enrollments = (
+            self.db.query(CourseEnrollment)
+            .filter_by(course_id=course.id, status="pending")
+            .order_by(CourseEnrollment.enrolled_at.desc(), CourseEnrollment.id.desc())
+            .all()
+        )
+        pending_requests = []
+        for penr in pending_enrollments:
+            st = self.db.get(Student, penr.student_id)
+            if st is None:
+                continue
+            pending_requests.append(
+                {
+                    "student_id": st.id,
+                    "full_name": st.full_name,
+                    "student_id_number": st.student_id_number or "-",
+                    "email": "-" if is_synthetic_student_email(st.email) else st.email,
+                    "requested_at": penr.enrolled_at.strftime("%Y-%m-%d %H:%M UTC")
+                    if penr.enrolled_at
+                    else "",
+                }
+            )
         student_map: dict[int, Student] = {}
         for enr in enrollments:
             st = self.db.get(Student, enr.student_id)
@@ -865,6 +891,7 @@ class CourseService:
 
         summary = self.serialize_course_summary(course)
         summary["students"] = student_rows
+        summary["pending_requests"] = pending_requests
         summary["staff"] = self.list_course_staff(course.id)
         summary["lecture_summaries"] = LectureSummarizerService(self.db).list_course_artifacts(
             course.id
@@ -923,7 +950,11 @@ class CourseService:
             .one_or_none()
         )
         if existing is None:
-            self.db.add(CourseEnrollment(course_id=course.id, student_id=student.id))
+            self.db.add(
+                CourseEnrollment(course_id=course.id, student_id=student.id, status="approved")
+            )
+        elif existing.status != "approved":
+            existing.status = "approved"
 
         # Also add student to RosterEntry for all sessions in this course
         sessions = (
@@ -947,6 +978,146 @@ class CourseService:
             elif student.student_id_number and not r_exist.student_id_number:
                 r_exist.student_id_number = student.student_id_number
 
+        self.db.commit()
+        return course, student
+
+    def _ensure_student_session_roster(self, course_id: int, student: Student) -> None:
+        sessions = self.db.query(ClassSession).filter_by(course_id=course_id).all()
+        for s in sessions:
+            r_exist = (
+                self.db.query(RosterEntry)
+                .filter_by(session_id=s.id, email=student.email)
+                .one_or_none()
+            )
+            if r_exist is None:
+                self.db.add(
+                    RosterEntry(
+                        session_id=s.id,
+                        student_id_number=student.student_id_number,
+                        full_name=student.full_name,
+                        email=student.email,
+                    )
+                )
+            elif student.student_id_number and not r_exist.student_id_number:
+                r_exist.student_id_number = student.student_id_number
+
+    def request_course_enrollment(
+        self, course_id: int, student_id: int
+    ) -> tuple[Course, Student, str]:
+        """Create or refresh a pending course join request for lecturer roster approval."""
+        course = self.db.get(Course, int(course_id))
+        if course is None:
+            raise CourseError("Course not found.", status_code=404)
+        student = self.db.get(Student, int(student_id))
+        if student is None:
+            raise CourseError("Student not found.", status_code=404)
+
+        has_attendance = (
+            self.db.query(AttendanceRecord)
+            .join(ClassSession, AttendanceRecord.session_id == ClassSession.id)
+            .filter(
+                ClassSession.course_id == course.id,
+                AttendanceRecord.student_id == student.id,
+            )
+            .first()
+            is not None
+        )
+        existing = (
+            self.db.query(CourseEnrollment)
+            .filter_by(course_id=course.id, student_id=student.id)
+            .one_or_none()
+        )
+        if has_attendance or (existing is not None and existing.status == "approved"):
+            if existing is None:
+                self.db.add(
+                    CourseEnrollment(course_id=course.id, student_id=student.id, status="approved")
+                )
+                self._ensure_student_session_roster(course.id, student)
+                self.db.commit()
+            return course, student, "approved"
+
+        if existing is None:
+            self.db.add(
+                CourseEnrollment(course_id=course.id, student_id=student.id, status="pending")
+            )
+        else:
+            existing.status = "pending"
+            existing.enrolled_at = datetime.now(timezone.utc)
+        self.db.commit()
+        return course, student, "pending"
+
+    def approve_enrollment_request(
+        self,
+        course_id: int,
+        student_id: int,
+        lecturer_id: int,
+        ip_address: Optional[str] = None,
+    ) -> tuple[Course, Student]:
+        """Approve a student's pending join request and enroll them across course sessions."""
+        course = self.db.get(Course, course_id)
+        if course is None:
+            raise CourseError("Course not found.", status_code=404)
+        student = self.db.get(Student, student_id)
+        if student is None:
+            raise CourseError("Student not found.", status_code=404)
+
+        existing = (
+            self.db.query(CourseEnrollment)
+            .filter_by(course_id=course.id, student_id=student.id)
+            .one_or_none()
+        )
+        if existing is None:
+            self.db.add(
+                CourseEnrollment(course_id=course.id, student_id=student.id, status="approved")
+            )
+        else:
+            existing.status = "approved"
+        self._ensure_student_session_roster(course.id, student)
+        record_audit_event(
+            self.db,
+            actor_type="lecturer",
+            actor_id=lecturer_id,
+            action="course.enrollment_approved",
+            target_type="student",
+            target_id=student.id,
+            detail=f"Approved student_id={student.id} for course_id={course.id}",
+            ip_address=ip_address,
+        )
+        self.db.commit()
+        return course, student
+
+    def reject_enrollment_request(
+        self,
+        course_id: int,
+        student_id: int,
+        lecturer_id: int,
+        ip_address: Optional[str] = None,
+    ) -> tuple[Course, Student]:
+        """Reject a student's pending join request for the specified course."""
+        course = self.db.get(Course, course_id)
+        if course is None:
+            raise CourseError("Course not found.", status_code=404)
+        student = self.db.get(Student, student_id)
+        if student is None:
+            raise CourseError("Student not found.", status_code=404)
+
+        existing = (
+            self.db.query(CourseEnrollment)
+            .filter_by(course_id=course.id, student_id=student.id)
+            .one_or_none()
+        )
+        if existing is not None:
+            existing.status = "rejected"
+        record_audit_event(
+            self.db,
+            actor_type="lecturer",
+            actor_id=lecturer_id,
+            action="course.enrollment_rejected",
+            target_type="student",
+            target_id=student.id,
+            detail=f"Rejected student_id={student.id} for course_id={course.id}",
+            ip_address=ip_address,
+        )
         self.db.commit()
         return course, student
 
@@ -1056,13 +1227,22 @@ class CourseService:
 
         all_courses = self.db.query(Course).order_by(Course.id.asc()).all()
         enrolled_course_ids: set[int] = set()
+        pending_course_ids: set[int] = set()
+        rejected_course_ids: set[int] = set()
         if student is not None:
             enrs = (
                 self.db.query(CourseEnrollment)
                 .filter_by(student_id=student.id)
                 .all()
             )
-            enrolled_course_ids = {e.course_id for e in enrs}
+            for e in enrs:
+                st_flag = (e.status or "approved").lower()
+                if st_flag == "approved":
+                    enrolled_course_ids.add(e.course_id)
+                elif st_flag == "pending":
+                    pending_course_ids.add(e.course_id)
+                elif st_flag == "rejected":
+                    rejected_course_ids.add(e.course_id)
             # Also include courses where the student has any AttendanceRecord
             recs = (
                 self.db.query(AttendanceRecord)
@@ -1182,6 +1362,7 @@ class CourseService:
                     "semester": c.semester,
                     "lecturer_name": c.lecturer_name,
                     "is_enrolled": True,
+                    "enrollment_status": "approved",
                     "attended_count": len(attended_session_ids),
                     "total_sessions": len(sessions),
                     "attendance_pct": (
@@ -1211,6 +1392,11 @@ class CourseService:
                     "semester": c.semester,
                     "lecturer_name": c.lecturer_name,
                     "is_enrolled": False,
+                    "enrollment_status": (
+                        "pending"
+                        if c.id in pending_course_ids
+                        else ("rejected" if c.id in rejected_course_ids else "none")
+                    ),
                     "attended_count": 0,
                     "total_sessions": len(sessions),
                     "attendance_pct": 0.0,

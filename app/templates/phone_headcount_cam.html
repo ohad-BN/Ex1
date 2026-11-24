@@ -245,7 +245,7 @@
           headers: { "X-Headcount-Token": CTOK },
           body: fd,
         },
-        35000
+        45000
       );
       const rawText = await resp.text();
       let data = {};
@@ -297,9 +297,9 @@
 
     try {
       const jpegBlob = await window.ClassPulseImage.compressToJpeg(rawFile, {
-        maxEdge: 1600,
-        quality: 0.82,
-        decodeTimeoutMs: 8000,
+        maxEdge: 1280,
+        quality: 0.80,
+        decodeTimeoutMs: 6000,
       });
       lastNormalizedBlob = jpegBlob;
       await uploadNormalizedBlob(jpegBlob);

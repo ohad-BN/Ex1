@@ -30,10 +30,10 @@ def is_lecturer_authorized_for_course(db: Any, course: Course, lecturer_id: int)
 
 
 def is_student_enrolled_in_course(db: Any, course_id: int, student_id: int) -> bool:
-    """Return True if student has an explicit CourseEnrollment or session AttendanceRecord."""
+    """Return True if student has an approved CourseEnrollment or session AttendanceRecord."""
     if (
         db.query(CourseEnrollment)
-        .filter_by(course_id=course_id, student_id=student_id)
+        .filter_by(course_id=course_id, student_id=student_id, status="approved")
         .first()
         is not None
     ):

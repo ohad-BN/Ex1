@@ -75,11 +75,17 @@
     const cfg = opts || {};
     const maxEdge = Number(cfg.maxEdge || 1280);
     const quality = Number(cfg.quality || 0.80);
-    const decodeTimeoutMs = Number(cfg.decodeTimeoutMs || 8000);
+    const decodeTimeoutMs = Number(cfg.decodeTimeoutMs || 6000);
 
     if (!file) {
       throw new Error("No image file selected.");
     }
+
+    const lowerName = String(file.name || "").toLowerCase();
+    const isStandardDirectImage =
+      !isHeicLike(file) &&
+      (String(file.type || "").startsWith("image/") ||
+        /\.(jpe?g|png|webp|gif)$/i.test(lowerName));
 
     let decoded = null;
     try {
@@ -88,6 +94,9 @@
       try {
         decoded = await decodeViaHtmlImage(file, decodeTimeoutMs);
       } catch (_htmlErr) {
+        if (isStandardDirectImage) {
+          return file;
+        }
         if (isHeicLike(file)) {
           throw new Error(
             "This HEIC/HEIF photo could not be decoded in the browser. Please take a photo directly with the camera or choose a JPEG/PNG image."
@@ -103,6 +112,7 @@
       const width = Number(decoded.width || 0);
       const height = Number(decoded.height || 0);
       if (width <= 0 || height <= 0) {
+        if (isStandardDirectImage) return file;
         throw new Error("Image has zero dimensions.");
       }
 
@@ -116,6 +126,7 @@
       canvas.height = targetH;
       const ctx = canvas.getContext("2d");
       if (!ctx) {
+        if (isStandardDirectImage) return file;
         throw new Error("Canvas 2D context unavailable.");
       }
       ctx.drawImage(decoded.source, 0, 0, targetW, targetH);
@@ -128,6 +139,11 @@
         );
       });
       return blob;
+    } catch (encodeErr) {
+      if (isStandardDirectImage) {
+        return file;
+      }
+      throw encodeErr;
     } finally {
       if (decoded && typeof decoded.cleanup === "function") {
         decoded.cleanup();

@@ -88,6 +88,9 @@ class HeadcountCanvasEditor {
       if (emptyHint) emptyHint.style.display = "none";
       this.drawCanvas();
     };
+    img.onerror = () => {
+      console.error("Failed to load headcount image:", imageUrl);
+    };
     img.src = /^(data:|blob:)/i.test(imageUrl)
       ? imageUrl
       : imageUrl + (imageUrl.includes("?") ? "&" : "?") + "v=" + Date.now();

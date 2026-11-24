@@ -1,5 +1,5 @@
 {% from "macros/icons.html" import cp_icon %}
-<!-- TAB 6: Course Attendance Monitor, Staff/TAs & Roster File Import -->
+<!-- TAB 6: Course Attendance Monitor, Pending Enrollment Requests, Staff & Roster Import -->
 <section id="tab-course-roster" class="cp-tab-pane tab-pane">
   <div class="cp-grid-2">
     <div class="cp-stack-md">
@@ -54,51 +54,85 @@
       </div>
     </div>
 
-    <div class="cp-card">
-      <div class="cp-card-header">
-        <h2>
-          {{ cp_icon('users', 18) }}
-          <span>Course Attendance Monitor &mdash; Enrolled Students</span>
-        </h2>
-        <span class="cp-code-pill code-pill">{{ selected_course.students|length }} Students</span>
+    <div class="cp-stack-md">
+      <div class="cp-card" id="pending-enrollment-requests-card">
+        <div class="cp-card-header">
+          <h2>
+            {{ cp_icon('user-check', 18) }}
+            <span>Pending Enrollment Requests</span>
+          </h2>
+          <span id="pending-requests-count-pill" class="cp-badge {% if selected_course.pending_requests %}cp-badge--amber{% else %}cp-badge--neutral{% endif %} cp-tabular">
+            {{ (selected_course.pending_requests or [])|length }} Pending
+          </span>
+        </div>
+        <div id="pending-enrollment-requests-list" class="cp-stack-xs">
+          {% for req in selected_course.pending_requests or [] %}
+          <div class="cp-log-row" data-pending-student-id="{{ req.student_id }}">
+            <div style="min-width:0; flex:1;">
+              <strong style="color:var(--cp-ink);">{{ req.full_name }}</strong>
+              <div class="cp-muted cp-tabular" style="font-size:12px;">
+                ID {{ req.student_id_number }}
+              </div>
+            </div>
+            <div class="cp-row-wrap" style="gap:6px;">
+              <button type="button" class="cp-btn cp-btn--green cp-btn--sm" onclick="approveEnrollmentRequest({{ req.student_id }}, this)">Approve</button>
+              <button type="button" class="cp-btn cp-btn--danger-soft cp-btn--sm" onclick="rejectEnrollmentRequest({{ req.student_id }}, this)">Reject</button>
+            </div>
+          </div>
+          {% else %}
+          <div class="cp-well cp-muted" style="font-size:13px; text-align:center;">
+            No pending enrollment requests for this course.
+          </div>
+          {% endfor %}
+        </div>
       </div>
-      <div class="cp-table-scroll" style="max-height:420px; overflow-y:auto;">
-        <table class="cp-table">
-          <thead>
-            <tr>
-              <th>Student Name</th>
-              <th>Student ID</th>
-              <th>Email</th>
-              <th>Lectures Attended</th>
-              <th>Course Attendance %</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody id="course-students-tbody">
-            {% for st in selected_course.students %}
-            <tr>
-              <td><strong>{{ st.full_name }}</strong></td>
-              <td><code>{{ st.student_id_number or '-' }}</code></td>
-              <td>{{ st.email }}</td>
-              <td class="cp-tabular">{{ st.attended_sessions }} / {{ st.total_sessions }}</td>
-              <td>
-                <span class="cp-badge badge cp-tabular {% if st.attendance_rate_pct >= 75 %}VERIFIED{% elif st.attendance_rate_pct >= 50 %}UNDER_SCANNED{% else %}ABSENT{% endif %}">
-                  {{ st.attendance_rate_pct }}%
-                </span>
-              </td>
-              <td>
-                <button type="button" class="cp-btn cp-btn--danger-soft cp-btn--sm" onclick='removeStudentFromCourse({{ st.student_id }}, {{ st.full_name | tojson }})'>Remove Student</button>
-              </td>
-            </tr>
-            {% else %}
-            <tr>
-              <td colspan="6" class="cp-muted" style="text-align:center;">
-                No students enrolled yet. Import a CSV/Excel file or have students scan the lecture QR!
-              </td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
+
+      <div class="cp-card">
+        <div class="cp-card-header">
+          <h2>
+            {{ cp_icon('users', 18) }}
+            <span>Course Attendance Monitor &mdash; Enrolled Students</span>
+          </h2>
+          <span id="enrolled-students-count-pill" class="cp-code-pill code-pill">{{ selected_course.students|length }} Students</span>
+        </div>
+        <div class="cp-table-scroll" style="max-height:420px; overflow-y:auto;">
+          <table class="cp-table">
+            <thead>
+              <tr>
+                <th>Student Name</th>
+                <th>Student ID</th>
+                <th>Email</th>
+                <th>Lectures Attended</th>
+                <th>Course Attendance %</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="course-students-tbody">
+              {% for st in selected_course.students %}
+              <tr>
+                <td><strong>{{ st.full_name }}</strong></td>
+                <td><code>{{ st.student_id_number or '-' }}</code></td>
+                <td>{{ st.email }}</td>
+                <td class="cp-tabular">{{ st.attended_sessions }} / {{ st.total_sessions }}</td>
+                <td>
+                  <span class="cp-badge badge cp-tabular {% if st.attendance_rate_pct >= 75 %}VERIFIED{% elif st.attendance_rate_pct >= 50 %}UNDER_SCANNED{% else %}ABSENT{% endif %}">
+                    {{ st.attendance_rate_pct }}%
+                  </span>
+                </td>
+                <td>
+                  <button type="button" class="cp-btn cp-btn--danger-soft cp-btn--sm" onclick='removeStudentFromCourse({{ st.student_id }}, {{ st.full_name | tojson }})'>Remove Student</button>
+                </td>
+              </tr>
+              {% else %}
+              <tr>
+                <td colspan="6" class="cp-muted" style="text-align:center;">
+                  No students enrolled yet. Import a CSV/Excel file, approve join requests, or have students scan the lecture QR!
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   </div>

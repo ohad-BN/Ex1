@@ -300,3 +300,149 @@ def test_real_scrfd_closeup_single_face_detection() -> None:
     closeup = img[y1:y2, x1:x2]
     closeup_boxes = detector.detect(closeup)
     assert len(closeup_boxes) >= 1
+
+
+def test_enrollment_request_lecturer_roster_approval_and_rejection(overhaul_app) -> None:
+    """Student Request to Join creates pending enrollment; lecturer Roster Approve unlocks access, Reject blocks."""
+    prof = overhaul_app.test_client()
+    stu_a = overhaul_app.test_client()
+    stu_b = overhaul_app.test_client()
+
+    _reg_lecturer(prof, "Prof. Roster Gate", "roster.gate@ariel.ac.il")
+    course = prof.post(
+        "/api/courses",
+        json={"course_code": "RST301", "name": "Distributed Systems", "initial_lecture_title": "Lecture 1"},
+    ).get_json()
+    cid = course["id"]
+    prof.post(f"/api/courses/{cid}/assignments", json={"title": "Consensus Lab", "rubric_text": ""})
+
+    assert stu_a.post("/api/student/login", json={"full_name": "Approved Stu", "student_id_number": "311222333"}).status_code == 200
+    assert stu_b.post("/api/student/login", json={"full_name": "Rejected Stu", "student_id_number": "344555666"}).status_code == 200
+
+    # 1. Both students request to join
+    req_a = stu_a.post("/api/student/enroll-request", json={"course_id": cid})
+    req_b = stu_b.post("/api/student/enroll-request", json={"course_id": cid})
+    assert req_a.status_code == 202 and req_a.get_json()["status"] == "pending"
+    assert req_b.status_code == 202 and req_b.get_json()["status"] == "pending"
+
+    # Pending requests show up in Lecturer Roster API, while students remain blocked (403) until approved
+    pending = prof.get(f"/api/courses/{cid}/enrollment-requests").get_json()["pending_requests"]
+    assert len(pending) == 2
+    assert stu_a.get(f"/api/courses/{cid}/assignments").status_code == 403
+    assert stu_b.get(f"/api/courses/{cid}/assignments").status_code == 403
+
+    stu_a_id = stu_a.get("/api/student/me").get_json()["student"]["id"]
+    stu_b_id = stu_b.get("/api/student/me").get_json()["student"]["id"]
+
+    # 2. Lecturer approves Stu A -> immediate 200 course access + appears in enrolled list
+    app_res = prof.post(f"/api/courses/{cid}/enrollment-requests/{stu_a_id}/approve")
+    assert app_res.status_code == 200
+    assert app_res.get_json()["status"] == "approved"
+    assert stu_a.get(f"/api/courses/{cid}/assignments").status_code == 200
+    dash_a = stu_a.get("/api/student/me").get_json()
+    assert len(dash_a["my_courses"]) == 1 and dash_a["my_courses"][0]["id"] == cid
+
+    # 3. Lecturer rejects Stu B -> still 403 and catalog shows rejected
+    rej_res = prof.post(f"/api/courses/{cid}/enrollment-requests/{stu_b_id}/reject")
+    assert rej_res.status_code == 200
+    assert rej_res.get_json()["status"] == "rejected"
+    assert stu_b.get(f"/api/courses/{cid}/assignments").status_code == 403
+    dash_b = stu_b.get("/api/student/me").get_json()
+    cat_b = next(c for c in dash_b["all_courses"] if c["id"] == cid)
+    assert cat_b["enrollment_status"] == "rejected"
+
+
+def test_cross_lecture_chat_switch_lecture_and_blank_rubric(overhaul_app) -> None:
+    """Course-wide Q&A endpoint, Switch Lecture query param, and clean blank rubric assignment creation work."""
+    prof_a = overhaul_app.test_client()
+    prof_b = overhaul_app.test_client()
+    stu = overhaul_app.test_client()
+
+    _reg_lecturer(prof_a, "Prof. Switch", "switch.prof@ariel.ac.il")
+    _reg_lecturer(prof_b, "Prof. Outsider", "outsider.prof@ariel.ac.il")
+
+    course = prof_a.post(
+        "/api/courses",
+        json={"course_code": "SW101", "name": "Switch Lecture Course", "initial_lecture_title": "Lecture 1"},
+    ).get_json()
+    cid = course["id"]
+    sess1 = course["sessions"][0]
+    sess2 = prof_a.post(f"/api/courses/{cid}/sessions", json={"title": "Lecture 2 — Switching"}).get_json()
+
+    # Blank rubric assignment succeeds without injecting legacy OOP modularity text
+    asgn = prof_a.post(
+        f"/api/courses/{cid}/assignments",
+        json={"title": "Clean Lab 1", "rubric_text": ""},
+    )
+    assert asgn.status_code == 201
+    assert "OOP modularity" not in (asgn.get_json().get("rubric_text") or "")
+
+    # Student posts note in Lecture 1 while lecturer views Lecture 2 -> GET /api/courses/<id>/chat surfaces it
+    assert stu.post("/api/student/login", json={"full_name": "Chat Stu", "student_id_number": "377888999"}).status_code == 200
+    assert stu.post("/api/student/enroll", json={"course_id": cid}).status_code == 200
+    assert stu.post(f"/api/sessions/{sess1['id']}/chat", json={"category": "Question", "body": "Cross-lecture question visible!"}).status_code == 201
+
+    course_msgs = prof_a.get(f"/api/courses/{cid}/chat")
+    assert course_msgs.status_code == 200
+    bodies = [m["body"] for m in course_msgs.get_json()["messages"]]
+    assert "Cross-lecture question visible!" in bodies
+    assert prof_b.get(f"/api/courses/{cid}/chat").status_code == 403
+
+    # /teacher?course_id=...&session_id=... and ?session=... both switch active lecture cleanly
+    html_by_code = prof_a.get(f"/teacher?course_id={cid}&session={sess1['session_code']}").get_data(as_text=True)
+    assert f'SESSION_CODE = "{sess1["session_code"]}"' in html_by_code
+    html_by_id = prof_a.get(f"/teacher?course_id={cid}&session_id={sess2['id']}").get_data(as_text=True)
+    assert f'SESSION_CODE = "{sess2["session_code"]}"' in html_by_id
+
+
+def test_phone_headcount_png_csrf_and_real_count(tmp_path: Path) -> None:
+    """Phone camera PNG upload with CSRF header & valid ctok normalizes to JPEG and runs real SCRFD."""
+    sample_path = Path("data/samples/classroom_ariel.jpg")
+    if not sample_path.exists():
+        pytest.skip("Sample photo not present")
+
+    db_file = tmp_path / "csrf_cam.db"
+    cfg = Config(
+        SECRET_KEY="phone-cam-csrf-real-scrfd-secret",
+        DATABASE_URL=f"sqlite:///{db_file.as_posix()}",
+        UPLOAD_DIR=tmp_path / "uploads",
+        GEMINI_API_KEY="",
+        ENABLE_CSRF=True,
+    )
+    app = create_app(cfg)
+    app.config["TESTING"] = True
+    app.config["TEST_ENFORCE_CSRF"] = True
+    try:
+        prof = app.test_client()
+        phone = app.test_client()
+        _reg_lecturer(prof, "Prof. Cam", "cam.prof@ariel.ac.il")
+        course = prof.post(
+            "/api/courses",
+            json={"course_code": "CAM101", "name": "Camera Course", "initial_lecture_title": "Lecture 1"},
+        ).get_json()
+        sid = course["sessions"][0]["id"]
+        scode = course["sessions"][0]["session_code"]
+
+        pair_res = prof.post(f"/api/sessions/{sid}/headcount-cam/pair", json={}).get_json()
+        ctok = pair_res["url"].split("ctok=")[1]
+
+        # Seed a browser CSRF cookie on phone and send X-CSRF-Token as csrf.js does
+        assert phone.get(f"/headcount-cam/{scode}?ctok={ctok}").status_code == 200
+        csrf_cookie = phone.get_cookie("cp_csrf")
+        assert csrf_cookie is not None
+        img = cv2.imread(str(sample_path))
+        ok, png_buf = cv2.imencode(".png", img)
+        assert ok
+
+        up = phone.post(
+            f"/api/headcount-cam/{scode}",
+            headers={"X-Headcount-Token": ctok, "X-CSRF-Token": csrf_cookie.value},
+            data={"photo": (io.BytesIO(png_buf.tobytes()), "classroom.png"), "ctok": ctok},
+            content_type="multipart/form-data",
+        )
+        assert up.status_code == 200, up.get_data(as_text=True)
+        payload = up.get_json()
+        assert payload["auto_count"] >= 5
+    finally:
+        app.extensions["task_manager"].shutdown(wait=True)
+        app.extensions["db_engine"].dispose()

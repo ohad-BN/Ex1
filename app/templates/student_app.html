@@ -50,36 +50,67 @@
   <!-- Mobile Slide-Over Backdrop -->
   <div id="student-drawer-backdrop" class="cp-m-backdrop" onclick="closeStudentDrawer()" aria-hidden="true"></div>
 
-  <!-- Responsive Sidebar (Persistent on Desktop, Slide-Over Drawer on <=900px) -->
+  <!-- Responsive Sidebar (Compact Zero-Scroll + Clickable Profile Popover) -->
   <aside id="student-nav-drawer" class="cp-m-drawer" aria-label="Student navigation sidebar" aria-hidden="true">
-    <div class="cp-m-drawer-header">
-      <div class="cp-brand-lockup" style="gap:9px;">
-        <span class="cp-orb cp-orb--xs" aria-hidden="true"></span>
-        <strong style="font-size:16px; color:var(--cp-ink); letter-spacing:-0.01em;">ClassPulse</strong>
+    <div style="padding-bottom:10px; border-bottom:1px solid var(--cp-border);">
+      <div class="cp-m-drawer-header">
+        <div class="cp-brand-lockup" style="gap:9px;">
+          <span class="cp-orb cp-orb--xs" aria-hidden="true"></span>
+          <strong style="font-size:16px; color:var(--cp-ink); letter-spacing:-0.01em;">ClassPulse</strong>
+        </div>
+        <button type="button" class="cp-m-drawer-close" onclick="closeStudentDrawer()" aria-label="Close navigation menu">
+          {{ cp_icon('x', 18) }}
+        </button>
       </div>
-      <button type="button" class="cp-m-drawer-close" onclick="closeStudentDrawer()" aria-label="Close navigation menu">
-        {{ cp_icon('x', 18) }}
-      </button>
-    </div>
 
-    <div class="cp-m-identity-box">
-      <div class="cp-eyebrow">Student Profile</div>
-      <div id="student-identity-line" style="font-size:15px; font-weight:800; color:var(--cp-ink); overflow-wrap:anywhere;">
-        {% if dashboard.authenticated %}
-          {{ dashboard.student.full_name }}
-        {% else %}
-          Guest Student
-        {% endif %}
+      <div class="cp-profile-wrap">
+        <button type="button"
+                id="student-profile-trigger"
+                class="cp-profile-trigger"
+                aria-expanded="false"
+                aria-haspopup="menu"
+                aria-controls="student-profile-popover"
+                onclick="toggleStudentProfilePopover(event)">
+          <span id="student-identity-line" style="min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+            {% if dashboard.authenticated %}
+              {{ dashboard.student.full_name }}
+            {% else %}
+              Guest Student
+            {% endif %}
+          </span>
+          <span aria-hidden="true" style="font-size:11px; color:var(--cp-ink-muted);">&#9662;</span>
+        </button>
+
+        <div id="student-profile-popover" class="cp-profile-popover" role="menu" hidden>
+          <div style="padding:4px 6px 6px 6px; border-bottom:1px solid var(--cp-border);">
+            <div style="font-size:13px; font-weight:800; color:var(--cp-ink); overflow-wrap:anywhere;">
+              {% if dashboard.authenticated %}{{ dashboard.student.full_name }}{% else %}Guest Student{% endif %}
+            </div>
+            {% if dashboard.authenticated and dashboard.student.student_id_number %}
+            <div class="cp-muted cp-tabular" style="font-size:11.5px;">ID {{ dashboard.student.student_id_number }}</div>
+            {% endif %}
+          </div>
+          {% if dashboard.authenticated %}
+          <button type="button" id="btn-student-logout" class="cp-btn cp-btn--secondary cp-btn--sm cp-popover-action" onclick="signOutStudent()">
+            {{ cp_icon('log-out', 14) }}
+            <span>Sign Out</span>
+          </button>
+          {% else %}
+          <button type="button" class="cp-btn cp-btn--primary cp-btn--sm cp-popover-action" onclick="closeStudentPopovers(); closeStudentDrawer(); focusStudentSignIn();">
+            {{ cp_icon('user-check', 14) }}
+            <span>Sign In</span>
+          </button>
+          {% endif %}
+          <a class="cp-btn cp-btn--white cp-btn--sm cp-popover-action" href="/teacher">
+            {{ cp_icon('external-link', 14) }}
+            <span>Lecturer Portal</span>
+          </a>
+          <button type="button" id="btn-student-close-app" class="cp-btn cp-btn--danger-soft cp-btn--sm cp-popover-action" onclick="closeStudentAppSession()">
+            {{ cp_icon('x', 14) }}
+            <span>Close App</span>
+          </button>
+        </div>
       </div>
-      {% if dashboard.authenticated %}
-      <div class="cp-muted cp-tabular" style="font-size:13px; overflow-wrap:anywhere;">
-        {% if dashboard.student.student_id_number %}ID {{ dashboard.student.student_id_number }}{% endif %}{% if dashboard.student.email %} &bull; {{ dashboard.student.email }}{% endif %}
-      </div>
-      {% else %}
-      <button type="button" class="cp-btn cp-btn--primary cp-btn--sm" style="margin-top:8px;" onclick="closeStudentDrawer(); focusStudentSignIn();">
-        <span>Sign In</span>
-      </button>
-      {% endif %}
     </div>
 
     <div>
@@ -101,19 +132,6 @@
           <span id="summaries-new-dot" class="cp-notif-dot" hidden></span>
         </button>
       </nav>
-    </div>
-
-    <div class="cp-m-drawer-footer">
-      {% if dashboard.authenticated %}
-      <button type="button" id="btn-student-logout" class="cp-btn cp-btn--secondary cp-btn--sm" style="justify-content:space-between;" onclick="signOutStudent()">
-        <span>Sign Out</span>
-        {{ cp_icon('log-out', 15) }}
-      </button>
-      {% endif %}
-      <a class="cp-btn cp-btn--white cp-btn--sm" style="justify-content:space-between;" href="/teacher">
-        <span>Lecturer Portal</span>
-        {{ cp_icon('external-link', 14) }}
-      </a>
     </div>
   </aside>
 
@@ -507,6 +525,7 @@
       if (titleEl) titleEl.textContent = lTitle;
       if (subEl) subEl.textContent = course ? course.name : (ACTIVE_SESSION ? ACTIVE_SESSION.course_name : "Lecture");
       renderLectureContextBanner();
+      fetchLatestSessionChat();
       if (window.ClassPulseNotify && ACTIVE_SESSION) {
         window.ClassPulseNotify.clearUnreadWhere(
           (it) =>
@@ -522,6 +541,7 @@
     const same =
       cur.screen === nextState.screen &&
       Number(cur.courseId || 0) === Number(nextState.courseId || 0) &&
+      String(cur.scope || "") === String(nextState.scope || "") &&
       Number(cur.assignmentId || 0) === Number(nextState.assignmentId || 0) &&
       String(cur.sessionCode || "") === String(nextState.sessionCode || "");
 
@@ -597,10 +617,72 @@
       navigateStudent({ screen: "courses" });
       return;
     }
+    const cur = currentScreenState();
+    const inCourseScope = cur.screen !== "courses" && cur.courseId;
+    if (inCourseScope) {
+      navigateStudent({ screen: targetScreen, courseId: cur.courseId, scope: "course" });
+      return;
+    }
     const pool = getStudentCoursesPool();
-    const firstCourseId = CURRENT_COURSE_ID || (ACTIVE_SESSION && ACTIVE_SESSION.course_id) || (pool[0] && pool[0].id) || null;
+    const firstCourseId = (pool[0] && pool[0].id) || null;
     STUDENT_STACK.splice(0, STUDENT_STACK.length, { screen: "courses" });
     navigateStudent({ screen: targetScreen, courseId: firstCourseId, scope: "global" });
+  }
+
+  function closeStudentPopovers() {
+    const pop = document.getElementById("student-profile-popover");
+    const trig = document.getElementById("student-profile-trigger");
+    if (pop) pop.hidden = true;
+    if (trig) trig.setAttribute("aria-expanded", "false");
+  }
+
+  function toggleStudentProfilePopover(evt) {
+    if (evt) evt.stopPropagation();
+    const pop = document.getElementById("student-profile-popover");
+    const trig = document.getElementById("student-profile-trigger");
+    if (!pop) return;
+    const willShow = Boolean(pop.hidden);
+    pop.hidden = !willShow;
+    if (trig) trig.setAttribute("aria-expanded", willShow ? "true" : "false");
+  }
+
+  document.addEventListener("click", (evt) => {
+    const pop = document.getElementById("student-profile-popover");
+    const trig = document.getElementById("student-profile-trigger");
+    if (pop && !pop.hidden && !pop.contains(evt.target) && (!trig || !trig.contains(evt.target))) {
+      closeStudentPopovers();
+    }
+  });
+
+  async function closeStudentAppSession() {
+    closeStudentPopovers();
+    try {
+      await fetch("/api/student/logout", { method: "POST" });
+    } catch (_err) {}
+    try {
+      if (typeof socket !== "undefined" && socket && typeof socket.disconnect === "function") {
+        socket.disconnect();
+      }
+    } catch (_err) {}
+    try { window.close(); } catch (_err) {}
+    if (!document.getElementById("cp-app-closed-overlay")) {
+      const ov = document.createElement("div");
+      ov.id = "cp-app-closed-overlay";
+      ov.className = "cp-closed-screen";
+      ov.innerHTML = `
+        <div class="cp-card" style="max-width:440px; width:100%; text-align:center;">
+          <div style="display:inline-flex; align-items:center; justify-content:center; margin-bottom:12px;">
+            <span class="cp-orb cp-orb--md" aria-hidden="true"></span>
+          </div>
+          <h2 style="margin:0 0 8px 0; font-size:21px; font-weight:800; color:var(--cp-ink);">ClassPulse Session Closed</h2>
+          <p class="cp-secondary" style="margin:0 0 18px 0; font-size:14px;">
+            You have signed out cleanly. You may close this browser window or reopen the portal below.
+          </p>
+          <a class="cp-btn cp-btn--primary cp-btn--block" href="/portal">Reopen ClassPulse</a>
+        </div>
+      `;
+      document.body.appendChild(ov);
+    }
   }
 
   function openStudentDrawer() {
@@ -643,7 +725,10 @@
   }
 
   document.addEventListener("keydown", (evt) => {
-    if (evt.key === "Escape") closeStudentDrawer();
+    if (evt.key === "Escape") {
+      closeStudentDrawer();
+      closeStudentPopovers();
+    }
   });
 
   if (window.ClassPulseNotify) {
@@ -654,13 +739,22 @@
       isChatVisibleFn: (payload) =>
         currentScreenState().screen === "lecture" &&
         (!payload || !ACTIVE_SESSION || payload.session_code === ACTIVE_SESSION.session_code),
+      onVisibleClear: () => {
+        if (ACTIVE_SESSION) {
+          window.ClassPulseNotify.clearUnreadWhere(
+            (it) =>
+              (it.kind === "qa" || it.kind === "poll") &&
+              (!it.sessionCode || it.sessionCode === ACTIVE_SESSION.session_code)
+          );
+        }
+      },
       onUnreadChange: renderStudentNotificationDots,
       onOpenMessage: (payload) => {
         const msgId = payload.message_id || payload.id;
-        const allCourses = STATE.all_courses || [];
+        const pools = [...(STATE.my_courses || []), ...(STATE.all_courses || [])];
         let matchedCourse = null;
         let matchedSession = null;
-        for (const c of allCourses) {
+        for (const c of pools) {
           for (const s of (c.sessions || [])) {
             if (s.session_code === payload.session_code) {
               matchedCourse = c;
@@ -746,22 +840,22 @@
     }
   }
 
-  async function enrollInCourseById(courseId, btnEl) {
+  async function requestCourseEnrollment(courseId, btnEl) {
     if (!STATE.authenticated) {
       focusStudentSignIn();
       const errEl = document.getElementById("student-login-error");
       if (errEl) {
-        errEl.textContent = "Sign in with your Full Name and ID Number first to enroll in a course.";
+        errEl.textContent = "Sign in with your Full Name and ID Number first to request joining a course.";
         errEl.style.display = "block";
       }
       return;
     }
     if (btnEl) {
       btnEl.disabled = true;
-      btnEl.textContent = "Enrolling...";
+      btnEl.textContent = "Requesting...";
     }
     try {
-      const res = await fetch("/api/student/enroll", {
+      const res = await fetch("/api/student/enroll-request", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ course_id: courseId }),
@@ -770,9 +864,9 @@
       if (!res.ok) {
         if (btnEl) {
           btnEl.disabled = false;
-          btnEl.textContent = "Enroll";
+          btnEl.textContent = "Request to Join";
         }
-        return alert(data.error || "Could not enroll in course.");
+        return alert(data.error || "Could not send enrollment request.");
       }
       if (data.dashboard) {
         STATE = data.dashboard;
@@ -783,10 +877,14 @@
     } catch (_err) {
       if (btnEl) {
         btnEl.disabled = false;
-        btnEl.textContent = "Enroll";
+        btnEl.textContent = "Request to Join";
       }
-      alert("Network error while enrolling.");
+      alert("Network error while sending enrollment request.");
     }
+  }
+
+  async function enrollInCourseById(courseId, btnEl) {
+    return requestCourseEnrollment(courseId, btnEl);
   }
 
   function focusStudentSignIn() {
@@ -914,20 +1012,29 @@
         availEl.innerHTML = `
           <div class="cp-eyebrow" style="margin-bottom:10px;">Available School Courses</div>
           <div class="cp-course-grid">
-            ${availableCourses.map(c => `
-              <div class="cp-hub-tile" style="cursor:default;">
+            ${availableCourses.map(c => {
+              const stFlag = String(c.enrollment_status || "none").toLowerCase();
+              let actionHtml = `<button type="button" class="cp-btn cp-btn--green cp-btn--sm" onclick="requestCourseEnrollment(${Number(c.id)}, this)">Request to Join</button>`;
+              if (stFlag === "pending") {
+                actionHtml = `<span class="cp-badge cp-badge--amber">Pending Approval</span>`;
+              } else if (stFlag === "rejected") {
+                actionHtml = `<button type="button" class="cp-btn cp-btn--secondary cp-btn--sm" onclick="requestCourseEnrollment(${Number(c.id)}, this)">Request Again</button>`;
+              }
+              return `
+              <div class="cp-hub-tile" data-avail-course-id="${Number(c.id)}" style="cursor:default;">
                 <div class="cp-tile-head">
                   <span class="cp-tile-icon cp-tile-icon--indigo">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
                   </span>
-                  <button type="button" class="cp-btn cp-btn--green cp-btn--sm" onclick="enrollInCourseById(${Number(c.id)}, this)">Enroll</button>
+                  ${actionHtml}
                 </div>
                 <div>
                   <div class="cp-tile-title">${escapeHtml(c.name)}</div>
-                  <div class="cp-tile-sub" style="margin-top:4px;">${escapeHtml(c.lecturer_name)}</div>
+                  <div class="cp-tile-sub" style="margin-top:4px;">${escapeHtml(c.lecturer_name)}${stFlag === "rejected" ? " &bull; Request declined" : ""}</div>
                 </div>
               </div>
-            `).join("")}
+              `;
+            }).join("")}
           </div>
         `;
       }
@@ -1189,16 +1296,19 @@
     if (isGlobal) {
       for (const c of getStudentCoursesPool()) {
         for (const a of getCourseAssignments(c.id)) {
+          if (a.course_id != null && Number(a.course_id) !== Number(c.id)) continue;
           items.push({ ...a, course_id: c.id, course_name: a.course_name || c.name });
         }
       }
     } else {
       const c = findFullCourseById(courseId);
-      items = getCourseAssignments(courseId).map(a => ({
-        ...a,
-        course_id: courseId,
-        course_name: a.course_name || (c ? c.name : ""),
-      }));
+      items = getCourseAssignments(courseId)
+        .filter(a => a.course_id == null || Number(a.course_id) === Number(courseId))
+        .map(a => ({
+          ...a,
+          course_id: courseId,
+          course_name: a.course_name || (c ? c.name : ""),
+        }));
     }
 
     if (!items.length) {
@@ -1210,6 +1320,7 @@
       return;
     }
 
+    const legacyBoilerplate = "OOP modularity, automated pytest coverage, error handling.";
     el.innerHTML = `<div class="cp-course-grid">` + items.map(a => {
       const sub = a.my_submission;
       const myScore = sub
@@ -1220,6 +1331,8 @@
         : `<span class="cp-badge cp-badge--indigo">Ready to Upload</span>`;
       const assignNum = a.assignment_number || 1;
       const hasDot = unread.hasUnreadItem("assignment", a.id);
+      const rawRubric = String(a.rubric_text || "").trim();
+      const cleanSub = (rawRubric && rawRubric !== legacyBoilerplate) ? rawRubric.slice(0, 88) : "Upload file or submit solution";
       return `
         <button type="button"
                 class="cp-hub-tile"
@@ -1238,7 +1351,7 @@
             ${isGlobal ? `<div class="cp-badge cp-badge--neutral" style="margin-bottom:6px; max-width:100%; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(a.course_name)}</div>` : ""}
             <div class="cp-eyebrow" style="color:var(--cp-coral-ink); margin-bottom:2px;">Assignment ${Number(assignNum)}</div>
             <div class="cp-tile-title">${escapeHtml(a.title)}</div>
-            <div class="cp-tile-sub" style="margin-top:4px;">${escapeHtml((a.rubric_text || "Upload file or submit code").slice(0, 88))}</div>
+            <div class="cp-tile-sub" style="margin-top:4px;">${escapeHtml(cleanSub)}</div>
           </div>
         </button>
       `;
@@ -1382,6 +1495,9 @@
     const isSubmitting = SUBMITTING_ASSIGNMENTS.has(a.id);
     const selectedFile = SELECTED_HW_FILES[a.id] || null;
 
+    const rawDetailRubric = String(a.rubric_text || "").trim();
+    const displayRubric = (rawDetailRubric && rawDetailRubric !== "OOP modularity, automated pytest coverage, error handling.") ? rawDetailRubric : "";
+
     container.innerHTML = `
       <div class="cp-card">
         <div class="cp-row-between" style="margin-bottom:8px;">
@@ -1390,7 +1506,7 @@
             ? `<span class="cp-badge cp-badge--green cp-tabular">Score: ${escapeHtml(myScore)}/100</span>`
             : `<span class="cp-badge cp-badge--indigo">Open for Submission</span>`}
         </div>
-        <p class="cp-secondary" style="font-size:14.5px; margin:0 0 14px 0; line-height:1.5;">${escapeHtml(a.rubric_text)}</p>
+        ${displayRubric ? `<p class="cp-secondary" style="font-size:14.5px; margin:0 0 14px 0; line-height:1.5;">${escapeHtml(displayRubric)}</p>` : ""}
 
         ${!STATE.student ? `
           <div class="cp-alert cp-alert--warn cp-row-between" style="margin-bottom:14px;">
@@ -1512,7 +1628,9 @@
       const hwRes = await fetch(`/api/courses/${courseId}/assignments${stQuery}`, { cache: "no-store" });
       if (!hwRes.ok) return;
       const hwData = await hwRes.json();
-      const assignments = hwData.assignments || [];
+      const assignments = (hwData.assignments || []).filter(
+        a => a.course_id == null || Number(a.course_id) === Number(courseId)
+      );
       ASSIGNMENTS_BY_COURSE[courseId] = assignments;
 
       const isFirstLoad = HW_INITIALIZED_COURSE_ID !== courseId;
@@ -2199,7 +2317,10 @@
   });
 
   socket.on("chat:init", (d) => {
-    CHAT_MESSAGES = d.messages || [];
+    const incoming = d.messages || [];
+    const byId = new Map(CHAT_MESSAGES.map(x => [x.id, x]));
+    incoming.forEach(m => byId.set(m.id, m));
+    CHAT_MESSAGES = Array.from(byId.values());
     renderStudentChat();
   });
   socket.on("chat:new", (m) => {
@@ -2208,7 +2329,24 @@
     renderStudentChat();
   });
   socket.on("chat:notify", (payload) => {
+    if (payload && ACTIVE_SESSION && payload.session_code === ACTIVE_SESSION.session_code) {
+      if (!CHAT_MESSAGES.find(x => x.id === payload.id)) {
+        CHAT_MESSAGES.push(payload);
+        renderStudentChat();
+      }
+    }
     if (window.ClassPulseNotify) window.ClassPulseNotify.pushChatNotification(payload);
+  });
+  socket.on("enrollment:updated", async (payload) => {
+    if (!STATE.student || (payload && Number(payload.student_id) !== Number(STATE.student.id))) return;
+    try {
+      const res = await fetch(`/api/student/me?_ts=${Date.now()}`, { cache: "no-store" });
+      if (res.ok) {
+        STATE = await res.json();
+        renderCourses();
+        socket.emit("join_notifications", {});
+      }
+    } catch (_err) {}
   });
   socket.on("chat:updated", (m) => {
     const idx = CHAT_MESSAGES.findIndex(x => x.id === m.id);
@@ -2327,12 +2465,14 @@
 
   let hwPollCounter = 0;
   setInterval(() => {
-    if (currentScreenState().screen === "lecture") {
+    const curState = currentScreenState();
+    if (curState.screen === "lecture") {
       fetchLatestSessionPolls();
+      fetchLatestSessionChat();
     }
     hwPollCounter += 1;
-    const cid = CURRENT_COURSE_ID || (ACTIVE_SESSION && ACTIVE_SESSION.course_id);
-    if (cid && (PENDING_REVIEWS.size > 0 || (hwPollCounter % 4 === 0 && (currentScreenState().screen === "course-assignments" || currentScreenState().screen === "assignment-detail")))) {
+    const cid = curState.courseId || CURRENT_COURSE_ID || (ACTIVE_SESSION && ACTIVE_SESSION.course_id);
+    if (cid && (PENDING_REVIEWS.size > 0 || (hwPollCounter % 4 === 0 && (curState.screen === "course-assignments" || curState.screen === "assignment-detail")))) {
       loadAssignmentsForCourse(cid);
     }
   }, 2500);

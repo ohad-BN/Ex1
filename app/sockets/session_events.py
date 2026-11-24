@@ -35,7 +35,7 @@ def _subscribe_user_notification_rooms() -> None:
     )
     if parsed_student is not None:
         sid = parsed_student[1]
-        enrs = db.query(CourseEnrollment).filter_by(student_id=sid).all()
+        enrs = db.query(CourseEnrollment).filter_by(student_id=sid, status="approved").all()
         for enr in enrs:
             join_room(f"course_notify_{enr.course_id}")
 
@@ -97,7 +97,7 @@ def _is_socket_authorized_for_session(
     if cookie_student_id is not None:
         enrolled = (
             db.query(CourseEnrollment)
-            .filter_by(course_id=course.id, student_id=cookie_student_id)
+            .filter_by(course_id=course.id, student_id=cookie_student_id, status="approved")
             .first()
         )
         checked = (
