@@ -135,7 +135,7 @@
                 aria-controls="lecturer-profile-popover"
                 onclick="toggleProfilePopover('lecturer-profile-popover', 'lecturer-profile-trigger', event)">
           <span style="min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
-            {{ lecturer.full_name if lecturer else selected_course.lecturer_name }}
+            <span id="lecturer-greeting-prefix"></span>{{ lecturer.full_name if lecturer else selected_course.lecturer_name }}
           </span>
           <span aria-hidden="true" style="font-size:11px; color:var(--cp-ink-muted);">&#9662;</span>
         </button>
@@ -198,6 +198,7 @@
         <button type="button" class="cp-nav-item" data-tab-target="tab-attendance" onclick="switchTab('tab-attendance', this)">
           {{ cp_icon('qr', 16) }}
           <span class="cp-nav-label">Attendance &amp; QR</span>
+          <span id="attendance-discrepancy-dot" class="cp-red-dot" style="{% if not verdict.discrepancy_requires_approval %}display:none;{% else %}display:inline-flex;{% endif %}">!</span>
         </button>
         <button type="button" class="cp-nav-item" data-tab-target="tab-polls" onclick="switchTab('tab-polls', this)">
           {{ cp_icon('bar-chart', 16) }}
@@ -228,6 +229,7 @@
         <button type="button" id="tab-btn-course-monitor" class="cp-nav-item" data-tab-target="tab-course-roster" onclick="switchTab('tab-course-roster', this)">
           {{ cp_icon('users', 16) }}
           <span class="cp-nav-label">Roster ({{ selected_course.students|length }})</span>
+          <span id="roster-discrepancy-dot" class="cp-red-dot" style="{% if not verdict.discrepancy_requires_approval %}display:none;{% else %}display:inline-flex;{% endif %}">!</span>
           <span id="roster-pending-badge" class="cp-red-dot" style="{% if not selected_course.pending_requests %}display:none;{% else %}display:inline-flex;{% endif %}">
             {{ (selected_course.pending_requests or [])|length }}
           </span>
@@ -497,15 +499,19 @@
 
           <div class="cp-row-wrap" style="margin-bottom:12px;">
             <input type="file" id="photo-input" class="cp-file-input" accept="image/*" style="max-width:100%;" />
+            <input type="file" id="camera-fallback-input" accept="image/*" capture="environment" style="display:none;" onchange="handleFallbackCameraFile(this)" />
             <button type="button" id="btn-upload-headcount" class="cp-btn cp-btn--primary cp-btn--sm" onclick="uploadClassroomPhoto()">
-              {{ cp_icon('camera', 14) }}
+              {{ cp_icon('upload', 14) }}
               <span>Upload &amp; Count Faces</span>
+            </button>
+            <button type="button" id="btn-webcam-headcount" class="cp-btn cp-btn--secondary cp-btn--sm" onclick="openCameraCaptureModal()">
+              {{ cp_icon('camera', 14) }}
+              <span>Take Photo (Camera)</span>
             </button>
             <button type="button" id="btn-open-phone-cam-qr" class="cp-btn cp-btn--indigo cp-btn--sm" onclick="openPhoneHeadcountQr(false)">
               {{ cp_icon('smartphone', 14) }}
               <span>Phone Camera</span>
             </button>
-            <button type="button" id="btn-sample-headcount" class="cp-btn cp-btn--secondary cp-btn--sm" onclick="runSamplePhoto()">Use Ariel Classroom Sample</button>
             <span id="cv-status" style="font-size:12px; font-weight:700; color:var(--cp-indigo-ink);"></span>
           </div>
 
@@ -520,6 +526,24 @@
             </span>
           </div>
         </div>
+      </div>
+
+      <div id="attendance-discrepancy-banner"
+           class="cp-alert cp-alert--err cp-row-between"
+           style="display:{% if verdict.discrepancy_requires_approval %}flex{% else %}none{% endif %}; margin-bottom:14px; gap:10px;"
+           role="alert">
+        <div style="min-width:0; flex:1;">
+          <strong>Attendance vs. Headcount Discrepancy:</strong>
+          <span id="attendance-discrepancy-text">
+            {{ verdict.qr_count }} registered student(s) checked in, but only {{ verdict.visual_count }} head(s) detected in the classroom photo.
+          </span>
+        </div>
+        <button type="button"
+                id="btn-approve-attendance-discrepancy"
+                class="cp-btn cp-btn--primary cp-btn--sm"
+                onclick="approveHeadcountDiscrepancy(this)">
+          Approve Discrepancy
+        </button>
       </div>
 
       <!-- Session Attendance Table & Export -->
@@ -868,6 +892,32 @@
   </div>
 </div>
 
+<!-- Modal: Direct Camera Headcount Capture -->
+<div id="modal-camera-capture" class="cp-modal-backdrop modal-backdrop">
+  <div class="cp-modal-card modal-card" style="max-width:560px;">
+    <div class="cp-card-header">
+      <h3 style="margin:0;">{{ cp_icon('camera', 17) }} <span>Capture Classroom Photo</span></h3>
+      <button type="button" class="cp-btn cp-btn--secondary cp-btn--sm" onclick="closeCameraCaptureModal()">
+        {{ cp_icon('x', 14) }}
+        <span>Close</span>
+      </button>
+    </div>
+    <div style="background:#111827; border-radius:14px; overflow:hidden; border:1px solid var(--cp-border); margin-bottom:10px; min-height:220px; display:flex; align-items:center; justify-content:center;">
+      <video id="webcam-video" autoplay playsinline muted style="width:100%; max-height:360px; object-fit:cover; display:block;"></video>
+    </div>
+    <div id="webcam-status-text" class="cp-muted" style="font-size:12.5px; margin-bottom:12px;">
+      Align camera with the classroom and click Capture &amp; Count Faces.
+    </div>
+    <div class="cp-row-between">
+      <button type="button" id="btn-webcam-capture-submit" class="cp-btn cp-btn--primary cp-btn--sm" onclick="captureWebcamPhoto()">
+        {{ cp_icon('camera', 14) }}
+        <span>Capture &amp; Count Faces</span>
+      </button>
+      <button type="button" class="cp-btn cp-btn--secondary cp-btn--sm" onclick="closeCameraCaptureModal()">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <!-- Modal: Switch Active Lecture in Current Course -->
 <div id="modal-switch-lecture" class="cp-modal-backdrop modal-backdrop">
   <div class="cp-modal-card modal-card">
@@ -928,6 +978,25 @@
   const LECTURER_NAV_STACK = ["tab-overview"];
   const LECTURER_CLEAN_URL = `/teacher?course_id=${COURSE_ID}&session=${encodeURIComponent(SESSION_CODE)}`;
   let LECTURER_HISTORY_GUARD_INSTALLED = false;
+
+  function getTimeBasedGreeting(dateObj) {
+    try {
+      const h = (dateObj || new Date()).getHours();
+      if (h >= 5 && h < 12) return "Good Morning";
+      if (h >= 12 && h < 18) return "Good Afternoon";
+      if (h >= 18 && h < 22) return "Good Evening";
+      return "Good Night";
+    } catch (_err) {
+      return "Hello";
+    }
+  }
+
+  function updateLecturerGreeting() {
+    const el = document.getElementById("lecturer-greeting-prefix");
+    if (el) el.textContent = `${getTimeBasedGreeting()}, `;
+  }
+  updateLecturerGreeting();
+  setInterval(updateLecturerGreeting, 60000);
 
   function escapeHtml(str) {
     return String(str == null ? "" : str)
@@ -1669,6 +1738,51 @@
     if (explEl) {
       explEl.textContent = v.explanation || v.summary_note || "";
     }
+
+    const needsApproval = Boolean(v.discrepancy_requires_approval);
+    const attDot = document.getElementById("attendance-discrepancy-dot");
+    const rosDot = document.getElementById("roster-discrepancy-dot");
+    if (attDot) attDot.style.display = needsApproval ? "inline-flex" : "none";
+    if (rosDot) rosDot.style.display = needsApproval ? "inline-flex" : "none";
+
+    const msgText = needsApproval
+      ? `${Number(v.qr_count || 0)} registered student(s) checked in, but only ${Number(v.visual_count || 0)} head(s) detected in the classroom photo (${Number(v.discrepancy_excess || 0)} excess). Please review and approve.`
+      : "";
+    const attBanner = document.getElementById("attendance-discrepancy-banner");
+    const attBannerTxt = document.getElementById("attendance-discrepancy-text");
+    if (attBanner) attBanner.style.display = needsApproval ? "flex" : "none";
+    if (attBannerTxt && msgText) attBannerTxt.textContent = msgText;
+
+    const rosBanner = document.getElementById("roster-discrepancy-banner");
+    const rosBannerTxt = document.getElementById("roster-discrepancy-text");
+    if (rosBanner) rosBanner.style.display = needsApproval ? "flex" : "none";
+    if (rosBannerTxt && msgText) rosBannerTxt.textContent = msgText;
+  }
+
+  async function approveHeadcountDiscrepancy(btnEl) {
+    if (btnEl) btnEl.disabled = true;
+    try {
+      const resp = await fetch(`/api/sessions/${SESSION_ID}/headcount/approve-discrepancy`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        alert(data.error || "Could not approve discrepancy.");
+        return;
+      }
+      if (data.verdict) applyVerdict(data.verdict);
+      const statusEl = document.getElementById("cv-status");
+      if (statusEl) {
+        statusEl.style.color = "var(--cp-green-ink)";
+        statusEl.textContent = "Attendance discrepancy reviewed and approved.";
+      }
+    } catch (_err) {
+      alert("Network error while approving discrepancy.");
+    } finally {
+      if (btnEl) btnEl.disabled = false;
+    }
   }
 
   async function refreshOverview() {
@@ -1729,19 +1843,57 @@
     window.location.reload();
   }
 
-  async function uploadClassroomPhoto() {
-    const input = document.getElementById("photo-input");
-    const statusEl = document.getElementById("cv-status");
-    const uploadBtn = document.getElementById("btn-upload-headcount");
-    if (!input || !input.files || !input.files.length) {
-      if (statusEl) {
-        statusEl.style.color = "var(--cp-red-ink)";
-        statusEl.textContent = "Select a classroom photo first.";
-      }
+  let webcamMediaStream = null;
+
+  function stopWebcamStream() {
+    if (webcamMediaStream) {
+      try {
+        webcamMediaStream.getTracks().forEach((t) => t.stop());
+      } catch (_err) {}
+      webcamMediaStream = null;
+    }
+    const vid = document.getElementById("webcam-video");
+    if (vid) vid.srcObject = null;
+  }
+
+  function closeCameraCaptureModal() {
+    stopWebcamStream();
+    closeModal("modal-camera-capture");
+  }
+
+  async function openCameraCaptureModal() {
+    if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== "function") {
+      document.getElementById("camera-fallback-input")?.click();
       return;
     }
+    const statusTxt = document.getElementById("webcam-status-text");
+    const vid = document.getElementById("webcam-video");
+    openModal("modal-camera-capture");
+    if (statusTxt) statusTxt.textContent = "Starting camera...";
+    try {
+      try {
+        webcamMediaStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } },
+          audio: false,
+        });
+      } catch (_facingErr) {
+        webcamMediaStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      }
+      if (vid) {
+        vid.srcObject = webcamMediaStream;
+        await vid.play().catch(() => {});
+      }
+      if (statusTxt) statusTxt.textContent = "Align camera with the classroom and click Capture & Count Faces.";
+    } catch (_camErr) {
+      closeCameraCaptureModal();
+      document.getElementById("camera-fallback-input")?.click();
+    }
+  }
 
-    const rawFile = input.files[0];
+  async function submitHeadcountImageFile(rawFile, sourceLabel) {
+    const statusEl = document.getElementById("cv-status");
+    const uploadBtn = document.getElementById("btn-upload-headcount");
+    if (!rawFile) return false;
     if (uploadBtn) uploadBtn.disabled = true;
     if (statusEl) {
       statusEl.style.color = "var(--cp-indigo-ink)";
@@ -1755,7 +1907,9 @@
       if (statusEl) statusEl.textContent = "Uploading & counting faces...";
 
       const fd = new FormData();
-      fd.append("photo", uploadBlob, "classroom_upload.jpg");
+      const uploadName = (rawFile.name && rawFile.name.trim()) ? rawFile.name : "classroom_capture.jpg";
+      fd.append("photo", uploadBlob, uploadName);
+      if (sourceLabel) fd.append("source", sourceLabel);
       const resp = window.ClassPulseImage
         ? await window.ClassPulseImage.fetchWithTimeout(`/api/sessions/${SESSION_ID}/headcount`, { method: "POST", body: fd }, 45000)
         : await fetch(`/api/sessions/${SESSION_ID}/headcount`, { method: "POST", body: fd });
@@ -1771,59 +1925,73 @@
           statusEl.style.color = "var(--cp-red-ink)";
           statusEl.textContent = data.error || `Face count failed (HTTP ${resp.status}).`;
         }
-        return;
+        return false;
       }
       if (statusEl) {
         statusEl.style.color = "var(--cp-green-ink)";
         statusEl.textContent = `Detected ${Number(data.auto_count ?? data.auto_face_count ?? 0)} face(s)!`;
       }
-      input.value = "";
       applyIncomingHeadcountUpdate(data);
+      return true;
     } catch (err) {
       if (statusEl) {
         statusEl.style.color = "var(--cp-red-ink)";
         statusEl.textContent = (err && err.message) || "Could not upload classroom photo. Please retry.";
       }
+      return false;
     } finally {
       if (uploadBtn) uploadBtn.disabled = false;
     }
   }
 
-  async function runSamplePhoto() {
-    const statusEl = document.getElementById("cv-status");
-    const sampleBtn = document.getElementById("btn-sample-headcount");
-    if (sampleBtn) sampleBtn.disabled = true;
-    if (statusEl) {
-      statusEl.style.color = "var(--cp-indigo-ink)";
-      statusEl.textContent = "Running face detection on Ariel University sample...";
+  async function captureWebcamPhoto() {
+    const vid = document.getElementById("webcam-video");
+    const statusTxt = document.getElementById("webcam-status-text");
+    const btn = document.getElementById("btn-webcam-capture-submit");
+    if (!vid || !vid.videoWidth || !vid.videoHeight) {
+      if (statusTxt) statusTxt.textContent = "Camera stream not ready yet — wait 1 second and try again.";
+      return;
     }
+    if (btn) btn.disabled = true;
+    if (statusTxt) statusTxt.textContent = "Capturing photo & counting faces...";
     try {
-      const resp = await fetch(`/api/sessions/${SESSION_ID}/headcount`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ use_sample: true }),
+      const capCanvas = document.createElement("canvas");
+      capCanvas.width = vid.videoWidth;
+      capCanvas.height = vid.videoHeight;
+      const capCtx = capCanvas.getContext("2d");
+      capCtx.drawImage(vid, 0, 0, capCanvas.width, capCanvas.height);
+      const blob = await new Promise((resolve, reject) => {
+        capCanvas.toBlob((b) => (b ? resolve(b) : reject(new Error("Could not encode captured photo."))), "image/jpeg", 0.88);
       });
-      const data = await resp.json().catch(() => ({}));
-      if (!resp.ok) {
-        if (statusEl) {
-          statusEl.style.color = "var(--cp-red-ink)";
-          statusEl.textContent = data.error || `Sample scan failed (HTTP ${resp.status}).`;
-        }
-        return;
-      }
-      if (statusEl) {
-        statusEl.style.color = "var(--cp-green-ink)";
-        statusEl.textContent = `Detected ${Number(data.auto_count ?? data.auto_face_count ?? 0)} faces on Ariel sample!`;
-      }
-      applyIncomingHeadcountUpdate(data);
-    } catch (_err) {
+      closeCameraCaptureModal();
+      const capFile = new File([blob], "camera_capture.jpg", { type: "image/jpeg" });
+      await submitHeadcountImageFile(capFile, "camera");
+    } catch (err) {
+      if (statusTxt) statusTxt.textContent = (err && err.message) || "Camera capture failed.";
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  async function handleFallbackCameraFile(inputEl) {
+    const file = inputEl && inputEl.files && inputEl.files[0];
+    if (!file) return;
+    await submitHeadcountImageFile(file, "camera");
+    inputEl.value = "";
+  }
+
+  async function uploadClassroomPhoto() {
+    const input = document.getElementById("photo-input");
+    const statusEl = document.getElementById("cv-status");
+    if (!input || !input.files || !input.files.length) {
       if (statusEl) {
         statusEl.style.color = "var(--cp-red-ink)";
-        statusEl.textContent = "Network error while scanning sample photo.";
+        statusEl.textContent = "Select a classroom photo first.";
       }
-    } finally {
-      if (sampleBtn) sampleBtn.disabled = false;
+      return;
     }
+    const ok = await submitHeadcountImageFile(input.files[0], "desktop");
+    if (ok) input.value = "";
   }
 
   // Polls & Chat JS
@@ -2229,8 +2397,23 @@
     renderChatFeed();
   });
   socket.on("roster:enrollment_request", (payload) => {
-    if (!payload || Number(payload.course_id) === Number(COURSE_ID)) {
+    if (!payload) return;
+    if (Number(payload.course_id) === Number(COURSE_ID)) {
       loadPendingEnrollmentRequests();
+      if (typeof loadRoster === "function") loadRoster();
+      const who = payload.full_name || "A student";
+      const cname = payload.course_name || "this course";
+      const dot = document.getElementById("roster-discrepancy-dot");
+      if (dot) dot.style.display = "inline-block";
+      if (window.ClassPulseNotify && window.ClassPulseNotify.showToast) {
+        window.ClassPulseNotify.showToast("Enrollment Request", `${who} requested to join ${cname}. Check Course Roster to approve or reject.`, () => switchTab("tab-course-roster"));
+      }
+    } else if (window.ClassPulseNotify) {
+      window.ClassPulseNotify.markUnread({
+        key: `enroll_req:${payload.course_id}:${payload.student_id || Date.now()}`,
+        kind: "enrollment",
+        courseId: payload.course_id,
+      });
     }
   });
   socket.on("enrollment:updated", (payload) => {
@@ -2266,38 +2449,143 @@
     return map[status] || status || "Pending";
   }
 
+  function formatSummaryInline(str) {
+    return escapeHtml(str)
+      .replace(/`([^`]+)`/g, '<code class="cp-review-code">$1</code>')
+      .replace(/\*\*(.+?)\*\*/g, '<strong style="color:var(--cp-ink);">$1</strong>')
+      .replace(/(^|[^*])\*([^*]+?)\*(?!\*)/g, '$1<em>$2</em>');
+  }
+
+  function renderStructuredSummarySections(a) {
+    const secs = a.structured_sections || {};
+    const cards = [];
+    const renderBullets = (items) => (items || []).map(it =>
+      `<li style="margin:4px 0; color:var(--cp-ink); line-height:1.45;">${formatSummaryInline(it)}</li>`
+    ).join("");
+    if (Array.isArray(secs.executive_summary) && secs.executive_summary.length) {
+      cards.push(`
+        <div class="cp-well" data-summary-section="executive" style="padding:12px 14px; border-left:3px solid var(--cp-indigo);">
+          <div class="cp-eyebrow" style="color:var(--cp-indigo-ink); margin-bottom:5px;">Executive Summary</div>
+          <ul style="margin:0; padding-left:18px; font-size:13px;">${renderBullets(secs.executive_summary)}</ul>
+        </div>
+      `);
+    }
+    if (Array.isArray(secs.key_topics) && secs.key_topics.length) {
+      cards.push(`
+        <div class="cp-well" data-summary-section="topics" style="padding:12px 14px; border-left:3px solid var(--cp-green);">
+          <div class="cp-eyebrow" style="color:var(--cp-green-ink); margin-bottom:5px;">Key Topics &amp; Takeaways</div>
+          <ul style="margin:0; padding-left:18px; font-size:13px;">${renderBullets(secs.key_topics)}</ul>
+        </div>
+      `);
+    }
+    if (Array.isArray(secs.action_items) && secs.action_items.length) {
+      cards.push(`
+        <div class="cp-well" data-summary-section="actions" style="padding:12px 14px; border-left:3px solid var(--cp-coral);">
+          <div class="cp-eyebrow" style="color:var(--cp-coral-ink); margin-bottom:5px;">Action Items &amp; Questions</div>
+          <ul style="margin:0; padding-left:18px; font-size:13px;">${renderBullets(secs.action_items)}</ul>
+        </div>
+      `);
+    }
+    if (Array.isArray(secs.extra_sections)) {
+      for (const ex of secs.extra_sections) {
+        if (ex && Array.isArray(ex.items) && ex.items.length) {
+          cards.push(`
+            <div class="cp-well" style="padding:12px 14px;">
+              <div class="cp-eyebrow" style="margin-bottom:5px;">${escapeHtml(ex.title || "Additional Notes")}</div>
+              <ul style="margin:0; padding-left:18px; font-size:13px;">${renderBullets(ex.items)}</ul>
+            </div>
+          `);
+        }
+      }
+    }
+    if (!cards.length && a.summary_markdown) {
+      return `<div class="cp-review-md" style="margin:6px 0 10px 0;">${renderTeacherReviewHtml(a.summary_markdown)}</div>`;
+    }
+    return cards.length ? `<div class="cp-stack-xs" style="margin:8px 0 10px 0;">${cards.join("")}</div>` : "";
+  }
+
+  async function publishLectureArtifact(artifactId, publish = true) {
+    const statusEl = document.getElementById("lecture-ai-status");
+    const errEl = document.getElementById("lecture-ai-error");
+    if (errEl) { errEl.style.display = "none"; errEl.textContent = ""; }
+    try {
+      const res = await fetch(`/api/lectures/${Number(artifactId)}/publish`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ publish: Boolean(publish) }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (errEl) {
+          errEl.textContent = data.error || "Could not update publication status.";
+          errEl.style.display = "block";
+        }
+        return;
+      }
+      if (statusEl) {
+        statusEl.textContent = data.is_published
+          ? "Published! Students can now view this summary."
+          : "Moved back to Draft (hidden from students).";
+      }
+      await loadLectureArtifacts();
+    } catch (err) {
+      if (errEl) {
+        errEl.textContent = "Error: " + (err && err.message ? err.message : "Network error");
+        errEl.style.display = "block";
+      }
+    }
+  }
+
   function renderLectureArtifacts(artifacts) {
     const box = document.getElementById("lecture-artifacts-list");
     if (!box) return;
     if (!artifacts.length) {
-      box.innerHTML = `<div class="cp-well--dashed cp-muted" style="font-size:12px;">No lecture summaries yet for this session. Upload a recording file, paste notes, or click <strong>Run Ariel Lecture Sample</strong>.</div>`;
+      box.innerHTML = `<div class="cp-well--dashed cp-muted" style="font-size:12px;">No lecture summaries yet for this session. Upload a recording file, paste notes, or click <strong>Load Demo Sample</strong>.</div>`;
       return;
     }
     box.innerHTML = artifacts.map(a => {
-      const transcriptHtml = (a.corrected_transcript || []).map(seg =>
+      const segs = a.corrected_transcript || [];
+      const transcriptHtml = segs.map(seg =>
         `<div class="cp-log-row" style="justify-content:flex-start; margin-top:4px;"><span class="cp-ts ts">[${escapeHtml(seg.offset_mmss)}]</span> <span style="color:var(--cp-ink); overflow-wrap:anywhere;">${escapeHtml(seg.text)}</span></div>`
       ).join("");
       const badgeClass = a.status === "COMPLETED"
-        ? "VERIFIED"
+        ? (a.is_published ? "VERIFIED" : "UNDER_SCANNED")
         : (a.status === "FAILED" ? "DISCREPANCY_ALERT" : "UNDER_SCANNED");
-      const downloadBar = a.status === "COMPLETED" ? `
-        <div class="cp-row-wrap" style="margin:8px 0;">
-          <a class="cp-btn cp-btn--green cp-btn--sm" href="/api/lectures/${Number(a.id)}/download/summary.md">Download Summary (.md)</a>
+      const pubBadge = a.status === "COMPLETED"
+        ? (a.is_published
+            ? `<span class="cp-badge cp-badge--green">Published to Students</span>`
+            : `<span class="cp-badge cp-badge--amber">Draft &mdash; Private to Lecturer</span>`)
+        : `<span class="cp-badge badge ${badgeClass}">${escapeHtml(a.status)}</span>`;
+
+      const courseCtx = [a.course_name || a.course_code, a.lecture_number ? `Lecture ${a.lecture_number}` : "", a.lecture_title]
+        .filter(Boolean)
+        .join(" \u2022 ");
+
+      const actionBar = a.status === "COMPLETED" ? `
+        <div class="cp-row-wrap" style="margin:8px 0; gap:8px;">
+          ${a.is_published
+            ? `<button type="button" class="cp-btn cp-btn--secondary cp-btn--sm" data-unpublish-artifact="${Number(a.id)}" onclick="publishLectureArtifact(${Number(a.id)}, false)">Unpublish (Make Draft)</button>`
+            : `<button type="button" class="cp-btn cp-btn--green cp-btn--sm" data-publish-artifact="${Number(a.id)}" onclick="publishLectureArtifact(${Number(a.id)}, true)">Publish to Students</button>`}
+          <a class="cp-btn cp-btn--secondary cp-btn--sm" href="/api/lectures/${Number(a.id)}/download/summary.md">Summary (.md)</a>
           <a class="cp-btn cp-btn--secondary cp-btn--sm" href="/api/lectures/${Number(a.id)}/download/transcript.txt">Transcript (.txt)</a>
           <button type="button" class="cp-btn cp-btn--danger-soft cp-btn--sm" onclick="deleteLectureArtifact(${Number(a.id)})">Delete</button>
         </div>
       ` : `<div style="font-size:12px; color:var(--cp-amber-ink-deep); font-weight:600; margin:6px 0;">${escapeHtml(formatStageLabel(a.status))}${a.error_message ? " — " + escapeHtml(a.error_message) : ""} <button type="button" class="cp-btn cp-btn--secondary cp-btn--sm" style="margin-left:8px;" onclick="deleteLectureArtifact(${Number(a.id)})">Delete</button></div>`;
+
       return `
-        <div class="cp-artifact-card">
-          <div class="cp-row-between" style="margin-bottom:6px;">
-            <strong style="font-size:13.5px; color:var(--cp-indigo-ink);">Summary #${Number(a.id)} (${escapeHtml(a.source_type)})</strong>
-            <span class="cp-badge badge ${badgeClass}">${escapeHtml(a.status)}</span>
+        <div class="cp-artifact-card" data-lecture-artifact-id="${Number(a.id)}" style="margin-bottom:14px;">
+          <div class="cp-row-between" style="margin-bottom:6px; gap:8px; flex-wrap:wrap;">
+            <div>
+              ${courseCtx ? `<div class="cp-muted" style="font-size:11.5px; font-weight:700; margin-bottom:2px;">${escapeHtml(courseCtx)}</div>` : ""}
+              <strong style="font-size:14.5px; color:var(--cp-indigo-ink);">Lecture Summary #${Number(a.id)} (${escapeHtml(a.source_type)})</strong>
+            </div>
+            ${pubBadge}
           </div>
-          ${downloadBar}
-          ${a.summary_markdown ? `<pre class="cp-review-md" style="white-space:pre-wrap; font-family:inherit; margin:0 0 8px 0;">${escapeHtml(a.summary_markdown)}</pre>` : ""}
-          ${(a.corrected_transcript || []).length ? `
-            <details>
-              <summary style="cursor:pointer; font-size:12px; color:var(--cp-indigo-ink); font-weight:700;">View Pass-1 Corrected Transcript (${(a.corrected_transcript || []).length} segments)</summary>
+          ${actionBar}
+          ${renderStructuredSummarySections(a)}
+          ${segs.length ? `
+            <details class="cp-m-accordion" style="margin-top:6px;">
+              <summary style="cursor:pointer; font-size:12.5px; color:var(--cp-indigo-ink); font-weight:700;">Full Transcript (${segs.length} segments)</summary>
               <div style="margin-top:6px;">${transcriptHtml}</div>
             </details>
           ` : ""}
@@ -2316,7 +2604,7 @@
         loadLectureArtifacts();
         if (job.status === "DONE") {
           clearInterval(timer);
-          statusEl.textContent = "Summary ready to download!";
+          statusEl.textContent = "Draft ready! Review below and click 'Publish to Students' to share.";
         } else if (job.status === "FAILED") {
           clearInterval(timer);
           statusEl.textContent = "Failed: " + (job.error || "Check Gemini API key");
@@ -2385,7 +2673,7 @@
         pollLectureJob(data.job_id);
         return;
       }
-      if (statusEl) statusEl.textContent = "Summary uploaded!";
+      if (statusEl) statusEl.textContent = "Draft saved! Review below and click 'Publish to Students' when ready.";
       loadLectureArtifacts();
     } catch (err) {
       if (errEl) {
@@ -2401,14 +2689,19 @@
       const res = await fetch(`/api/courses/${COURSE_ID}/assignments?include_submissions=1&_ts=${Date.now()}`, { cache: "no-store" });
       if (!res.ok) return;
       const data = await res.json();
-      courseAssignments = data.assignments || [];
+      courseAssignments = (data.assignments || []).filter(
+        a => Number(a.course_id) === Number(COURSE_ID)
+      );
       const sel = document.getElementById("hw-assignment-select");
       if (!sel) return;
       if (!courseAssignments.length) {
-        sel.innerHTML = `<option value="">No assignments yet — Create one or click Seed Sample Cohort</option>`;
+        sel.innerHTML = `<option value="">No assignments yet — Create one above</option>`;
       } else {
         const prevVal = sel.value;
-        sel.innerHTML = courseAssignments.map(a => `<option value="${Number(a.id)}">${escapeHtml(a.title)} (${a.cohort_stats.submission_count} subs)</option>`).join("");
+        sel.innerHTML = courseAssignments.map(a => {
+          const finalCount = Number(a.final_submission_count !== undefined ? a.final_submission_count : (a.submissions ? a.submissions.length : 0));
+          return `<option value="${Number(a.id)}">Assignment #${Number(a.assignment_number || 1)} \u2014 ${escapeHtml(a.title)} (${finalCount} final)</option>`;
+        }).join("");
         if (prevVal && courseAssignments.some(a => String(a.id) === prevVal)) {
           sel.value = prevVal;
         }
@@ -2429,50 +2722,47 @@
     const a = courseAssignments.find(x => String(x.id) === sel.value) || courseAssignments[0];
     if (!a) {
       kpiEl.innerHTML = "";
-      tagsEl.innerHTML = "";
-      listEl.innerHTML = `<div class="cp-muted" style="font-size:12px;">No submissions yet.</div>`;
+      if (tagsEl) tagsEl.innerHTML = "";
+      listEl.innerHTML = `<div class="cp-muted" style="font-size:12px;">No final submissions yet.</div>`;
       return;
     }
+    const subs = a.submissions || [];
+    const finalCount = Number(a.final_submission_count !== undefined ? a.final_submission_count : subs.length);
+    const meanAi = a.final_mean_score !== undefined
+      ? a.final_mean_score
+      : (subs.length ? Math.round((subs.reduce((acc, s) => acc + Number(s.ai_rubric_grade !== undefined ? s.ai_rubric_grade : (s.metrics ? s.metrics.overall_score : 0)), 0) / subs.length) * 10) / 10 : 0);
     const stats = a.cohort_stats || {};
     const topicCount = Object.keys(stats.topic_averages || {}).length;
     kpiEl.innerHTML = `
-      <div class="cp-kpi"><div class="cp-kpi-num cp-kpi-num--indigo cp-tabular" style="font-size:22px;">${stats.submission_count || 0}</div><div class="cp-kpi-lbl">Submissions</div></div>
-      <div class="cp-kpi"><div class="cp-kpi-num cp-kpi-num--green cp-tabular" style="font-size:22px;">${stats.mean_overall_score || 0}</div><div class="cp-kpi-lbl">Mean Score</div></div>
+      <div class="cp-kpi"><div class="cp-kpi-num cp-kpi-num--indigo cp-tabular" style="font-size:22px;">${finalCount}</div><div class="cp-kpi-lbl">Final Submissions</div></div>
+      <div class="cp-kpi"><div class="cp-kpi-num cp-kpi-num--green cp-tabular" style="font-size:22px;">${meanAi}</div><div class="cp-kpi-lbl">Mean AI Score</div></div>
       <div class="cp-kpi"><div class="cp-kpi-num cp-kpi-num--coral cp-tabular" style="font-size:22px;">${topicCount}</div><div class="cp-kpi-lbl">Tracked Topics</div></div>
     `;
-    const catAvgs = Object.entries(stats.category_averages || {}).map(
-      ([k, v]) => `<span class="cp-code-pill code-pill" style="margin:2px 4px 2px 0; display:inline-block;">${escapeHtml(k)}: ${escapeHtml(v)}/100</span>`
-    ).join("");
-    const tagsHtml = (stats.top_error_tags || []).map(t => `<span class="cp-code-pill code-pill" style="margin:2px 4px 2px 0; display:inline-block;">${escapeHtml(t.tag)} (${Number(t.count || 0)})</span>`).join("");
-    tagsEl.innerHTML =
-      (catAvgs ? `<div style="margin-bottom:6px;"><strong>Category Cohort Averages:</strong> ${catAvgs}</div>` : "") +
-      (tagsHtml ? `<div><strong>Top Cohort Error Tags:</strong> ${tagsHtml}</div>` : "");
+    if (tagsEl) {
+      tagsEl.innerHTML = "";
+      tagsEl.style.display = "none";
+    }
 
-    const subs = a.submissions || [];
     if (!subs.length) {
-      listEl.innerHTML = `<div class="cp-muted" style="font-size:12px;">Awaiting student homework submissions.</div>`;
+      listEl.innerHTML = `<div class="cp-muted" style="font-size:12px;">Awaiting final student submissions to lecturer.</div>`;
       return;
     }
     listEl.innerHTML = `
       <div class="cp-table-scroll">
         <table class="cp-table">
-          <thead><tr><th>Student</th><th>Ver</th><th>AI Rubric</th><th>Class Score (1-10)</th><th>Weakest Category</th><th>Review</th></tr></thead>
+          <thead><tr><th>Student</th><th>Ver</th><th>Submitted File</th><th>AI Score</th><th>Review</th></tr></thead>
           <tbody>
             ${subs.map(s => {
               const score = s.ai_rubric_grade !== undefined ? s.ai_rubric_grade : (s.metrics ? s.metrics.overall_score : 0);
-              const standing = s.class_standing || {};
-              const clsScore = standing.class_score !== undefined ? `${standing.class_score}/10 (#${standing.rank}/${standing.cohort_size})` : "—";
-              const cats = Array.isArray(s.category_breakdown) ? s.category_breakdown : [];
-              const weakest = cats.length
-                ? [...cats].sort((x, y) => x.ai_rubric_score - y.ai_rubric_score)[0]
-                : null;
+              const fileHtml = s.download_url
+                ? `<a class="cp-link" href="${escapeHtml(s.download_url)}" target="_blank" rel="noopener">${escapeHtml(s.file_name || "Download file")}</a>`
+                : `<span class="cp-muted">${escapeHtml(s.file_name || "Inline text")}</span>`;
               return `
                 <tr>
                   <td><strong>${escapeHtml(s.student_name)}</strong></td>
                   <td class="cp-tabular">v${Number(s.version || 1)}</td>
+                  <td style="font-size:12px;">${fileHtml}</td>
                   <td><span class="cp-badge badge VERIFIED cp-tabular">${escapeHtml(score)}/100</span></td>
-                  <td><span class="cp-badge cp-badge--purple cp-tabular">${escapeHtml(clsScore)}</span></td>
-                  <td class="cp-muted" style="font-size:11.5px;">${weakest ? `${escapeHtml(weakest.label)} (${escapeHtml(weakest.class_score)}/10)` : "—"}</td>
                   <td><button type="button" class="cp-btn cp-btn--secondary cp-btn--sm" onclick="openReviewModal(${Number(s.id)}, ${Number(a.id)})">View Review</button></td>
                 </tr>
               `;
@@ -2517,13 +2807,16 @@
     const a = courseAssignments.find(x => x.id === assignId);
     const sub = a && (a.submissions || []).find(s => s.id === subId);
     if (!sub) return;
-    document.getElementById("modal-hw-review-title").textContent = `${sub.student_name} — ${a.title} (v${sub.version})`;
-    const standing = sub.class_standing || {};
+    document.getElementById("modal-hw-review-title").textContent = `${sub.student_name} — ${a.title} (Final v${sub.version})`;
     const rubricScore = sub.ai_rubric_grade !== undefined ? sub.ai_rubric_grade : (sub.metrics ? sub.metrics.overall_score : 0);
+    const fileLinkHtml = sub.download_url
+      ? `<a class="cp-btn cp-btn--secondary cp-btn--sm" href="${escapeHtml(sub.download_url)}" target="_blank" rel="noopener">Download ${escapeHtml(sub.file_name || "Submission")}</a>`
+      : "";
     const summaryBadges = `
-      <div class="cp-row-wrap" style="margin-bottom:10px; padding-bottom:10px; border-bottom:1px solid var(--cp-border);">
-        <span class="cp-badge badge VERIFIED cp-tabular">AI Rubric: ${escapeHtml(rubricScore)}/100</span>
-        <span class="cp-badge cp-badge--purple cp-tabular">Class Standing: ${escapeHtml(standing.class_score || 10)}/10 (#${escapeHtml(standing.rank || 1)}/${escapeHtml(standing.cohort_size || 1)})</span>
+      <div class="cp-row-wrap" style="margin-bottom:10px; padding-bottom:10px; border-bottom:1px solid var(--cp-border); align-items:center; gap:8px;">
+        <span class="cp-badge badge VERIFIED cp-tabular">AI Score: ${escapeHtml(rubricScore)}/100</span>
+        <span class="cp-badge cp-badge--green">Final Submission</span>
+        ${fileLinkHtml}
       </div>
     `;
     document.getElementById("modal-hw-review-body").innerHTML = summaryBadges + renderTeacherReviewHtml(sub.deep_review_md);
@@ -2568,8 +2861,18 @@
   });
   socket.on("lecture:summary_ready", () => {
     const statusEl = document.getElementById("lecture-ai-status");
-    if (statusEl) statusEl.textContent = "Summary ready to download!";
+    if (statusEl) statusEl.textContent = "Published to students!";
     loadLectureArtifacts();
+  });
+  socket.on("assignment:final_submitted", payload => {
+    if (payload && Number(payload.course_id) === Number(COURSE_ID)) {
+      loadAssignments();
+    }
+  });
+  socket.on("assignment:review_ready", payload => {
+    if (payload && Number(payload.course_id) === Number(COURSE_ID) && (!payload.submission_type || payload.submission_type === "final")) {
+      loadAssignments();
+    }
   });
 
   // Initial load + resilient 3.5-second live background sync

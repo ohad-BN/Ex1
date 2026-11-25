@@ -17,12 +17,12 @@
 
     <div class="cp-grid-2">
       <div class="cp-well">
-        <label class="cp-label" for="lecture-media-input">Upload Summary (.md, .pdf, .docx, .txt) or Recording</label>
+        <label class="cp-label" for="lecture-media-input">Upload Lecture Video, Audio, or Summary (.mp4, .mov, .webm, .mp3, .wav, .md, .pdf, .docx, .txt)</label>
         <div class="cp-row-wrap">
-          <input type="file" id="lecture-media-input" class="cp-file-input" accept=".md,.txt,.pdf,.docx,.vtt,.srt,.mp4,.wav,.mp3,.m4a,.ogg,.webm" />
+          <input type="file" id="lecture-media-input" class="cp-file-input" accept=".md,.txt,.pdf,.docx,.vtt,.srt,.mp4,.mov,.webm,.mkv,.avi,.m4v,.wav,.mp3,.m4a,.ogg,.aac,.flac" />
           <button type="button" id="btn-upload-lecture-summary" class="cp-btn cp-btn--green cp-btn--sm" onclick="summarizeLecture(false)">
             {{ cp_icon('upload', 14) }}
-            <span>Upload Summary</span>
+            <span>Upload &amp; Transcribe</span>
           </button>
         </div>
         <div id="lecture-ai-status" style="font-size:12.5px; font-weight:700; color:var(--cp-indigo-ink); margin-top:8px;"></div>
@@ -39,7 +39,7 @@
     <div class="cp-card-header">
       <h2>
         {{ cp_icon('file-text', 18) }}
-        <span>Published Study Guides &amp; Transcripts</span>
+        <span>Lecture Summaries &amp; Transcripts</span>
       </h2>
       <button type="button" class="cp-btn cp-btn--secondary cp-btn--sm" onclick="loadLectureArtifacts()">
         {{ cp_icon('refresh', 14) }}

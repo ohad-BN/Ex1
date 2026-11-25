@@ -942,13 +942,16 @@ def _emit_lecturer_roster_notifications(db: Any, course: Course, event: str, pay
 
 @courses_bp.post("/api/student/enroll-request")
 def api_student_enroll_request():
-    """Submit a pending join request for a course, notifying the lecturer's Roster."""
+    """Submit a pending join request by manual course_number or course_id, notifying the lecturer."""
     payload: dict[str, Any] = request.get_json(silent=True) or {}
+    raw_course_num = str(payload.get("course_number") or payload.get("course_code") or "").strip()
     raw_course_id = payload.get("course_id")
-    try:
-        course_id_val = int(raw_course_id)
-    except (TypeError, ValueError):
-        return jsonify({"error": "Invalid course_id."}), 400
+    course_id_val: int | None = None
+    if not raw_course_num:
+        try:
+            course_id_val = int(raw_course_id)
+        except (TypeError, ValueError):
+            return jsonify({"error": "Enter a valid Course Number."}), 400
 
     db = current_app.extensions["db_session"]
     device_mgr: DeviceBindingManager = current_app.extensions["device_mgr"]
@@ -963,7 +966,9 @@ def api_student_enroll_request():
 
     try:
         course, student_obj, status_val = svc.request_course_enrollment(
-            course_id=course_id_val, student_id=student.id
+            course_id=course_id_val,
+            course_number=raw_course_num or None,
+            student_id=student.id,
         )
     except CourseError as exc:
         return jsonify({"error": exc.message}), exc.status_code
@@ -975,6 +980,7 @@ def api_student_enroll_request():
             "roster:enrollment_request",
             {
                 "course_id": course.id,
+                "course_code": course.course_code,
                 "course_name": course.name,
                 "student_id": student_obj.id,
                 "full_name": student_obj.full_name,
@@ -987,6 +993,8 @@ def api_student_enroll_request():
             {
                 "status": status_val,
                 "course_id": course.id,
+                "course_code": course.course_code,
+                "course_name": course.name,
                 "dashboard": svc.build_student_dashboard_payload(student_id=student_obj.id),
             }
         ),

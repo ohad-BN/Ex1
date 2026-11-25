@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+from datetime import datetime, timezone
 import io
 import json
 import shutil
@@ -648,6 +650,19 @@ def _run_headcount_detection_and_persist(
     return snap, payload
 
 
+def _decode_base64_image_data(raw_data: str) -> Optional[bytes]:
+    """Decode a data URL or base64 image string into raw bytes."""
+    txt = (raw_data or "").strip()
+    if not txt:
+        return None
+    if txt.startswith("data:") and "," in txt:
+        txt = txt.split(",", 1)[1]
+    try:
+        return base64.b64decode(txt, validate=False)
+    except Exception:
+        return None
+
+
 @attendance_bp.post("/api/sessions/<int:session_id>/headcount")
 def upload_and_count_classroom_photo(session_id: int):
     att_service, _qr_service, _device_mgr, _exporter = _get_services()
@@ -661,24 +676,25 @@ def upload_and_count_classroom_photo(session_id: int):
     assert session is not None
 
     data = request.get_json(silent=True) or request.form.to_dict()
-    use_sample = str(data.get("use_sample", "")).lower() in ("1", "true", "yes")
+    source_kind = str(data.get("source") or "desktop").strip() or "desktop"
 
     cfg.UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     upload_id = uuid.uuid4().hex[:10]
     raw_dest = cfg.UPLOAD_DIR / f"session_{session_id}_{upload_id}_raw.jpg"
     ann_dest = cfg.UPLOAD_DIR / f"session_{session_id}_{upload_id}_annotated.jpg"
 
-    if use_sample:
-        sample_file = cfg.SAMPLE_DIR / "classroom_ariel.jpg"
-        if not sample_file.exists():
-            return jsonify({"error": "Bundled sample classroom photo not found."}), 404
-        shutil.copy2(sample_file, raw_dest)
-    elif "photo" in request.files and request.files["photo"].filename:
+    if "photo" in request.files and request.files["photo"].filename:
         photo_file = request.files["photo"]
         file_bytes = photo_file.read()
         if not validate_image_magic_bytes(file_bytes):
             return jsonify({"error": "Invalid image upload: expected JPEG, PNG, GIF, or WebP file."}), 400
         raw_dest.write_bytes(file_bytes)
+    elif data.get("image_data"):
+        file_bytes = _decode_base64_image_data(str(data.get("image_data", "")))
+        if not file_bytes or not validate_image_magic_bytes(file_bytes):
+            return jsonify({"error": "Invalid camera capture image data."}), 400
+        raw_dest.write_bytes(file_bytes)
+        source_kind = str(data.get("source") or "camera").strip() or "camera"
     else:
         return jsonify({"error": "No classroom photo file provided."}), 400
 
@@ -690,11 +706,55 @@ def upload_and_count_classroom_photo(session_id: int):
             session=session,
             raw_dest=raw_dest,
             ann_dest=ann_dest,
-            source="desktop",
+            source=source_kind,
         )
     except Exception as exc:  # noqa: BLE001
         return jsonify({"error": f"Invalid image file: {exc}"}), 400
 
+    return jsonify(payload)
+
+
+@attendance_bp.post("/api/sessions/<int:session_id>/headcount/approve-discrepancy")
+def approve_headcount_discrepancy(session_id: int):
+    """Allow the lecturer to review and approve a QR vs. headcount discrepancy alert."""
+    att_service, _qr_service, _device_mgr, _exporter = _get_services()
+    db = current_app.extensions["db_session"]
+
+    session, _lec, err = require_session_access(session_id)
+    if err is not None:
+        return err
+    assert session is not None
+
+    snap = (
+        db.query(HeadcountSnapshot)
+        .filter_by(session_id=session.id)
+        .order_by(HeadcountSnapshot.id.desc())
+        .first()
+    )
+    if snap is None:
+        return jsonify({"error": "No headcount snapshot exists for this lecture yet."}), 404
+
+    data = request.get_json(silent=True) or {}
+    snap.discrepancy_approved = True
+    snap.discrepancy_approved_at = datetime.now(timezone.utc)
+    if data.get("lecturer_note"):
+        snap.lecturer_note = str(data["lecturer_note"])[:500]
+    db.commit()
+
+    verdict = att_service.get_audit_summary(session.id)
+    payload = {
+        "ok": True,
+        "snapshot_id": snap.id,
+        "session_id": session.id,
+        "session_code": session.session_code,
+        "auto_face_count": snap.auto_face_count,
+        "verified_face_count": snap.verified_face_count,
+        "auto_count": snap.auto_face_count,
+        "verified_count": snap.verified_face_count,
+        "verdict": verdict.to_dict(),
+        "source": "discrepancy_approved",
+    }
+    socketio.emit("headcount:updated", payload, to=f"session_{session.session_code}")
     return jsonify(payload)
 
 
@@ -737,6 +797,11 @@ def update_headcount_verification(session_id: int):
 
     if "lecturer_note" in data:
         snap.lecturer_note = str(data["lecturer_note"])[:500]
+
+    qr_count = db.query(AttendanceRecord).filter_by(session_id=session.id).count()
+    if qr_count > int(snap.verified_face_count or 0):
+        snap.discrepancy_approved = False
+        snap.discrepancy_approved_at = None
 
     db.commit()
     verdict = att_service.get_audit_summary(session.id)
@@ -1215,6 +1280,11 @@ def adjust_phone_headcount_count(session_code: str):
             return jsonify({"error": "Invalid verified_face_count."}), 400
     else:
         return jsonify({"error": "Provide delta (+1 or -1) or verified_face_count."}), 400
+
+    qr_count = db.query(AttendanceRecord).filter_by(session_id=session.id).count()
+    if qr_count > int(snap.verified_face_count or 0):
+        snap.discrepancy_approved = False
+        snap.discrepancy_approved_at = None
 
     db.commit()
     verdict = att_service.get_audit_summary(session.id)

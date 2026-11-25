@@ -352,6 +352,10 @@ class HeadcountSnapshot(Base):
     verified_face_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     boxes_json: Mapped[str] = mapped_column(Text, default="[]", nullable=False)
     lecturer_note: Mapped[str] = mapped_column(String(500), default="", nullable=False)
+    discrepancy_approved: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    discrepancy_approved_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     captured_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False
     )
@@ -461,6 +465,10 @@ class LectureArtifact(Base):
     )
     summary_markdown: Mapped[str] = mapped_column(Text, default="", nullable=False)
     status: Mapped[str] = mapped_column(String(24), default="PENDING", nullable=False)
+    is_published: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    published_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False
@@ -501,7 +509,10 @@ class HomeworkSubmission(Base):
     __tablename__ = "homework_submissions"
     __table_args__ = (
         UniqueConstraint(
-            "assignment_id", "student_id", name="uq_submission_assignment_student"
+            "assignment_id",
+            "student_id",
+            "submission_type",
+            name="uq_submission_assignment_student_type",
         ),
     )
 
@@ -511,6 +522,9 @@ class HomeworkSubmission(Base):
     )
     student_id: Mapped[int] = mapped_column(
         ForeignKey("students.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    submission_type: Mapped[str] = mapped_column(
+        String(16), default="comparative", nullable=False
     )
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     source_type: Mapped[str] = mapped_column(String(32), default="file", nullable=False)
@@ -587,6 +601,10 @@ def _migrate_sqlite_columns(engine: Engine) -> None:
         ("courses", "join_code", "VARCHAR(24)"),
         ("class_stats_aggregates", "category_scores_json", "TEXT NOT NULL DEFAULT '{}'"),
         ("class_stats_aggregates", "telemetry_sums_json", "TEXT NOT NULL DEFAULT '{}'"),
+        ("headcount_snapshots", "discrepancy_approved", "BOOLEAN NOT NULL DEFAULT 0"),
+        ("headcount_snapshots", "discrepancy_approved_at", "DATETIME"),
+        ("lecture_artifacts", "is_published", "BOOLEAN NOT NULL DEFAULT 0"),
+        ("lecture_artifacts", "published_at", "DATETIME"),
     )
 
     with engine.begin() as conn:
@@ -691,6 +709,49 @@ def _migrate_sqlite_columns(engine: Engine) -> None:
                         "UPDATE assignments SET assignment_number = ? WHERE id = ?;",
                         (next_anum, aid),
                     )
+        conn.exec_driver_sql(
+            "UPDATE assignments SET rubric_text = '' "
+            "WHERE rubric_text LIKE 'Evaluate OOP encapsulation/Adapter design, unit test coverage (pytest), error handling%';"
+        )
+
+        # Migrate homework_submissions to support separate 'comparative' vs 'final' rows per (assignment_id, student_id)
+        hs_sql_row = conn.exec_driver_sql(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='homework_submissions';"
+        ).fetchone()
+        if hs_sql_row and hs_sql_row[0] and "submission_type" not in hs_sql_row[0]:
+            conn.exec_driver_sql(
+                """
+                CREATE TABLE homework_submissions_v2 (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    assignment_id INTEGER NOT NULL REFERENCES assignments(id) ON DELETE CASCADE,
+                    student_id INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+                    submission_type VARCHAR(16) NOT NULL DEFAULT 'comparative',
+                    version INTEGER NOT NULL DEFAULT 1,
+                    source_type VARCHAR(32) NOT NULL DEFAULT 'file',
+                    source_ref VARCHAR(500) NOT NULL,
+                    metrics_json TEXT NOT NULL DEFAULT '{}',
+                    deep_review_md TEXT NOT NULL DEFAULT '',
+                    submitted_at DATETIME NOT NULL,
+                    CONSTRAINT uq_submission_assignment_student_type UNIQUE (assignment_id, student_id, submission_type)
+                );
+                """
+            )
+            conn.exec_driver_sql(
+                """
+                INSERT INTO homework_submissions_v2
+                    (id, assignment_id, student_id, submission_type, version, source_type, source_ref, metrics_json, deep_review_md, submitted_at)
+                SELECT id, assignment_id, student_id, 'comparative', version, source_type, source_ref, metrics_json, deep_review_md, submitted_at
+                FROM homework_submissions;
+                """
+            )
+            conn.exec_driver_sql("DROP TABLE homework_submissions;")
+            conn.exec_driver_sql("ALTER TABLE homework_submissions_v2 RENAME TO homework_submissions;")
+            conn.exec_driver_sql(
+                "CREATE INDEX IF NOT EXISTS ix_homework_submissions_assignment_id ON homework_submissions(assignment_id);"
+            )
+            conn.exec_driver_sql(
+                "CREATE INDEX IF NOT EXISTS ix_homework_submissions_student_id ON homework_submissions(student_id);"
+            )
 
 
 def init_db_engine(database_url: str) -> tuple[Engine, scoped_session[Session]]:

@@ -1002,12 +1002,34 @@ class CourseService:
                 r_exist.student_id_number = student.student_id_number
 
     def request_course_enrollment(
-        self, course_id: int, student_id: int
+        self,
+        course_id: Optional[int] = None,
+        student_id: int = 0,
+        course_number: Optional[str] = None,
     ) -> tuple[Course, Student, str]:
-        """Create or refresh a pending course join request for lecturer roster approval."""
-        course = self.db.get(Course, int(course_id))
-        if course is None:
-            raise CourseError("Course not found.", status_code=404)
+        """Create or refresh a pending course join request by course_id or manual course_number."""
+        course: Optional[Course] = None
+        if course_number is not None and str(course_number).strip():
+            code = str(course_number).strip().upper()
+            course = (
+                self.db.query(Course)
+                .filter(
+                    (func.upper(Course.course_code) == code)
+                    | (func.upper(Course.join_code) == code)
+                )
+                .one_or_none()
+            )
+            if course is None:
+                raise CourseError(
+                    f"No course found with course number '{code}'. Check the number with your lecturer.",
+                    status_code=404,
+                )
+        elif course_id is not None:
+            course = self.db.get(Course, int(course_id))
+            if course is None:
+                raise CourseError("Course not found.", status_code=404)
+        else:
+            raise CourseError("Course number is required.", status_code=400)
         student = self.db.get(Student, int(student_id))
         if student is None:
             raise CourseError("Student not found.", status_code=404)
@@ -1323,7 +1345,7 @@ class CourseService:
                     .count()
                     > 0,
                     "has_summary": self.db.query(LectureArtifact)
-                    .filter_by(session_id=s.id, status="COMPLETED")
+                    .filter_by(session_id=s.id, status="COMPLETED", is_published=True)
                     .count()
                     > 0,
                 }
@@ -1374,7 +1396,8 @@ class CourseService:
                     "sessions": session_cards,
                     "my_attendance_logs": attendance_logs,
                     "lecture_summaries": LectureSummarizerService(self.db).list_course_artifacts(
-                        c.id
+                        c.id,
+                        published_only=True,
                     ),
                     "assignments": HomeworkReviewService(self.db).list_course_assignments(
                         c.id,
@@ -1420,6 +1443,11 @@ class CourseService:
         catalog_courses_ranked.sort(key=lambda item: item[0], reverse=True)
         my_courses = [card for _, card in my_courses_ranked]
         catalog_courses = [card for _, card in catalog_courses_ranked]
+        pending_courses = [
+            card
+            for card in catalog_courses
+            if card.get("enrollment_status") in ("pending", "rejected")
+        ]
 
         return {
             "authenticated": student is not None,
@@ -1438,5 +1466,6 @@ class CourseService:
                 else None
             ),
             "my_courses": my_courses,
+            "pending_courses": pending_courses,
             "all_courses": catalog_courses,
         }

@@ -2317,17 +2317,17 @@ canvas#headcount-canvas {
 .cp-m-drawer-nav {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
 }
 
 .cp-m-drawer-nav .cp-mode-tab,
 .cp-m-drawer-nav .mode-tab {
   justify-content: flex-start;
-  min-height: 48px;
-  padding: 10px 14px;
-  border-radius: 14px;
-  font-size: 14px;
-  gap: 10px;
+  min-height: 40px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  font-size: 13.5px;
+  gap: 9px;
   color: var(--cp-ink-secondary);
 }
 
@@ -2337,6 +2337,96 @@ canvas#headcount-canvas {
   color: var(--cp-ink);
   border-color: rgba(232, 113, 72, 0.30);
   box-shadow: var(--cp-pill-shadow);
+}
+
+.cp-nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.cp-nav-tree {
+  margin-left: 14px;
+  padding-left: 10px;
+  border-left: 1.5px solid var(--cp-border);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cp-nav-tree[hidden] {
+  display: none;
+}
+
+.cp-nav-tree-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 5px 9px;
+  border-radius: 9px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--cp-ink-secondary);
+  font-family: var(--cp-font-sans);
+  font-size: 12.2px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.14s ease, color 0.14s ease;
+}
+
+.cp-nav-tree-item:hover {
+  background: var(--cp-well);
+  color: var(--cp-ink);
+}
+
+.cp-nav-tree-item.active {
+  background: var(--cp-surface-solid);
+  border-color: rgba(232, 113, 72, 0.28);
+  color: var(--cp-ink);
+  font-weight: 700;
+  box-shadow: var(--cp-pill-shadow);
+}
+
+.cp-nav-tree--l2 {
+  margin-left: 12px;
+  padding-left: 9px;
+  border-left: 1.5px solid var(--cp-border-strong);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.cp-nav-tree-sub {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  color: var(--cp-ink-muted);
+  font-family: var(--cp-font-sans);
+  font-size: 11.5px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.14s ease, color 0.14s ease;
+}
+
+.cp-nav-tree-sub:hover {
+  background: var(--cp-well);
+  color: var(--cp-ink);
+}
+
+.cp-nav-tree-sub.active {
+  background: rgba(232, 113, 72, 0.11);
+  color: var(--cp-coral-ink);
+  font-weight: 700;
 }
 
 .cp-m-drawer-room {

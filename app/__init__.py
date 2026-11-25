@@ -37,7 +37,7 @@ def create_app(
     flask_app = Flask(__name__)
     flask_app.config["SECRET_KEY"] = cfg.SECRET_KEY
     flask_app.config["CLASSPULSE_CONFIG"] = cfg
-    flask_app.config["MAX_CONTENT_LENGTH"] = 150 * 1024 * 1024
+    flask_app.config["MAX_CONTENT_LENGTH"] = 500 * 1024 * 1024
     flask_app.extensions["rate_limiter"] = SlidingWindowRateLimiter()
 
     # Trust Cloudflare Tunnel X-Forwarded-* headers for HTTPS/WSS URL generation
@@ -210,6 +210,13 @@ def create_app(
             "<li><code>DELETE /api/lectures/&lt;artifact_id&gt;</code></li></ul>"
             "</body></html>",
             200,
+        )
+
+    @flask_app.errorhandler(413)
+    def handle_request_entity_too_large(_exc):
+        return (
+            jsonify({"error": "Uploaded file exceeds maximum allowed size (500 MB)."}),
+            413,
         )
 
     @flask_app.get("/api/jobs/<job_id>")

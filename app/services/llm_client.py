@@ -33,6 +33,17 @@ def _is_transient_rate_or_server_error(exc: Exception) -> bool:
     )
 
 
+def _is_daily_quota_exhausted(exc: Exception) -> bool:
+    """Return True when the error clearly signals a daily quota exhaustion (fail over immediately)."""
+    msg = str(exc).lower()
+    if "perday" in msg or "generaterequestsperday" in msg:
+        return True
+    m = re.search(r"retry\s*(?:in|delay)[\"']?\s*[:=]?\s*[\"']?(\d+)", msg)
+    if m and int(m.group(1)) >= 60:
+        return True
+    return False
+
+
 def _is_model_not_found_error(exc: Exception) -> bool:
     code = getattr(exc, "code", None) or getattr(exc, "status_code", None)
     if code == 404:
@@ -46,10 +57,11 @@ class GeminiStudioClient:
 
     FALLBACK_MODELS: tuple[str, ...] = (
         "gemini-2.5-flash-lite",
-        "gemini-3.1-flash-lite",
+        "gemini-2.5-flash",
         "gemini-3.5-flash-lite",
-        "gemini-3.6-flash",
-        "gemini-3.7-flash",
+        "gemini-3.5-flash",
+        "gemini-3.1-flash-lite",
+        "gemini-2.5-pro",
     )
 
     def __init__(
@@ -112,6 +124,9 @@ class GeminiStudioClient:
             try:
                 return fn()
             except Exception as exc:
+                if _is_daily_quota_exhausted(exc):
+                    logger.warning("Gemini daily quota exhausted on active model; switching immediately: %s", exc)
+                    raise
                 if _is_transient_rate_or_server_error(exc) and attempt < self.max_retries:
                     delay = self.backoff_base_sec * (2**attempt)
                     logger.warning(
@@ -168,9 +183,12 @@ class GeminiStudioClient:
         prompt: str,
         system_instruction: str = "",
         model: Optional[str] = None,
+        allow_fallback: bool = True,
     ) -> str:
         """Generate free-form Markdown/text via Gemini or deterministic local synthesis."""
         if not self.is_configured():
+            if not allow_fallback:
+                raise RuntimeError("Gemini API key is not configured.")
             return self._local_text_fallback(prompt, system_instruction)
 
         target_model = model or self.fast_model
@@ -190,10 +208,12 @@ class GeminiStudioClient:
             text = getattr(response, "text", None)
             if text and str(text).strip():
                 return str(text).strip()
+            if not allow_fallback:
+                raise RuntimeError("Gemini returned an empty text response.")
             return self._local_text_fallback(prompt, system_instruction)
         except Exception as exc:
-            logger.error("Gemini generate_text failed; using fallback=%s: %s", self.fallback_on_error, exc)
-            if not self.fallback_on_error:
+            logger.error("Gemini generate_text failed; using fallback=%s: %s", self.fallback_on_error and allow_fallback, exc)
+            if not self.fallback_on_error or not allow_fallback:
                 raise
             return self._local_text_fallback(prompt, system_instruction)
 
@@ -248,10 +268,14 @@ class GeminiStudioClient:
         ".mp3": "audio/mpeg",
         ".wav": "audio/wav",
         ".m4a": "audio/mp4",
-        ".mp4": "audio/mp4",
+        ".mp4": "video/mp4",
+        ".mov": "video/quicktime",
+        ".mkv": "video/x-matroska",
+        ".avi": "video/x-msvideo",
+        ".m4v": "video/x-m4v",
         ".ogg": "audio/ogg",
         ".flac": "audio/flac",
-        ".webm": "audio/webm",
+        ".webm": "video/webm",
         ".aac": "audio/aac",
     }
 
@@ -262,7 +286,7 @@ class GeminiStudioClient:
         system_instruction: str = "",
         model: Optional[str] = None,
     ) -> str:
-        """Transcribe a class recording using Google Gemini API (Files API or inline bytes)."""
+        """Transcribe a class recording using Google Gemini API (inline bytes or Files API)."""
         if not self.is_configured():
             raise RuntimeError("Gemini API key is not configured.")
 
@@ -270,10 +294,30 @@ class GeminiStudioClient:
         client = self._get_genai_client()
         mime_type = self.AUDIO_MIME_TYPES.get(audio_path.suffix.lower(), "audio/mpeg")
         uploaded_file: Any = None
+        file_size = audio_path.stat().st_size if audio_path.exists() else 0
 
         try:
-            if hasattr(client, "files"):
-                uploaded_file = client.files.upload(file=str(audio_path))
+            media_part: Any = None
+            prefer_inline = self._client_override is None and file_size <= 15 * 1024 * 1024
+            if prefer_inline:
+                try:
+                    from google.genai import types
+
+                    media_part = types.Part.from_bytes(
+                        data=audio_path.read_bytes(),
+                        mime_type=mime_type,
+                    )
+                except Exception:
+                    media_part = None
+
+            if media_part is None and hasattr(client, "files"):
+                try:
+                    uploaded_file = client.files.upload(
+                        file=str(audio_path),
+                        config={"mime_type": mime_type},
+                    )
+                except TypeError:
+                    uploaded_file = client.files.upload(file=str(audio_path))
                 for _ in range(40):
                     state_obj = getattr(uploaded_file, "state", None)
                     state_name = str(getattr(state_obj, "name", state_obj or "")).upper()
@@ -281,8 +325,8 @@ class GeminiStudioClient:
                         break
                     self._sleep(1.5)
                     uploaded_file = client.files.get(name=uploaded_file.name)
-                media_part: Any = uploaded_file
-            else:
+                media_part = uploaded_file
+            elif media_part is None:
                 from google.genai import types
 
                 media_part = types.Part.from_bytes(
@@ -323,109 +367,230 @@ class GeminiStudioClient:
 
     @staticmethod
     def _local_structured_fallback(prompt: str, schema_cls: type[T]) -> T:
-        """Deterministic static analyzer fallback for structured schemas such as HomeworkMetrics."""
+        """Deterministic content-aware analyzer fallback for HomeworkMetrics grading."""
         field_names = set(schema_cls.model_fields.keys())
         if {"overall_score", "topic_scores", "error_tags"}.issubset(field_names):
-            lower = prompt.lower()
-            has_tests = any(k in lower for k in ("pytest", "unittest", "assert ", "def test_"))
-            has_docstrings = '"""' in prompt or "'''" in prompt or "/**" in prompt
-            has_oop = any(k in lower for k in ("class ", "interface ", "abc", "abstract"))
-            has_error_handling = "try:" in lower or "except " in lower
-            hardcoded_path = bool(re.search(r"[a-zA-Z]:\\\\|/Users/", prompt))
+            marker = "Student Submission Code/Text:"
+            if marker in prompt:
+                header_part, sub_raw = prompt.split(marker, 1)
+            else:
+                header_part, sub_raw = "", prompt
+            submission_text = sub_raw.strip()
+            lower = submission_text.lower()
+            lines = [ln for ln in submission_text.splitlines() if ln.strip()]
+            non_trivial_lines = [
+                ln for ln in lines
+                if not ln.strip().startswith(("#", "//", "/*", "*"))
+                and ln.strip() not in ("pass", "...", "TODO", "todo")
+            ]
 
-            oop_score = 88.0 if has_oop else 64.0
-            test_score = 89.0 if has_tests else 55.0
-            clean_score = 86.0 if (has_docstrings and not hardcoded_path) else 66.0
-            arch_score = 87.0 if (has_oop and has_error_handling) else 68.0
-            details_score = round((clean_score * 0.6 + (90.0 if len(prompt) > 350 else 68.0) * 0.4), 1)
-            overall = round((oop_score + test_score + clean_score + arch_score) / 4.0, 1)
+            char_len = len(submission_text)
+            line_cnt = len(non_trivial_lines)
+            func_or_cls = re.findall(
+                r"(?m)^\s*(?:def |async def |class |public class |function )", submission_text
+            )
+            has_oop = bool(re.search(r"(?m)^\s*(?:class |public class |interface )", submission_text)) or ("abc" in lower and "class " in lower)
+            has_tests = bool(re.findall(r"\b(?:pytest|unittest|def test_|assert\s+|@test)\b", lower))
+            test_count = len(re.findall(r"\b(?:def test_|assert\s+|@test)\b", lower))
+            has_docstrings = ('"""' in submission_text or "'''" in submission_text or "/**" in submission_text)
+            comment_lines = sum(1 for ln in lines if ln.strip().startswith(("#", "//", "*")))
+            has_error_handling = ("try:" in lower and "except" in lower) or bool(
+                re.search(r"\b(?:raise\s+\w+Error|throw\s+new\s+|if\s+not\s+\w+:)\b", lower)
+            )
+            has_control_flow = bool(re.search(r"\b(?:for |while |if |return |yield |switch )\b", lower))
+            is_stub = (
+                char_len < 60
+                or line_cnt <= 2
+                or bool(re.search(r"\b(?:todo|notimplementederror)\b", lower)) and line_cnt < 6
+            )
+            hardcoded_path = bool(re.search(r"[a-zA-Z]:\\\\|/Users/|/home/", submission_text))
+
+            # Rubric / title keyword alignment
+            stop_words = {
+                "assignment", "title", "rubric", "topics", "evaluate", "grade", "submission",
+                "write", "using", "with", "from", "that", "this", "the", "and", "for", "into",
+            }
+            req_tokens = {
+                tok for tok in re.findall(r"[a-z]{4,}", header_part.lower()) if tok not in stop_words
+            }
+            if req_tokens:
+                matched_tokens = sum(1 for tok in req_tokens if tok in lower)
+                relevance_ratio = min(1.0, matched_tokens / max(2, min(6, len(req_tokens))))
+            else:
+                relevance_ratio = 0.65 if char_len > 150 else 0.35
+
+            # Score Materials & Details (0-100)
+            details_score = 32.0
+            details_score += min(28.0, line_cnt * 1.4)
+            details_score += 18.0 * relevance_ratio
+            if has_docstrings:
+                details_score += 12.0
+            elif comment_lines >= 2:
+                details_score += 6.0
+            if is_stub:
+                details_score = min(details_score, 44.0)
+            if hardcoded_path:
+                details_score -= 10.0
+            details_score = round(max(15.0, min(97.0, details_score)), 1)
+
+            # Score Execution Style (0-100)
+            clean_score = 38.0
+            clean_score += min(18.0, len(func_or_cls) * 5.0)
+            if has_docstrings or comment_lines >= 2:
+                clean_score += 18.0
+            elif comment_lines == 1:
+                clean_score += 8.0
+            if line_cnt >= 6:
+                clean_score += 10.0
+            if line_cnt >= 14:
+                clean_score += 8.0
+            if is_stub:
+                clean_score = min(clean_score, 46.0)
+            if hardcoded_path:
+                clean_score -= 18.0
+            clean_score = round(max(18.0, min(97.0, clean_score)), 1)
+
+            # Score Technical Logic & Architecture (0-100)
+            arch_score = 34.0
+            if has_control_flow:
+                arch_score += 14.0
+            if len(func_or_cls) >= 2:
+                arch_score += 12.0
+            elif len(func_or_cls) == 1:
+                arch_score += 6.0
+            if has_oop:
+                arch_score += 14.0
+            if has_error_handling:
+                arch_score += 16.0
+            if is_stub:
+                arch_score = min(arch_score, 42.0)
+            arch_score = round(max(18.0, min(97.0, arch_score)), 1)
+
+            # Score Testing & Verification (0-100)
+            if has_tests:
+                test_score = round(min(96.0, 68.0 + min(24.0, test_count * 7.0) + (4.0 if has_error_handling else 0.0)), 1)
+            elif line_cnt >= 10 and has_error_handling:
+                test_score = 48.0
+            elif line_cnt >= 4:
+                test_score = 36.0
+            else:
+                test_score = 22.0
+
+            oop_score = arch_score
+            overall = round(
+                (details_score * 0.25)
+                + (clean_score * 0.25)
+                + (arch_score * 0.30)
+                + (test_score * 0.20),
+                1,
+            )
 
             strengths: list[str] = []
             weaknesses: list[str] = []
             error_tags: list[str] = []
 
+            if is_stub:
+                weaknesses.append("Submission is minimal or incomplete relative to the assignment requirements.")
+                error_tags.append("incomplete_submission")
             if has_oop:
-                strengths.append("Clean object-oriented class decomposition and encapsulation.")
-            else:
-                weaknesses.append("Logic relies heavily on procedural functions rather than cohesive classes.")
+                strengths.append("Modular class decomposition and encapsulated responsibilities.")
+            elif line_cnt >= 3:
+                weaknesses.append("Uses script/procedural structure without cohesive abstractions.")
                 error_tags.append("low_modularity")
 
             if has_tests:
-                strengths.append("Includes automated test coverage validating core behavior.")
+                strengths.append(f"Includes automated verification/assertions ({test_count} test check(s)).")
             else:
-                weaknesses.append("Missing automated unit tests or edge-case assertions.")
+                weaknesses.append("Missing automated unit tests or verification assertions.")
                 error_tags.append("missing_edge_case_tests")
 
             if has_error_handling:
-                strengths.append("Handles runtime edge cases with explicit try/except guards.")
+                strengths.append("Guards against edge cases or invalid inputs explicitly.")
             else:
-                weaknesses.append("Insufficient error handling around I/O or external calls.")
+                weaknesses.append("Insufficient error handling or validation for edge/failure inputs.")
                 error_tags.append("missing_error_handling")
 
+            if has_docstrings:
+                strengths.append("Clear docstrings/documentation explaining component behavior.")
             if hardcoded_path:
-                weaknesses.append("Contains hardcoded machine-specific filesystem paths.")
+                weaknesses.append("Contains machine-specific hardcoded filesystem paths.")
                 error_tags.append("hardcoded_paths")
 
             if not strengths:
-                strengths.append("Readable baseline structure and clear naming conventions.")
+                strengths.append("Readable baseline syntax submitted successfully.")
 
-            coverage = round(min(98.0, 58.0 + (12.0 if has_oop else 0.0) + (15.0 if has_tests else 0.0) + (10.0 if has_error_handling else 0.0)), 1)
+            coverage = round(
+                max(
+                    15.0,
+                    min(
+                        98.0,
+                        24.0
+                        + min(26.0, line_cnt * 1.3)
+                        + (14.0 if has_oop else 0.0)
+                        + (16.0 if has_tests else 0.0)
+                        + (12.0 if has_error_handling else 0.0)
+                        + (10.0 * relevance_ratio),
+                    ),
+                ),
+                1,
+            )
             categories_payload = [
                 {
                     "category": "Materials & Details",
                     "score": details_score,
                     "note": (
-                        "Good documentation and specification detail coverage."
-                        if has_docstrings and not hardcoded_path
-                        else "Add docstrings/comments and remove hardcoded assumptions."
+                        "Covers deliverables with clear documentation and detail."
+                        if has_docstrings and not is_stub and not hardcoded_path
+                        else "Expand implementation completeness, docstrings, and requirement coverage."
                     ),
                 },
                 {
                     "category": "Execution Style",
                     "score": clean_score,
                     "note": (
-                        "Clean naming and readable structural organization."
-                        if not hardcoded_path
-                        else "Clean up machine-specific literals and improve formatting consistency."
+                        "Clean structure, naming, and readable organization."
+                        if not hardcoded_path and not is_stub
+                        else "Refactor hardcoded literals/stubs into well-structured modules."
                     ),
                 },
                 {
                     "category": "Technical Logic & Architecture",
                     "score": arch_score,
                     "note": (
-                        "Cohesive OOP abstractions with explicit error handling."
-                        if has_oop and has_error_handling
-                        else "Strengthen class encapsulation and explicit try/except guards."
+                        "Cohesive abstractions and explicit runtime error handling."
+                        if (has_oop or len(func_or_cls) >= 2) and has_error_handling
+                        else "Add stronger validation, modularity, and explicit error handling."
                     ),
                 },
                 {
                     "category": "Testing & Verification",
                     "score": test_score,
                     "note": (
-                        "Automated assertions/tests validate core functionality."
+                        "Automated assertions/tests validate expected behavior."
                         if has_tests
-                        else "Add unit tests and edge-case assertions."
+                        else "Add automated pytest/unit tests covering edge and failure cases."
                     ),
                 },
             ]
             payload = {
                 "overall_score": overall,
                 "topic_scores": {
-                    "OOP Design & Patterns": oop_score,
-                    "Automated Testing": test_score,
-                    "Code Quality & Error Handling": clean_score,
-                    "Architecture Modularity": arch_score,
+                    "Completeness & Requirements": details_score,
+                    "Code Quality & Style": clean_score,
+                    "Logic & Architecture": arch_score,
+                    "Testing & Verification": test_score,
                 },
                 "categories": categories_payload,
                 "category_scores": {c["category"]: c["score"] for c in categories_payload},
                 "category_notes": {c["category"]: c["note"] for c in categories_payload},
                 "requirements_coverage_pct": coverage,
                 "strengths": strengths,
-                "weaknesses": weaknesses or ["Minor opportunities to improve edge-case documentation."],
+                "weaknesses": weaknesses or ["Minor opportunities to expand edge-case test coverage."],
                 "error_tags": error_tags or ["minor_style_nit"],
                 "style_summary": (
-                    f"Code demonstrates {'modular OOP abstractions' if has_oop else 'script-style flow'} "
-                    f"with {'automated test coverage' if has_tests else 'manual verification only'}."
+                    f"Submission spans {line_cnt} code line(s) with "
+                    f"{'cohesive OOP/modular structure' if has_oop else 'compact logic'} and "
+                    f"{'automated test assertions' if has_tests else 'no automated test assertions'}."
                 ),
             }
             return schema_cls.model_validate(payload)

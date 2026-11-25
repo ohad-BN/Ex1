@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import subprocess
 import tempfile
@@ -12,7 +13,7 @@ from typing import Any, Callable, Optional
 
 from sqlalchemy.orm import Session
 
-from app.models import ChatMessage, ClassSession, Course, LectureArtifact
+from app.models import ChatMessage, ClassSession, Course, LectureArtifact, utcnow
 from app.services.chat_service import ChatService, format_offset_mmss
 from app.services.llm_client import GeminiStudioClient
 
@@ -23,7 +24,8 @@ VTT_CUE_RE = re.compile(
 )
 PASS1_CHUNK_SIZE = 80
 DIRECT_GEMINI_AUDIO_EXTS = {".mp3", ".m4a", ".wav", ".ogg", ".flac", ".aac"}
-GEMINI_DIRECT_MAX_BYTES = 20 * 1024 * 1024
+VIDEO_MEDIA_EXTS = {".mp4", ".mov", ".webm", ".mkv", ".avi", ".m4v", ".flv", ".3gp"}
+GEMINI_DIRECT_MAX_BYTES = 18 * 1024 * 1024
 
 BUILTIN_SAMPLE_SEGMENTS: list[dict[str, str]] = [
     {
@@ -98,6 +100,60 @@ class LectureSummarizerService:
         self.llm_client = llm_client or GeminiStudioClient()
         self.upload_dir = upload_dir or Path(tempfile.gettempdir())
 
+    def parse_summary_sections(self, summary_markdown: str) -> dict[str, Any]:
+        """Parse summary markdown headings into structured UI sections cleanly."""
+        buckets: dict[str, Any] = {
+            "executive_summary": [],
+            "key_topics": [],
+            "action_items": [],
+            "extra_sections": [],
+        }
+        raw = (summary_markdown or "").strip()
+        if not raw:
+            return buckets
+
+        sections: list[tuple[str, list[str]]] = []
+        current_title = ""
+        current_lines: list[str] = []
+        for raw_line in raw.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            heading_match = re.match(r"^#{1,4}\s+(.+)$", line)
+            if heading_match:
+                if current_title or current_lines:
+                    sections.append((current_title, current_lines))
+                current_title = heading_match.group(1).strip()
+                current_lines = []
+            else:
+                cleaned = re.sub(r"^[-*•]\s+", "", line)
+                cleaned = re.sub(r"^\d+\.\s+", "", cleaned)
+                if cleaned:
+                    current_lines.append(cleaned)
+        if current_title or current_lines:
+            sections.append((current_title, current_lines))
+
+        for title, items in sections:
+            if not items:
+                continue
+            lower_t = title.lower()
+            if not title or any(k in lower_t for k in ("executive", "tl;dr", "tldr", "overview", "summary")):
+                buckets["executive_summary"].extend(items)
+            elif any(k in lower_t for k in ("topic", "takeaway", "breakdown", "chronological", "architecture", "oop", "concept", "finding")):
+                buckets["key_topics"].extend(items)
+            elif any(k in lower_t for k in ("action", "question", "q&a", "prep", "next", "follow")):
+                buckets["action_items"].extend(items)
+            else:
+                buckets["extra_sections"].append({"title": title, "items": items})
+
+        if not any((buckets["executive_summary"], buckets["key_topics"], buckets["action_items"])):
+            all_lines = [it for _t, its in sections for it in its]
+            if all_lines:
+                buckets["executive_summary"] = all_lines[:2]
+                if len(all_lines) > 2:
+                    buckets["key_topics"] = all_lines[2:]
+        return buckets
+
     def serialize_artifact(self, artifact: LectureArtifact) -> dict[str, Any]:
         session = self.db.get(ClassSession, artifact.session_id)
         course = (
@@ -128,42 +184,73 @@ class LectureSummarizerService:
             "raw_transcript": raw_segments,
             "corrected_transcript": corrected_segments,
             "summary_markdown": artifact.summary_markdown,
+            "structured_sections": self.parse_summary_sections(artifact.summary_markdown or ""),
             "status": artifact.status,
+            "is_published": bool(artifact.is_published),
+            "published_at": (
+                artifact.published_at.strftime("%Y-%m-%d %H:%M UTC")
+                if artifact.published_at
+                else None
+            ),
             "error_message": artifact.error_message,
             "created_at": artifact.created_at.strftime("%Y-%m-%d %H:%M UTC"),
         }
 
-    def list_session_artifacts(self, session_id: int) -> list[dict[str, Any]]:
-        rows = (
-            self.db.query(LectureArtifact)
-            .filter_by(session_id=session_id)
-            .order_by(LectureArtifact.id.desc())
-            .all()
-        )
+    def list_session_artifacts(
+        self, session_id: int, *, published_only: bool = False
+    ) -> list[dict[str, Any]]:
+        query = self.db.query(LectureArtifact).filter_by(session_id=session_id)
+        if published_only:
+            query = query.filter(
+                LectureArtifact.status == "COMPLETED",
+                LectureArtifact.is_published.is_(True),
+            )
+        rows = query.order_by(LectureArtifact.id.desc()).all()
         return [self.serialize_artifact(r) for r in rows]
 
-    def list_course_artifacts(self, course_id: int) -> list[dict[str, Any]]:
+    def list_course_artifacts(
+        self, course_id: int, *, published_only: bool = False
+    ) -> list[dict[str, Any]]:
         sessions = (
             self.db.query(ClassSession)
             .filter_by(course_id=course_id)
             .order_by(ClassSession.lecture_number.asc(), ClassSession.id.asc())
             .all()
         )
-        session_order = {s.id: idx for idx, s in enumerate(sessions)}
+        session_order = {
+            s.id: (
+                int(s.lecture_number) if s.lecture_number is not None else 10**9,
+                s.id,
+            )
+            for s in sessions
+        }
         session_ids = [s.id for s in sessions]
         if not session_ids:
             return []
-        rows = (
-            self.db.query(LectureArtifact)
-            .filter(
-                LectureArtifact.session_id.in_(session_ids),
-                LectureArtifact.status == "COMPLETED",
-            )
-            .order_by(LectureArtifact.id.desc())
-            .all()
+        query = self.db.query(LectureArtifact).filter(
+            LectureArtifact.session_id.in_(session_ids),
+            LectureArtifact.status == "COMPLETED",
         )
-        rows.sort(key=lambda r: (session_order.get(r.session_id, 9999), -r.id))
+        if published_only:
+            query = query.filter(LectureArtifact.is_published.is_(True))
+        rows = query.order_by(LectureArtifact.id.desc()).all()
+        rows.sort(key=lambda r: (session_order.get(r.session_id, (10**9, 10**9)), -r.id))
         return [self.serialize_artifact(r) for r in rows]
+
+    def publish_artifact(self, artifact_id: int, publish: bool = True) -> LectureArtifact:
+        """Toggle visibility of a completed lecture summary for enrolled students."""
+        artifact = self.db.get(LectureArtifact, artifact_id)
+        if artifact is None:
+            raise LecturePipelineError("Lecture artifact not found.", status_code=404)
+        if publish and artifact.status != "COMPLETED":
+            raise LecturePipelineError(
+                "Only completed lecture summaries can be published to students.",
+                status_code=400,
+            )
+        artifact.is_published = bool(publish)
+        artifact.published_at = utcnow() if publish else None
+        self.db.commit()
+        return artifact
 
     def parse_transcript_text(self, text: str) -> list[dict[str, str]]:
         """Parse WebVTT/SRT cue blocks, `[MM:SS] line`, or plain prose into timestamped segments."""
@@ -205,13 +292,14 @@ class LectureSummarizerService:
         return segments
 
     def _transcribe_with_gemini(self, media_path: Path) -> list[dict[str, str]]:
-        """Send recording audio (or ffmpeg-extracted MP3) to Google Gemini API for [MM:SS] transcription."""
+        """Send recording audio (or ffmpeg-extracted MP3 for videos) to Google Gemini API for [MM:SS] transcription."""
         ext = media_path.suffix.lower()
         temp_mp3: Optional[Path] = None
         upload_path = media_path
         try:
             needs_audio_extract = (
-                ext not in DIRECT_GEMINI_AUDIO_EXTS
+                ext in VIDEO_MEDIA_EXTS
+                or ext not in DIRECT_GEMINI_AUDIO_EXTS
                 or media_path.stat().st_size > GEMINI_DIRECT_MAX_BYTES
             )
             if needs_audio_extract:
@@ -225,6 +313,8 @@ class LectureSummarizerService:
                     "-vn",
                     "-ac",
                     "1",
+                    "-ar",
+                    "16000",
                     "-b:a",
                     "64k",
                     str(temp_mp3),
@@ -233,10 +323,16 @@ class LectureSummarizerService:
                     cmd,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
-                    timeout=180,
+                    timeout=300,
                 )
                 if proc.returncode == 0 and temp_mp3.exists() and temp_mp3.stat().st_size > 0:
                     upload_path = temp_mp3
+                elif ext in VIDEO_MEDIA_EXTS:
+                    stderr_snippet = proc.stderr.decode("utf-8", errors="ignore").strip()[-300:]
+                    raise LecturePipelineError(
+                        f"Could not extract audio track from video '{media_path.name}': {stderr_snippet or 'no audio stream found.'}",
+                        status_code=400,
+                    )
 
             prompt = (
                 "Transcribe this university lecture recording completely and accurately.\n"
@@ -295,6 +391,13 @@ class LectureSummarizerService:
 
     def transcribe_media_file(self, media_path: Path) -> list[dict[str, str]]:
         """Transcribe uploaded lecture media via Google Gemini API (with local faster-whisper fallback)."""
+        segments, _used_gemini = self._transcribe_media_with_origin(media_path)
+        return segments
+
+    def _transcribe_media_with_origin(
+        self, media_path: Path
+    ) -> tuple[list[dict[str, str]], bool]:
+        """Transcribe uploaded lecture media and report whether Gemini produced the transcript."""
         ext = media_path.suffix.lower()
         if ext in (".txt", ".vtt", ".srt", ".md", ".pdf", ".docx"):
             doc_text = self._extract_document_text(media_path)
@@ -303,13 +406,13 @@ class LectureSummarizerService:
                     f"The uploaded file '{media_path.name}' contained no readable text.",
                     status_code=400,
                 )
-            return self.parse_transcript_text(doc_text)
+            return self.parse_transcript_text(doc_text), False
 
         self.upload_dir.mkdir(parents=True, exist_ok=True)
 
         if self.llm_client.is_configured():
             try:
-                return self._transcribe_with_gemini(media_path)
+                return self._transcribe_with_gemini(media_path), True
             except Exception as exc:
                 logger.warning(
                     "Gemini audio transcription failed for %s; falling back to local faster-whisper: %s",
@@ -335,17 +438,54 @@ class LectureSummarizerService:
                 "1",
                 str(wav_path),
             ]
-            subprocess.run(
+            proc = subprocess.run(
                 cmd,
-                check=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                timeout=120,
+                timeout=300,
             )
-            from faster_whisper import WhisperModel
+            if proc.returncode != 0 or not wav_path.exists() or wav_path.stat().st_size == 0:
+                stderr_msg = proc.stderr.decode("utf-8", errors="ignore").strip()[-300:]
+                raise LecturePipelineError(
+                    f"Audio extraction failed for '{media_path.name}': {stderr_msg or 'invalid media or missing audio track.'}",
+                    status_code=400,
+                )
 
-            model = WhisperModel("base", device="cpu", compute_type="int8")
-            raw_segments, _info = model.transcribe(str(wav_path), vad_filter=True)
+            from faster_whisper import WhisperModel
+            import wave
+            import numpy as np
+
+            with wave.open(str(wav_path), "rb") as wf:
+                raw_pcm = wf.readframes(wf.getnframes())
+            audio_np = np.frombuffer(raw_pcm, dtype=np.int16).astype(np.float32) / 32768.0
+            if audio_np.size == 0:
+                return (
+                    [
+                        {
+                            "offset_mmss": "00:00",
+                            "text": f"Uploaded lecture recording ({media_path.name}) processed; audio track is empty.",
+                        }
+                    ],
+                    False,
+                )
+
+            preferred_whisper = os.getenv("CLASSPULSE_WHISPER_MODEL", "small").strip() or "small"
+            try:
+                model = WhisperModel(preferred_whisper, device="cpu", compute_type="int8")
+            except Exception as model_exc:
+                logger.warning(
+                    "Whisper model '%s' failed to load (%s); falling back to 'base'.",
+                    preferred_whisper,
+                    model_exc,
+                )
+                model = WhisperModel("base", device="cpu", compute_type="int8")
+
+            raw_segments, _info = model.transcribe(
+                audio_np,
+                vad_filter=True,
+                beam_size=5,
+                condition_on_previous_text=True,
+            )
             results: list[dict[str, str]] = []
             for seg in raw_segments:
                 txt = str(getattr(seg, "text", "")).strip()
@@ -356,7 +496,34 @@ class LectureSummarizerService:
                             "text": txt,
                         }
                     )
-            return results or list(BUILTIN_SAMPLE_SEGMENTS)
+            if not results:
+                raw_segments_novad, _info2 = model.transcribe(
+                    audio_np,
+                    vad_filter=False,
+                    beam_size=5,
+                    condition_on_previous_text=True,
+                )
+                for seg in raw_segments_novad:
+                    txt = str(getattr(seg, "text", "")).strip()
+                    if txt:
+                        results.append(
+                            {
+                                "offset_mmss": _format_seconds_mmss(getattr(seg, "start", 0.0)),
+                                "text": txt,
+                            }
+                        )
+            return (
+                results
+                or [
+                    {
+                        "offset_mmss": "00:00",
+                        "text": f"Uploaded lecture recording ({media_path.name}) processed; no clear speech detected in audio track.",
+                    }
+                ],
+                False,
+            )
+        except LecturePipelineError:
+            raise
         except Exception as exc:
             logger.warning("Media ASR fallback triggered for %s: %s", media_path, exc)
             raise LecturePipelineError(
@@ -388,22 +555,26 @@ class LectureSummarizerService:
                 "Fix only technical CS/math/OOP/Hebrew-English ASR spelling errors while keeping "
                 "every `[MM:SS]` prefix exact on each line."
             )
-            corrected_blob = self.llm_client.generate_text(
-                prompt,
-                system_instruction=(
-                    "You are an expert Computer Science lecture editor. Preserve exact "
-                    "[MM:SS] timestamps on every line and fix misheard CS terms."
-                ),
-            )
-            parsed_lines = self.parse_transcript_text(corrected_blob)
-            if len(parsed_lines) == len(chunk):
-                return [
-                    {
-                        "offset_mmss": chunk[idx]["offset_mmss"],
-                        "text": parsed_lines[idx]["text"],
-                    }
-                    for idx in range(len(chunk))
-                ]
+            try:
+                corrected_blob = self.llm_client.generate_text(
+                    prompt,
+                    system_instruction=(
+                        "You are an expert Computer Science lecture editor. Preserve exact "
+                        "[MM:SS] timestamps on every line and fix misheard CS terms."
+                    ),
+                    allow_fallback=False,
+                )
+                parsed_lines = self.parse_transcript_text(corrected_blob)
+                if len(parsed_lines) == len(chunk):
+                    return [
+                        {
+                            "offset_mmss": chunk[idx]["offset_mmss"],
+                            "text": parsed_lines[idx]["text"],
+                        }
+                        for idx in range(len(chunk))
+                    ]
+            except Exception as exc:
+                logger.warning("Pass-1 Gemini correction failed, using local terminology fixes: %s", exc)
 
         return [
             {
@@ -461,17 +632,51 @@ class LectureSummarizerService:
                 "4. Answers to Student Questions Raised in Class Chat (+MM:SS)\n"
                 "5. Action Items"
             )
-            return self.llm_client.generate_text(
-                prompt,
-                system_instruction=(
-                    "Write a clear, concise university study summary grounded strictly "
-                    "in the lecture transcript and student Q&A timeline."
-                ),
+            try:
+                generated_md = self.llm_client.generate_text(
+                    prompt,
+                    system_instruction=(
+                        "Write a clear, concise university study summary grounded strictly "
+                        "in the lecture transcript and student Q&A timeline. "
+                        "Use Markdown headings: ### Executive Summary, ### Key Topics & Takeaways, "
+                        "and ### Action Items & Student Questions."
+                    ),
+                    allow_fallback=False,
+                )
+                if generated_md and generated_md.strip():
+                    return generated_md
+            except Exception as exc:
+                logger.warning("Pass-2 Gemini summary failed, using local summary fallback: %s", exc)
+
+        substantive = [
+            s for s in corrected_segments if str(s.get("text", "")).strip()
+        ]
+        n_segs = len(substantive)
+        first_ts = substantive[0]["offset_mmss"] if substantive else "00:00"
+        last_ts = substantive[-1]["offset_mmss"] if substantive else "00:00"
+
+        exec_lines: list[str] = [
+            f"- Lecture **{lecture_title}** ({course_label}) covers {n_segs} timestamped segment(s) spanning `{first_ts}` to `{last_ts}`."
+        ]
+        if substantive:
+            exec_lines.append(
+                f"- Opening point (`{substantive[0]['offset_mmss']}`): {substantive[0]['text']}"
             )
+            if n_segs >= 3:
+                mid = substantive[n_segs // 2]
+                exec_lines.append(
+                    f"- Core focus (`{mid['offset_mmss']}`): {mid['text']}"
+                )
+            if n_segs >= 2:
+                last = substantive[-1]
+                exec_lines.append(
+                    f"- Closing point (`{last['offset_mmss']}`): {last['text']}"
+                )
 
         topic_bullets = "\n".join(
-            f"- **[{s['offset_mmss']}]** {s['text']}" for s in corrected_segments
-        )
+            f"- **[{s['offset_mmss']}]** {s['text']}" for s in substantive[:24]
+        ) or "- No spoken transcript segments recorded."
+
         if chat_rows:
             qa_bullets = "\n".join(
                 f"- **[{format_offset_mmss(m.offset_seconds)}] {m.author_name} ({m.category}):** "
@@ -479,19 +684,17 @@ class LectureSummarizerService:
                 for m in chat_rows
             )
         else:
-            qa_bullets = "- No student chat questions were logged during this recording."
+            qa_bullets = "- No student chat questions were logged during this lecture."
 
+        exec_block = "\n".join(exec_lines)
         return (
-            f"### Executive Summary (TL;DR)\n"
-            f"Study guide for **{lecture_title}** ({course_label}), combining local ASR "
-            f"domain correction ({len(corrected_segments)} segments) with timestamped class Q&A.\n\n"
-            f"### Chronological Lecture Breakdown\n{topic_bullets}\n\n"
-            f"### Key OOP & Architecture Takeaways\n"
-            f"- Clean interface adapters (`Bridge` / `Dependency Inversion`) decouple external services from core logic.\n"
-            f"- Keep analytical pipelines incremental (`O(1)`) and verify concurrency behavior with `pytest`.\n\n"
-            f"### Answers to Student Questions from Class Chat\n{qa_bullets}\n\n"
-            f"### Action Items & Next Lecture Prep\n"
-            f"- Review the `[MM:SS]` checkpoints above and verify unit tests pass cleanly."
+            f"### Executive Summary\n"
+            f"{exec_block}\n\n"
+            f"### Key Topics & Takeaways\n"
+            f"{topic_bullets}\n\n"
+            f"### Action Items & Student Questions\n"
+            f"{qa_bullets}\n"
+            f"- Review the timestamped checkpoints from `{first_ts}` to `{last_ts}` in **{lecture_title}**."
         )
 
     def _set_artifact_stage(
@@ -514,6 +717,8 @@ class LectureSummarizerService:
         artifact: LectureArtifact,
         raw_segments: list[dict[str, str]],
         on_status: Optional[Callable[[dict[str, Any]], None]] = None,
+        *,
+        skip_pass1_llm: bool = False,
     ) -> LectureArtifact:
         course = self.db.get(Course, session.course_id) if session.course_id else None
         course_label = f"{course.course_code} — {course.name}" if course else "ClassPulse Course"
@@ -529,12 +734,21 @@ class LectureSummarizerService:
         artifact.raw_transcript_json = json.dumps(raw_segments)
         self._set_artifact_stage(artifact, "AI_CORRECTING", on_status=on_status)
 
-        corrected_segments = self._run_pass1_correction(
-            raw_segments=raw_segments,
-            course_label=course_label,
-            lecture_title=session.title,
-            chat_timeline=chat_timeline,
-        )
+        if skip_pass1_llm:
+            corrected_segments = [
+                {
+                    "offset_mmss": seg["offset_mmss"],
+                    "text": apply_domain_terminology_fixes(seg["text"]),
+                }
+                for seg in raw_segments
+            ]
+        else:
+            corrected_segments = self._run_pass1_correction(
+                raw_segments=raw_segments,
+                course_label=course_label,
+                lecture_title=session.title,
+                chat_timeline=chat_timeline,
+            )
         artifact.corrected_transcript_json = json.dumps(corrected_segments)
         self._set_artifact_stage(artifact, "SUMMARIZING", on_status=on_status)
 
@@ -591,6 +805,7 @@ class LectureSummarizerService:
             self.db.add(artifact)
             self.db.flush()
 
+        used_gemini_transcribe = False
         try:
             if use_sample:
                 raw_segments = list(BUILTIN_SAMPLE_SEGMENTS)
@@ -614,13 +829,14 @@ class LectureSummarizerService:
                     self._set_artifact_stage(artifact, "COMPLETED", on_status=on_status)
                     return artifact
                 self._set_artifact_stage(artifact, "TRANSCRIBING", on_status=on_status)
-                raw_segments = self.transcribe_media_file(media_path)
+                raw_segments, used_gemini_transcribe = self._transcribe_media_with_origin(media_path)
 
             return self._synthesize_into_artifact(
                 session=session,
                 artifact=artifact,
                 raw_segments=raw_segments,
                 on_status=on_status,
+                skip_pass1_llm=used_gemini_transcribe,
             )
         except Exception as exc:
             err_msg = exc.message if isinstance(exc, LecturePipelineError) else str(exc)

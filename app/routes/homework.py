@@ -4,7 +4,7 @@ import re
 from pathlib import Path
 from typing import Any, Optional
 
-from flask import Blueprint, current_app, jsonify, request
+from flask import Blueprint, current_app, jsonify, request, send_file
 from sqlalchemy.orm import sessionmaker
 from werkzeug.utils import secure_filename
 
@@ -66,9 +66,10 @@ def list_course_assignments(course_id: int):
     if err is not None:
         return err
 
+    is_lecturer_view = bool(lecturer is not None and explicit_student_id is None)
     student_id = (
         None
-        if lecturer is not None and explicit_student_id is None
+        if is_lecturer_view
         else (student.id if student is not None else _resolve_student_id({}))
     )
     include_subs = str(request.args.get("include_submissions", "")).lower() in ("1", "true", "yes")
@@ -76,7 +77,10 @@ def list_course_assignments(course_id: int):
     return jsonify(
         {
             "assignments": svc.list_course_assignments(
-                course_id, student_id=student_id, include_submissions=effective_include_subs
+                course_id,
+                student_id=student_id,
+                include_submissions=effective_include_subs,
+                for_lecturer=is_lecturer_view,
             )
         }
     )
@@ -149,6 +153,11 @@ def get_assignment_detail(assignment_id: int):
     if assignment is None:
         return jsonify({"error": "Assignment not found."}), 404
 
+    req_course_id = request.args.get("course_id", type=int)
+    if req_course_id is not None and int(assignment.course_id or 0) != int(req_course_id):
+        return jsonify({"error": "Assignment does not belong to this course."}), 404
+
+    is_lecturer_view = False
     can_view_all_subs = True
     student_id = _resolve_student_id({})
     if assignment.course_id is not None:
@@ -160,12 +169,16 @@ def get_assignment_detail(assignment_id: int):
             return err
         if lecturer is not None and explicit_student_id is None:
             student_id = None
+            is_lecturer_view = True
         elif student is not None:
             student_id = student.id
 
     return jsonify(
         svc.serialize_assignment(
-            assignment, student_id=student_id, include_submissions=can_view_all_subs
+            assignment,
+            student_id=student_id,
+            include_submissions=can_view_all_subs,
+            for_lecturer=is_lecturer_view,
         )
     )
 
@@ -192,6 +205,31 @@ def submit_assignment_homework(assignment_id: int):
     assignment = db.get(Assignment, assignment_id)
     if assignment is None:
         return jsonify({"error": "Assignment not found."}), 404
+
+    req_course_id = payload.get("course_id") or request.args.get("course_id")
+    if req_course_id not in (None, ""):
+        try:
+            if int(req_course_id) != int(assignment.course_id or 0):
+                return jsonify({"error": "Course/assignment mismatch: refusing cross-course submission."}), 400
+        except (TypeError, ValueError):
+            return jsonify({"error": "Invalid course_id."}), 400
+
+    req_assign_num = payload.get("assignment_number")
+    if req_assign_num not in (None, ""):
+        try:
+            if int(req_assign_num) != int(assignment.assignment_number or 1):
+                return jsonify({"error": "Assignment number mismatch: please refresh and retry."}), 400
+        except (TypeError, ValueError):
+            return jsonify({"error": "Invalid assignment_number."}), 400
+
+    req_assign_title = str(payload.get("assignment_title") or "").strip()
+    if req_assign_title and req_assign_title.lower() != str(assignment.title or "").strip().lower():
+        return jsonify({"error": "Assignment title mismatch: please refresh and retry."}), 400
+
+    submission_type = str(payload.get("submission_type") or "comparative").strip().lower()
+    if submission_type not in ("comparative", "final"):
+        return jsonify({"error": "submission_type must be 'comparative' or 'final'."}), 400
+
     if assignment.course_id is not None:
         parent_course = db.get(Course, assignment.course_id)
         if (
@@ -212,7 +250,14 @@ def submit_assignment_homework(assignment_id: int):
         safe_ext = raw_suffix if re.fullmatch(r"\.[a-z0-9]{1,10}", raw_suffix) else ".txt"
         safe_stem = secure_filename(orig_name.stem) or "submission"
         clean_name = f"{safe_stem}{safe_ext}"
-        dest_dir = Path(cfg.UPLOAD_DIR) / f"homework_{assignment_id}"
+        title_slug = secure_filename(str(assignment.title or ""))[:48] or f"a{assignment.id}"
+        assign_num = int(assignment.assignment_number or 1)
+        dest_dir = (
+            Path(cfg.UPLOAD_DIR)
+            / f"course_{int(assignment.course_id or 0)}"
+            / f"assignment_{assignment.id}_num_{assign_num}_{title_slug}"
+            / submission_type
+        )
         dest_dir.mkdir(parents=True, exist_ok=True)
         saved_file = dest_dir / f"student_{student_id}_{clean_name}"
         fs.save(str(saved_file))
@@ -257,9 +302,13 @@ def submit_assignment_homework(assignment_id: int):
                         file_path=saved_file,
                         github_url=github_url,
                         generate_review=gen_review,
+                        submission_type=submission_type,
                     )
                     bg_stats = bg_db.get(ClassStatsAggregate, assignment_id)
-                    serialized_sub = bg_svc.serialize_submission(sub, stats=bg_stats)
+                    serialized_sub = bg_svc.serialize_submission(
+                        sub,
+                        stats=bg_stats if submission_type == "comparative" else None,
+                    )
                     _emit_to_course_rooms(
                         bg_db,
                         course_id,
@@ -268,10 +317,11 @@ def submit_assignment_homework(assignment_id: int):
                             "assignment_id": assignment_id,
                             "course_id": course_id,
                             "student_id": student_id,
+                            "submission_type": submission_type,
                             "submission": serialized_sub,
                         },
                     )
-                    if bg_stats is not None:
+                    if submission_type == "comparative" and bg_stats is not None:
                         _emit_to_course_rooms(
                             bg_db,
                             course_id,
@@ -282,6 +332,17 @@ def submit_assignment_homework(assignment_id: int):
                                 "cohort_stats": CohortAggregator.build_anonymized_cohort_snapshot(
                                     bg_stats
                                 ),
+                            },
+                        )
+                    elif submission_type == "final":
+                        _emit_to_course_rooms(
+                            bg_db,
+                            course_id,
+                            "assignment:final_submitted",
+                            {
+                                "assignment_id": assignment_id,
+                                "course_id": course_id,
+                                "student_id": student_id,
                             },
                         )
                     return serialized_sub
@@ -322,24 +383,79 @@ def submit_assignment_homework(assignment_id: int):
             file_path=saved_file,
             github_url=github_url,
             generate_review=gen_review,
+            submission_type=submission_type,
         )
     except HomeworkPipelineError as exc:
         return jsonify({"error": exc.message}), exc.status_code
 
     stats = db.get(ClassStatsAggregate, assignment_id)
     assignment = db.get(Assignment, assignment_id)
+    serialized_sub = svc.serialize_submission(
+        sub,
+        stats=stats if submission_type == "comparative" else None,
+    )
     if stats is not None and assignment is not None:
         _emit_to_course_rooms(
             db,
             assignment.course_id,
-            "assignment:cohort_updated",
+            "assignment:review_ready",
             {
                 "assignment_id": assignment_id,
                 "course_id": assignment.course_id,
-                "cohort_stats": CohortAggregator.build_anonymized_cohort_snapshot(stats),
+                "student_id": student_id,
+                "submission_type": submission_type,
+                "submission": serialized_sub,
             },
         )
-    return jsonify(svc.serialize_submission(sub, stats=stats)), 201
+        if submission_type == "comparative":
+            _emit_to_course_rooms(
+                db,
+                assignment.course_id,
+                "assignment:cohort_updated",
+                {
+                    "assignment_id": assignment_id,
+                    "course_id": assignment.course_id,
+                    "cohort_stats": CohortAggregator.build_anonymized_cohort_snapshot(stats),
+                },
+            )
+        elif submission_type == "final":
+            _emit_to_course_rooms(
+                db,
+                assignment.course_id,
+                "assignment:final_submitted",
+                {
+                    "assignment_id": assignment_id,
+                    "course_id": assignment.course_id,
+                    "student_id": student_id,
+                },
+            )
+    return jsonify(serialized_sub), 201
+
+
+@homework_bp.get("/api/submissions/<int:submission_id>/download")
+def download_submission_file(submission_id: int):
+    db = current_app.extensions["db_session"]
+    sub = db.get(HomeworkSubmission, submission_id)
+    if sub is None:
+        return jsonify({"error": "Submission not found."}), 404
+    assignment = db.get(Assignment, sub.assignment_id)
+    if assignment is not None and assignment.course_id is not None:
+        course = db.get(Course, assignment.course_id)
+        if course is not None and course.lecturer_id is not None:
+            lec = get_current_lecturer()
+            st_id = _resolve_student_id({})
+            allowed = (
+                (lec is not None and is_lecturer_authorized_for_course(db, course, lec.id))
+                or (lec is None and st_id is not None and int(st_id) == int(sub.student_id))
+            )
+            if not allowed:
+                return jsonify({"error": "Access denied for this homework submission."}), 403
+    if sub.source_type != "file" or not sub.source_ref:
+        return jsonify({"error": "No uploaded file attached to this submission."}), 404
+    file_path = Path(sub.source_ref)
+    if not file_path.exists() or not file_path.is_file():
+        return jsonify({"error": "Submitted file not found on disk."}), 404
+    return send_file(file_path, as_attachment=True, download_name=file_path.name)
 
 
 @homework_bp.post("/api/submissions/<int:submission_id>/deep-review")

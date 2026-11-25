@@ -275,7 +275,7 @@ def parse_roster_upload(
 
 
 def validate_image_magic_bytes(data: bytes) -> bool:
-    """Verify uploaded headcount photo begins with JPEG, PNG, GIF, or WebP magic bytes."""
+    """Verify uploaded headcount photo is a valid JPEG, PNG, GIF, WebP, BMP, or TIFF image."""
     if not data or len(data) < 12:
         return False
     if data[:3] == b"\xff\xd8\xff":
@@ -286,7 +286,16 @@ def validate_image_magic_bytes(data: bytes) -> bool:
         return True
     if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
         return True
-    return False
+    if data[:2] == b"BM" or data[:4] in (b"II*\x00", b"MM\x00*"):
+        return True
+    try:
+        from PIL import Image
+
+        with Image.open(io.BytesIO(data)) as img:
+            img.verify()
+        return True
+    except Exception:
+        return False
 
 
 def generate_deterministic_session_code(

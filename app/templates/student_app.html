@@ -72,11 +72,7 @@
                 aria-controls="student-profile-popover"
                 onclick="toggleStudentProfilePopover(event)">
           <span id="student-identity-line" style="min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
-            {% if dashboard.authenticated %}
-              {{ dashboard.student.full_name }}
-            {% else %}
-              Guest Student
-            {% endif %}
+            <span id="student-greeting-prefix"></span>{% if dashboard.authenticated %}{{ dashboard.student.full_name }}{% else %}Guest Student{% endif %}
           </span>
           <span aria-hidden="true" style="font-size:11px; color:var(--cp-ink-muted);">&#9662;</span>
         </button>
@@ -114,23 +110,37 @@
     </div>
 
     <div>
-      <div class="cp-eyebrow" style="padding:0 4px 6px 4px;">Navigation</div>
+      <div class="cp-eyebrow" style="padding:0 4px 5px 4px;">Navigation</div>
       <nav class="cp-m-drawer-nav" aria-label="Student workspace sections">
-        <button type="button" id="nav-student-courses" class="cp-mode-tab mode-tab active" onclick="openSidebarSection('courses')">
-          {{ cp_icon('book-open', 17) }}
-          <span style="flex:1; text-align:left;">Courses</span>
-          <span id="courses-new-dot" class="cp-notif-dot" hidden></span>
-        </button>
-        <button type="button" id="nav-student-assignments" class="cp-mode-tab mode-tab" onclick="openSidebarSection('course-assignments')">
-          {{ cp_icon('award', 17) }}
-          <span style="flex:1; text-align:left;">Assignments</span>
-          <span id="study-new-dot" class="cp-notif-dot" style="display:none;"></span>
-        </button>
-        <button type="button" id="nav-student-summaries" class="cp-mode-tab mode-tab" onclick="openSidebarSection('course-summaries')">
-          {{ cp_icon('file-text', 17) }}
-          <span style="flex:1; text-align:left;">Summaries</span>
-          <span id="summaries-new-dot" class="cp-notif-dot" hidden></span>
-        </button>
+        <div class="cp-nav-group">
+          <button type="button" id="nav-student-courses" class="cp-mode-tab mode-tab active" onclick="openSidebarSection('courses')">
+            {{ cp_icon('book-open', 16) }}
+            <span style="flex:1; text-align:left;">Courses</span>
+            <span id="courses-new-dot" class="cp-notif-dot" hidden></span>
+            <span data-tree-chev="courses" aria-hidden="true" style="font-size:10px; opacity:0.65;">&#9662;</span>
+          </button>
+          <div id="nav-tree-courses" class="cp-nav-tree"></div>
+        </div>
+
+        <div class="cp-nav-group">
+          <button type="button" id="nav-student-assignments" class="cp-mode-tab mode-tab" onclick="openSidebarSection('course-assignments')">
+            {{ cp_icon('award', 16) }}
+            <span style="flex:1; text-align:left;">Assignments</span>
+            <span id="study-new-dot" class="cp-notif-dot" style="display:none;"></span>
+            <span data-tree-chev="assignments" aria-hidden="true" style="font-size:10px; opacity:0.65;">&#9656;</span>
+          </button>
+          <div id="nav-tree-assignments" class="cp-nav-tree" hidden></div>
+        </div>
+
+        <div class="cp-nav-group">
+          <button type="button" id="nav-student-summaries" class="cp-mode-tab mode-tab" onclick="openSidebarSection('course-summaries')">
+            {{ cp_icon('file-text', 16) }}
+            <span style="flex:1; text-align:left;">Summaries</span>
+            <span id="summaries-new-dot" class="cp-notif-dot" hidden></span>
+            <span data-tree-chev="summaries" aria-hidden="true" style="font-size:10px; opacity:0.65;">&#9656;</span>
+          </button>
+          <div id="nav-tree-summaries" class="cp-nav-tree" hidden></div>
+        </div>
       </nav>
     </div>
   </aside>
@@ -408,15 +418,53 @@
   }
 
   function getCourseAssignments(courseId) {
-    if (ASSIGNMENTS_BY_COURSE[courseId]) return ASSIGNMENTS_BY_COURSE[courseId];
-    const c = findFullCourseById(courseId);
-    return (c && Array.isArray(c.assignments)) ? c.assignments : [];
+    const cidNum = Number(courseId);
+    if (!cidNum) return [];
+    const raw = ASSIGNMENTS_BY_COURSE[courseId]
+      || ((findFullCourseById(courseId) || {}).assignments)
+      || [];
+    return raw.filter(a => Number(a.course_id) === cidNum);
+  }
+
+  function getTimeBasedGreeting(dateObj) {
+    try {
+      const h = (dateObj || new Date()).getHours();
+      if (h >= 5 && h < 12) return "Good Morning";
+      if (h >= 12 && h < 18) return "Good Afternoon";
+      if (h >= 18 && h < 22) return "Good Evening";
+      return "Good Night";
+    } catch (_err) {
+      return "Hello";
+    }
+  }
+
+  function updateStudentGreeting() {
+    const el = document.getElementById("student-greeting-prefix");
+    if (el) el.textContent = `${getTimeBasedGreeting()}, `;
+  }
+  updateStudentGreeting();
+  setInterval(updateStudentGreeting, 60000);
+
+  let SIDEBAR_EXPANDED_SECTION = "courses";
+  let SIDEBAR_EXPANDED_COURSE_ID = null;
+
+  function sortSummariesSequential(artifacts) {
+    return [...(artifacts || [])].sort((a, b) => {
+      const la = a.lecture_number != null ? Number(a.lecture_number) : 999999;
+      const lb = b.lecture_number != null ? Number(b.lecture_number) : 999999;
+      if (la !== lb) return la - lb;
+      const sa = Number(a.session_id || 0);
+      const sb = Number(b.session_id || 0);
+      if (sa !== sb) return sa - sb;
+      return Number(b.id || 0) - Number(a.id || 0);
+    });
   }
 
   function getCourseSummaries(courseId) {
-    if (SUMMARIES_BY_COURSE[courseId]) return SUMMARIES_BY_COURSE[courseId];
-    const c = findFullCourseById(courseId);
-    return (c && Array.isArray(c.lecture_summaries)) ? c.lecture_summaries : [];
+    const raw = SUMMARIES_BY_COURSE[courseId]
+      ? SUMMARIES_BY_COURSE[courseId]
+      : ((findFullCourseById(courseId) || {}).lecture_summaries || []);
+    return sortSummariesSequential(raw.filter(a => a && a.is_published !== false));
   }
 
   function updateBackButtonVisibility() {
@@ -427,13 +475,127 @@
   }
 
   function updateSidebarNavActive(screenName) {
+    const st = currentScreenState();
+    const isGlobalScope = st.scope === "global" || !st.courseId;
     document.querySelectorAll("#student-nav-drawer .cp-mode-tab").forEach(el => el.classList.remove("active"));
     if (screenName === "course-assignments" || screenName === "assignment-detail") {
       document.getElementById("nav-student-assignments")?.classList.add("active");
+      if (st.screen === "course-assignments" && isGlobalScope) SIDEBAR_EXPANDED_SECTION = "assignments";
     } else if (screenName === "course-summaries") {
       document.getElementById("nav-student-summaries")?.classList.add("active");
+      if (isGlobalScope) SIDEBAR_EXPANDED_SECTION = "summaries";
     } else {
       document.getElementById("nav-student-courses")?.classList.add("active");
+      if (st.courseId) {
+        SIDEBAR_EXPANDED_SECTION = "courses";
+        SIDEBAR_EXPANDED_COURSE_ID = Number(st.courseId);
+      }
+    }
+    if (st.courseId && (st.screen === "course-hub" || st.screen === "course-lectures" || st.screen === "course-attendance" || st.screen === "course-info" || st.screen === "lecture")) {
+      SIDEBAR_EXPANDED_SECTION = "courses";
+      SIDEBAR_EXPANDED_COURSE_ID = Number(st.courseId);
+    }
+  }
+
+  function selectSidebarCourseBranch(courseId) {
+    SIDEBAR_EXPANDED_SECTION = "courses";
+    SIDEBAR_EXPANDED_COURSE_ID = Number(courseId);
+    openCourseHub(Number(courseId));
+  }
+
+  function renderStudentSidebarTree() {
+    const courses = getStudentCoursesPool();
+    const st = currentScreenState();
+    const coursesTree = document.getElementById("nav-tree-courses");
+    const assignTree = document.getElementById("nav-tree-assignments");
+    const sumTree = document.getElementById("nav-tree-summaries");
+    const activeCid = Number(st.courseId || CURRENT_COURSE_ID || 0);
+
+    const setTreeState = (key, el) => {
+      const open = SIDEBAR_EXPANDED_SECTION === key;
+      if (el) el.hidden = !open;
+      const chev = document.querySelector(`[data-tree-chev="${key}"]`);
+      if (chev) chev.innerHTML = open ? "&#9662;" : "&#9656;";
+    };
+    setTreeState("courses", coursesTree);
+    setTreeState("assignments", assignTree);
+    setTreeState("summaries", sumTree);
+
+    const visibleCourses = courses.slice(0, 6);
+    if (coursesTree) {
+      if (!visibleCourses.length) {
+        coursesTree.innerHTML = `<div class="cp-muted" style="font-size:11.5px; padding:4px 8px;">No enrolled courses yet</div>`;
+      } else {
+        coursesTree.innerHTML = visibleCourses.map(c => {
+          const cid = Number(c.id);
+          const isExpanded = Number(SIDEBAR_EXPANDED_COURSE_ID) === cid;
+          const isHubActive = isExpanded && st.screen === "course-hub";
+          const subActive = (scr) => (Number(st.courseId) === cid && (st.screen === scr || (scr === "course-lectures" && st.screen === "lecture") || (scr === "course-assignments" && st.screen === "assignment-detail")));
+          const subHtml = isExpanded ? `
+            <div id="nav-tree-course-sub-${cid}" class="cp-nav-tree--l2">
+              <button type="button" class="cp-nav-tree-sub ${subActive('course-lectures') ? 'active' : ''}" data-tree-course-sub="lectures" onclick="navigateStudent({ screen: 'course-lectures', courseId: ${cid} })">Lectures</button>
+              <button type="button" class="cp-nav-tree-sub ${subActive('course-assignments') ? 'active' : ''}" data-tree-course-sub="assignments" onclick="navigateStudent({ screen: 'course-assignments', courseId: ${cid}, scope: 'course' })">Assignments</button>
+              <button type="button" class="cp-nav-tree-sub ${subActive('course-summaries') ? 'active' : ''}" data-tree-course-sub="summaries" onclick="navigateStudent({ screen: 'course-summaries', courseId: ${cid}, scope: 'course' })">Summaries</button>
+              <button type="button" class="cp-nav-tree-sub ${subActive('course-attendance') ? 'active' : ''}" data-tree-course-sub="attendance" onclick="navigateStudent({ screen: 'course-attendance', courseId: ${cid} })">Attendance</button>
+              <button type="button" class="cp-nav-tree-sub ${subActive('course-info') ? 'active' : ''}" data-tree-course-sub="info" onclick="navigateStudent({ screen: 'course-info', courseId: ${cid} })">Course Info</button>
+            </div>
+          ` : "";
+          return `
+            <div style="display:flex; flex-direction:column; gap:2px;">
+              <button type="button"
+                      class="cp-nav-tree-item ${isHubActive ? 'active' : ''}"
+                      data-tree-course-id="${cid}"
+                      onclick="selectSidebarCourseBranch(${cid})">
+                <span style="min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(c.name)}</span>
+                <span style="font-size:9px; opacity:0.6;">${isExpanded ? '&#9662;' : '&#9656;'}</span>
+              </button>
+              ${subHtml}
+            </div>
+          `;
+        }).join("");
+      }
+    }
+
+    if (assignTree) {
+      if (!visibleCourses.length) {
+        assignTree.innerHTML = `<div class="cp-muted" style="font-size:11.5px; padding:4px 8px;">Enroll in a course first</div>`;
+      } else {
+        assignTree.innerHTML = visibleCourses.map(c => {
+          const cid = Number(c.id);
+          const cnt = getCourseAssignments(cid).length;
+          const isAct = (st.screen === "course-assignments" || st.screen === "assignment-detail") && st.scope !== "global" && activeCid === cid;
+          return `
+            <button type="button"
+                    class="cp-nav-tree-item ${isAct ? 'active' : ''}"
+                    data-tree-assign-course="${cid}"
+                    onclick="navigateStudent({ screen: 'course-assignments', courseId: ${cid}, scope: 'course' })">
+              <span style="min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(c.name)}</span>
+              <span class="cp-tabular" style="font-size:10.5px; opacity:0.75;">${cnt}</span>
+            </button>
+          `;
+        }).join("");
+      }
+    }
+
+    if (sumTree) {
+      if (!visibleCourses.length) {
+        sumTree.innerHTML = `<div class="cp-muted" style="font-size:11.5px; padding:4px 8px;">Enroll in a course first</div>`;
+      } else {
+        sumTree.innerHTML = visibleCourses.map(c => {
+          const cid = Number(c.id);
+          const cnt = getCourseSummaries(cid).length;
+          const isAct = st.screen === "course-summaries" && st.scope !== "global" && activeCid === cid;
+          return `
+            <button type="button"
+                    class="cp-nav-tree-item ${isAct ? 'active' : ''}"
+                    data-tree-summary-course="${cid}"
+                    onclick="navigateStudent({ screen: 'course-summaries', courseId: ${cid}, scope: 'course' })">
+              <span style="min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(c.name)}</span>
+              <span class="cp-tabular" style="font-size:10.5px; opacity:0.75;">${cnt}</span>
+            </button>
+          `;
+        }).join("");
+      }
     }
   }
 
@@ -444,6 +606,7 @@
     if (target) target.classList.add("active");
 
     updateSidebarNavActive(st.screen);
+    renderStudentSidebarTree();
     updateBackButtonVisibility();
 
     const titleEl = document.getElementById("m-topbar-title");
@@ -614,19 +777,23 @@
 
   function openSidebarSection(targetScreen) {
     if (targetScreen === "courses") {
+      SIDEBAR_EXPANDED_SECTION = "courses";
       navigateStudent({ screen: "courses" });
       return;
     }
-    const cur = currentScreenState();
-    const inCourseScope = cur.screen !== "courses" && cur.courseId;
-    if (inCourseScope) {
-      navigateStudent({ screen: targetScreen, courseId: cur.courseId, scope: "course" });
+    if (targetScreen === "course-assignments") {
+      SIDEBAR_EXPANDED_SECTION = "assignments";
+      STUDENT_STACK.splice(0, STUDENT_STACK.length, { screen: "courses" });
+      navigateStudent({ screen: "course-assignments", courseId: null, scope: "global" });
       return;
     }
-    const pool = getStudentCoursesPool();
-    const firstCourseId = (pool[0] && pool[0].id) || null;
-    STUDENT_STACK.splice(0, STUDENT_STACK.length, { screen: "courses" });
-    navigateStudent({ screen: targetScreen, courseId: firstCourseId, scope: "global" });
+    if (targetScreen === "course-summaries") {
+      SIDEBAR_EXPANDED_SECTION = "summaries";
+      STUDENT_STACK.splice(0, STUDENT_STACK.length, { screen: "courses" });
+      navigateStudent({ screen: "course-summaries", courseId: null, scope: "global" });
+      return;
+    }
+    navigateStudent({ screen: targetScreen, courseId: null, scope: "global" });
   }
 
   function closeStudentPopovers() {
@@ -958,7 +1125,67 @@
     return { label: "Absent", badgeClass: "cp-badge--red" };
   }
 
-  // LEVEL 0: Courses Home (Enrolled Courses + Remote Available Courses)
+  async function requestJoinCourseByNumber() {
+    const inputEl = document.getElementById("join-course-code-input");
+    const btnEl = document.getElementById("btn-join-course-by-number");
+    const fbEl = document.getElementById("join-course-feedback");
+    const code = (inputEl ? inputEl.value : "").trim();
+    const showFb = (msg, kind) => {
+      if (!fbEl) return;
+      fbEl.textContent = msg || "";
+      fbEl.style.color = kind === "error" ? "var(--cp-red-ink)" : (kind === "success" ? "var(--cp-green-ink)" : "var(--cp-indigo-ink)");
+    };
+
+    if (!STATE.student) {
+      showFb("Sign in with your Full Name and ID Number first.", "error");
+      focusStudentSignIn();
+      return;
+    }
+    if (!code) {
+      showFb("Please enter a Course Number (e.g. CS204).", "error");
+      inputEl?.focus();
+      return;
+    }
+    if (btnEl) {
+      btnEl.disabled = true;
+      btnEl.textContent = "Sending Request...";
+    }
+    showFb("Sending join request to the lecturer...", "info");
+    try {
+      const res = await fetch("/api/student/enroll-request", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ course_number: code }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showFb(data.error || "Course not found or request failed.", "error");
+        return;
+      }
+      if (data.dashboard) {
+        STATE = data.dashboard;
+        if (inputEl) inputEl.value = "";
+        renderCourses();
+      }
+      const nextFb = document.getElementById("join-course-feedback");
+      if (nextFb) {
+        nextFb.style.color = "var(--cp-green-ink)";
+        nextFb.textContent = data.status === "APPROVED"
+          ? "Enrolled! Course added to your list."
+          : "Request sent! Waiting for lecturer approval.";
+      }
+    } catch (_err) {
+      showFb("Network error while sending join request.", "error");
+    } finally {
+      const latestBtn = document.getElementById("btn-join-course-by-number");
+      if (latestBtn) {
+        latestBtn.disabled = false;
+        latestBtn.textContent = "Request to Join";
+      }
+    }
+  }
+
+  // LEVEL 0: Courses Home (Enrolled Courses + Manual Join by Course Number)
   function renderCourses() {
     const listEl = document.getElementById("courses-list");
     const availEl = document.getElementById("available-courses-wrap");
@@ -966,15 +1193,12 @@
 
     const unread = getUnreadSummarySafe();
     const myCourses = getStudentCoursesPool();
-    const enrolledIds = new Set(myCourses.map(c => Number(c.id)));
-    const availableCourses = sortCoursesByRecentLecture(
-      (STATE.all_courses || []).filter(c => !enrolledIds.has(Number(c.id)))
-    );
+    const pendingCourses = sortCoursesByRecentLecture(STATE.pending_courses || []);
 
     if (!myCourses.length) {
       listEl.innerHTML = `<div class="cp-card cp-muted" style="font-size:14px; text-align:center; grid-column:1 / -1;">${
         STATE.authenticated
-          ? "You are not enrolled in any courses yet. Enroll in an available course below or scan a classroom QR code."
+          ? "You are not enrolled in any courses yet. Enter a course number below or scan a classroom QR code."
           : "Sign in above with your Full Name and ID Number to view your courses, summaries, assignments, and offline questions."
       }</div>`;
     } else {
@@ -1006,38 +1230,57 @@
     }
 
     if (availEl) {
-      if (!availableCourses.length) {
-        availEl.innerHTML = "";
-      } else {
-        availEl.innerHTML = `
-          <div class="cp-eyebrow" style="margin-bottom:10px;">Available School Courses</div>
+      const pendingHtml = pendingCourses.length ? `
+        <div style="margin-top:14px;">
+          <div class="cp-eyebrow" style="margin-bottom:8px;">Pending Enrollment Requests</div>
           <div class="cp-course-grid">
-            ${availableCourses.map(c => {
-              const stFlag = String(c.enrollment_status || "none").toLowerCase();
-              let actionHtml = `<button type="button" class="cp-btn cp-btn--green cp-btn--sm" onclick="requestCourseEnrollment(${Number(c.id)}, this)">Request to Join</button>`;
-              if (stFlag === "pending") {
-                actionHtml = `<span class="cp-badge cp-badge--amber">Pending Approval</span>`;
-              } else if (stFlag === "rejected") {
-                actionHtml = `<button type="button" class="cp-btn cp-btn--secondary cp-btn--sm" onclick="requestCourseEnrollment(${Number(c.id)}, this)">Request Again</button>`;
-              }
+            ${pendingCourses.map(c => {
+              const stFlag = String(c.enrollment_status || "pending").toLowerCase();
+              const isRejected = stFlag === "rejected";
               return `
-              <div class="cp-hub-tile" data-avail-course-id="${Number(c.id)}" style="cursor:default;">
-                <div class="cp-tile-head">
-                  <span class="cp-tile-icon cp-tile-icon--indigo">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
-                  </span>
-                  ${actionHtml}
+                <div class="cp-hub-tile" data-pending-course-id="${Number(c.id)}" style="cursor:default;">
+                  <div class="cp-tile-head">
+                    <span class="cp-tile-icon cp-tile-icon--indigo">
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+                    </span>
+                    ${isRejected
+                      ? `<button type="button" class="cp-btn cp-btn--secondary cp-btn--sm" onclick="requestCourseEnrollment(${Number(c.id)}, this)">Request Again</button>`
+                      : `<span class="cp-badge cp-badge--amber">Pending Approval</span>`}
+                  </div>
+                  <div>
+                    <div class="cp-tile-title">${escapeHtml(c.name)}</div>
+                    <div class="cp-tile-sub" style="margin-top:4px;">${escapeHtml(c.course_code || "")} &bull; ${escapeHtml(c.lecturer_name)}${isRejected ? " &bull; Declined" : ""}</div>
+                  </div>
                 </div>
-                <div>
-                  <div class="cp-tile-title">${escapeHtml(c.name)}</div>
-                  <div class="cp-tile-sub" style="margin-top:4px;">${escapeHtml(c.lecturer_name)}${stFlag === "rejected" ? " &bull; Request declined" : ""}</div>
-                </div>
-              </div>
               `;
             }).join("")}
           </div>
-        `;
-      }
+        </div>
+      ` : "";
+
+      availEl.innerHTML = `
+        <div class="cp-card" id="join-course-by-number-card">
+          <div class="cp-card-header" style="margin-bottom:8px;">
+            <h3 style="margin:0; font-size:16px;">Join a Course</h3>
+            <span class="cp-badge cp-badge--neutral">Course Number</span>
+          </div>
+          <p class="cp-muted" style="font-size:13px; margin:0 0 10px 0;">Enter the Course Number provided by your lecturer to send a join request.</p>
+          <div class="cp-row-wrap" style="gap:8px; align-items:stretch;">
+            <input type="text"
+                   id="join-course-code-input"
+                   class="cp-input"
+                   style="flex:1 1 200px; min-width:160px;"
+                   placeholder="Enter Course Number (e.g. CS204 or 101)"
+                   onkeydown="if(event.key==='Enter'){event.preventDefault(); requestJoinCourseByNumber();}" />
+            <button type="button"
+                    id="btn-join-course-by-number"
+                    class="cp-btn cp-btn--primary"
+                    onclick="requestJoinCourseByNumber()">Request to Join</button>
+          </div>
+          <div id="join-course-feedback" style="font-size:13px; font-weight:700; margin-top:8px; min-height:18px;"></div>
+        </div>
+        ${pendingHtml}
+      `;
     }
   }
 
@@ -1303,10 +1546,10 @@
     } else {
       const c = findFullCourseById(courseId);
       items = getCourseAssignments(courseId)
-        .filter(a => a.course_id == null || Number(a.course_id) === Number(courseId))
+        .filter(a => Number(a.course_id) === Number(courseId))
         .map(a => ({
           ...a,
-          course_id: courseId,
+          course_id: Number(courseId),
           course_name: a.course_name || (c ? c.name : ""),
         }));
     }
@@ -1320,19 +1563,27 @@
       return;
     }
 
-    const legacyBoilerplate = "OOP modularity, automated pytest coverage, error handling.";
-    el.innerHTML = `<div class="cp-course-grid">` + items.map(a => {
-      const sub = a.my_submission;
-      const myScore = sub
-        ? (sub.ai_rubric_grade !== undefined ? sub.ai_rubric_grade : (sub.metrics ? sub.metrics.overall_score : null))
-        : null;
-      const statusBadge = myScore !== null
-        ? `<span class="cp-badge cp-badge--green cp-tabular">Submitted \u00b7 ${escapeHtml(myScore)}/100</span>`
-        : `<span class="cp-badge cp-badge--indigo">Ready to Upload</span>`;
+    const legacyBoilerplates = new Set([
+      "OOP modularity, automated pytest coverage, error handling.",
+      "Evaluate OOP encapsulation/Adapter design, unit test coverage (pytest), error handling & path portability, and concurrency modularity.",
+    ]);
+    const renderAssignmentTile = (a) => {
+      const finalSub = a.my_final_submission;
+      const compSub = a.my_comparative_submission || a.my_submission;
+      let statusBadge = `<span class="cp-badge cp-badge--indigo">Ready to Upload</span>`;
+      if (finalSub) {
+        const finalScore = finalSub.ai_rubric_grade !== undefined ? finalSub.ai_rubric_grade : (finalSub.metrics ? finalSub.metrics.overall_score : 0);
+        statusBadge = `<span class="cp-badge cp-badge--green cp-tabular">Final Submitted \u00b7 ${escapeHtml(finalScore)}/100</span>`;
+      } else if (compSub) {
+        const rankTxt = compSub.class_standing && compSub.class_standing.rank_label
+          ? compSub.class_standing.rank_label
+          : `${compSub.ai_rubric_grade !== undefined ? compSub.ai_rubric_grade : 0}/100`;
+        statusBadge = `<span class="cp-badge cp-badge--purple cp-tabular">Self-Check \u00b7 ${escapeHtml(rankTxt)}</span>`;
+      }
       const assignNum = a.assignment_number || 1;
       const hasDot = unread.hasUnreadItem("assignment", a.id);
       const rawRubric = String(a.rubric_text || "").trim();
-      const cleanSub = (rawRubric && rawRubric !== legacyBoilerplate) ? rawRubric.slice(0, 88) : "Upload file or submit solution";
+      const cleanSub = (rawRubric && !legacyBoilerplates.has(rawRubric) && !rawRubric.startsWith("Evaluate OOP encapsulation/Adapter design")) ? rawRubric.slice(0, 88) : "Upload file or submit solution";
       return `
         <button type="button"
                 class="cp-hub-tile"
@@ -1348,14 +1599,44 @@
             </div>
           </div>
           <div>
-            ${isGlobal ? `<div class="cp-badge cp-badge--neutral" style="margin-bottom:6px; max-width:100%; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(a.course_name)}</div>` : ""}
             <div class="cp-eyebrow" style="color:var(--cp-coral-ink); margin-bottom:2px;">Assignment ${Number(assignNum)}</div>
             <div class="cp-tile-title">${escapeHtml(a.title)}</div>
             <div class="cp-tile-sub" style="margin-top:4px;">${escapeHtml(cleanSub)}</div>
           </div>
         </button>
       `;
-    }).join("") + `</div>`;
+    };
+
+    const byAssignOrder = (a, b) => (
+      (Number(a.assignment_number || 1) - Number(b.assignment_number || 1)) || (Number(a.id) - Number(b.id))
+    );
+
+    if (isGlobal) {
+      const groupedHtml = [];
+      for (const c of getStudentCoursesPool()) {
+        const courseItems = items
+          .filter(a => Number(a.course_id) === Number(c.id))
+          .sort(byAssignOrder);
+        if (!courseItems.length) continue;
+        const countLabel = `${courseItems.length} assignment${courseItems.length === 1 ? "" : "s"}`;
+        groupedHtml.push(`
+          <div class="cp-card" data-assignment-course-group="${Number(c.id)}" style="margin-bottom:14px;">
+            <div class="cp-card-header" style="margin-bottom:12px;">
+              <h3 style="margin:0;">${escapeHtml(c.name)}</h3>
+              <span class="cp-badge cp-badge--purple cp-tabular">${escapeHtml(countLabel)}</span>
+            </div>
+            <div class="cp-course-grid">${courseItems.map(renderAssignmentTile).join("")}</div>
+          </div>
+        `);
+      }
+      el.innerHTML = groupedHtml.length
+        ? groupedHtml.join("")
+        : `<div class="cp-card cp-muted" style="text-align:center; padding:22px;">No assignments posted yet across your enrolled courses.</div>`;
+      return;
+    }
+
+    items.sort(byAssignOrder);
+    el.innerHTML = `<div class="cp-course-grid">` + items.map(renderAssignmentTile).join("") + `</div>`;
   }
 
   function openAssignmentDetail(courseId, assignmentId) {
@@ -1382,20 +1663,30 @@
     return `<div class="cp-row-wrap" style="gap:6px; margin-bottom:10px;">${items.join("")}</div>`;
   }
 
+  function formatOrdinal(rank) {
+    const n = Math.max(1, Number(rank || 1));
+    if (n % 100 >= 11 && n % 100 <= 13) return `${n}th`;
+    const suffix = { 1: "st", 2: "nd", 3: "rd" }[n % 10] || "th";
+    return `${n}${suffix}`;
+  }
+
   function renderCategoryBreakdownHtml(categories) {
     if (!Array.isArray(categories) || !categories.length) return "";
     const rows = categories.map(c => {
       const score = Number(c.ai_rubric_score || 0);
       const avg = Number(c.cohort_mean || 0);
       const best = Number(c.cohort_best || 0);
-      const clsScore = c.class_score || 10;
+      const rankNum = Number(c.rank || 1);
+      const cohortSize = Number(c.cohort_size || 1);
+      const rankLabel = c.rank_label || `${formatOrdinal(rankNum)} Place`;
+      const clsScore = Number(c.class_score || 10);
       const barColor = clsScore >= 8 ? "var(--cp-green)" : (clsScore >= 5 ? "var(--cp-indigo)" : "var(--cp-amber)");
       return `
         <div class="cp-well cp-cat-bar" style="padding:10px 12px; margin-bottom:0;">
           <div class="cp-row-between" style="gap:6px; margin-bottom:6px;">
             <strong style="font-size:13px; color:var(--cp-ink);">${escapeHtml(c.label)}</strong>
             <span class="cp-badge cp-badge--purple cp-tabular">
-              ${escapeHtml(clsScore)}/10 (#${escapeHtml(c.rank)}/${escapeHtml(c.cohort_size)})
+              ${escapeHtml(rankLabel)} (${escapeHtml(rankNum)}/${escapeHtml(cohortSize)})
             </span>
           </div>
           <div class="cp-cat-bar-track">
@@ -1446,19 +1737,32 @@
     return html;
   }
 
-  function handleHwFileSelected(assignId, fileObj) {
-    if (fileObj) {
-      SELECTED_HW_FILES[assignId] = fileObj;
+  function hwSlotKey(assignId, subType) {
+    return `${Number(assignId)}:${subType === "final" ? "final" : "comparative"}`;
+  }
+
+  function handleHwFileSelected(assignId, subTypeOrFile, maybeFile) {
+    let subType = "comparative";
+    let fileObj = maybeFile;
+    if (typeof subTypeOrFile === "string") {
+      subType = subTypeOrFile === "final" ? "final" : "comparative";
     } else {
-      delete SELECTED_HW_FILES[assignId];
+      fileObj = subTypeOrFile;
     }
-    const chipEl = document.getElementById(`hw-file-chip-${assignId}`);
+    const key = hwSlotKey(assignId, subType);
+    if (fileObj) {
+      SELECTED_HW_FILES[key] = fileObj;
+    } else {
+      delete SELECTED_HW_FILES[key];
+    }
+    const prefix = subType === "final" ? "hw-final" : "hw-comp";
+    const chipEl = document.getElementById(`${prefix}-file-chip-${assignId}`);
     if (chipEl) {
       if (fileObj) {
         chipEl.style.display = "inline-flex";
         chipEl.innerHTML = `
           <span>${escapeHtml(fileObj.name)} (${escapeHtml(formatBytes(fileObj.size))})</span>
-          <button type="button" class="cp-toast-close" onclick="event.stopPropagation(); clearHwFile(${Number(assignId)})" aria-label="Remove file">&times;</button>
+          <button type="button" class="cp-toast-close" onclick="event.stopPropagation(); clearHwFile(${Number(assignId)}, '${subType}')" aria-label="Remove file">&times;</button>
         `;
       } else {
         chipEl.style.display = "none";
@@ -1467,10 +1771,11 @@
     }
   }
 
-  function clearHwFile(assignId) {
-    const fileEl = document.getElementById(`hw-file-${assignId}`);
+  function clearHwFile(assignId, subType = "comparative") {
+    const prefix = subType === "final" ? "hw-final" : "hw-comp";
+    const fileEl = document.getElementById(`${prefix}-file-${assignId}`);
     if (fileEl) fileEl.value = "";
-    handleHwFileSelected(assignId, null);
+    handleHwFileSelected(assignId, subType, null);
   }
 
   function renderAssignmentDetailScreen(courseId, assignId) {
@@ -1483,128 +1788,245 @@
       return;
     }
 
-    const prevCode = document.getElementById(`hw-code-${assignId}`)?.value || "";
-    const prevGit = document.getElementById(`hw-git-${assignId}`)?.value || "";
-    const sub = a.my_submission;
-    const myScore = sub
-      ? (sub.ai_rubric_grade !== undefined ? sub.ai_rubric_grade : (sub.metrics ? sub.metrics.overall_score : null))
+    const aid = Number(a.id);
+    const cid = Number(a.course_id || courseId);
+    const prevCompCode = document.getElementById(`hw-comp-code-${aid}`)?.value || "";
+    const prevCompGit = document.getElementById(`hw-comp-git-${aid}`)?.value || "";
+    const prevFinalCode = document.getElementById(`hw-final-code-${aid}`)?.value || "";
+
+    const compSub = a.my_comparative_submission || a.my_submission || null;
+    const finalSub = a.my_final_submission || null;
+    const compScore = compSub
+      ? (compSub.ai_rubric_grade !== undefined ? compSub.ai_rubric_grade : (compSub.metrics ? compSub.metrics.overall_score : null))
       : null;
-    const standing = sub ? sub.class_standing : null;
-    const deltaInfo = CLASS_SCORE_DELTAS[a.id];
-    const isPending = PENDING_REVIEWS.has(a.id);
-    const isSubmitting = SUBMITTING_ASSIGNMENTS.has(a.id);
-    const selectedFile = SELECTED_HW_FILES[a.id] || null;
+    const finalScore = finalSub
+      ? (finalSub.ai_rubric_grade !== undefined ? finalSub.ai_rubric_grade : (finalSub.metrics ? finalSub.metrics.overall_score : null))
+      : null;
+    const standing = compSub ? compSub.class_standing : null;
+    const deltaInfo = CLASS_SCORE_DELTAS[aid];
+
+    const compKey = hwSlotKey(aid, "comparative");
+    const finalKey = hwSlotKey(aid, "final");
+    const isCompPending = PENDING_REVIEWS.has(compKey) || PENDING_REVIEWS.has(aid);
+    const isFinalPending = PENDING_REVIEWS.has(finalKey);
+    const isCompSubmitting = SUBMITTING_ASSIGNMENTS.has(compKey);
+    const isFinalSubmitting = SUBMITTING_ASSIGNMENTS.has(finalKey);
+    const selectedCompFile = SELECTED_HW_FILES[compKey] || null;
+    const selectedFinalFile = SELECTED_HW_FILES[finalKey] || null;
 
     const rawDetailRubric = String(a.rubric_text || "").trim();
-    const displayRubric = (rawDetailRubric && rawDetailRubric !== "OOP modularity, automated pytest coverage, error handling.") ? rawDetailRubric : "";
+    const displayRubric = (
+      rawDetailRubric
+      && rawDetailRubric !== "OOP modularity, automated pytest coverage, error handling."
+      && !rawDetailRubric.startsWith("Evaluate OOP encapsulation/Adapter design")
+    ) ? rawDetailRubric : "";
+
+    const headerBadge = finalSub
+      ? `<span class="cp-badge cp-badge--green cp-tabular">Final Submitted &middot; ${escapeHtml(finalScore)}/100</span>`
+      : (compScore !== null
+          ? `<span class="cp-badge cp-badge--purple cp-tabular">Self-Check &middot; ${escapeHtml(standing?.rank_label || `${compScore}/100`)}</span>`
+          : `<span class="cp-badge cp-badge--indigo">Open for Submission</span>`);
+
+    const rankMainText = standing
+      ? escapeHtml(standing.rank_label || `${formatOrdinal(standing.rank || 1)} Place`)
+      : "1st Place";
+    const rankSubText = standing
+      ? escapeHtml(standing.rank_summary || `${formatOrdinal(standing.rank || 1)} / ${standing.cohort_size || 1} students`)
+      : "1st / 1 students";
 
     container.innerHTML = `
       <div class="cp-card">
-        <div class="cp-row-between" style="margin-bottom:8px;">
-          <h2 style="margin:0; font-size:20px; font-weight:800; color:var(--cp-ink);">${escapeHtml(a.title)}</h2>
-          ${myScore !== null
-            ? `<span class="cp-badge cp-badge--green cp-tabular">Score: ${escapeHtml(myScore)}/100</span>`
-            : `<span class="cp-badge cp-badge--indigo">Open for Submission</span>`}
+        <div class="cp-row-between" style="margin-bottom:8px; gap:8px; flex-wrap:wrap;">
+          <div>
+            <div class="cp-eyebrow" style="color:var(--cp-coral-ink); margin-bottom:2px;">Assignment ${Number(a.assignment_number || 1)}</div>
+            <h2 style="margin:0; font-size:20px; font-weight:800; color:var(--cp-ink);">${escapeHtml(a.title)}</h2>
+          </div>
+          ${headerBadge}
         </div>
-        ${displayRubric ? `<p class="cp-secondary" style="font-size:14.5px; margin:0 0 14px 0; line-height:1.5;">${escapeHtml(displayRubric)}</p>` : ""}
+        ${displayRubric ? `<p class="cp-secondary" style="font-size:14.5px; margin:0 0 10px 0; line-height:1.5;">${escapeHtml(displayRubric)}</p>` : ""}
 
         ${!STATE.student ? `
-          <div class="cp-alert cp-alert--warn cp-row-between" style="margin-bottom:14px;">
+          <div class="cp-alert cp-alert--warn cp-row-between" style="margin-bottom:10px;">
             <span>Sign in to upload and submit your assignment.</span>
             <button type="button" class="cp-btn cp-btn--white cp-btn--sm" onclick="focusStudentSignIn()">Sign In</button>
           </div>
         ` : ""}
+      </div>
+
+      <!-- CARD 1: COMPARATIVE PRACTICE / SELF-CHECK (STUDENT ONLY) -->
+      <div class="cp-card" id="hw-comparative-card-${aid}">
+        <div class="cp-card-header" style="margin-bottom:6px;">
+          <h3 style="margin:0; font-size:16px;">Comparative Practice (Self-Check)</h3>
+          <span class="cp-badge cp-badge--purple">Student-Only &middot; Hidden from Lecturer</span>
+        </div>
+        <p class="cp-muted" style="font-size:13px; margin:0 0 12px 0;">Upload a draft to get AI feedback and see your ordinal rank against classmates. Never visible to your lecturer.</p>
 
         <div class="cp-stack-sm">
           <div>
-            <label class="cp-label" for="hw-file-${Number(a.id)}">Upload Assignment File</label>
+            <label class="cp-label" for="hw-comp-file-${aid}">Practice / Self-Check File</label>
             <div class="cp-upload-dropzone"
-                 id="hw-dropzone-${Number(a.id)}"
-                 onclick="document.getElementById('hw-file-${Number(a.id)}').click()"
+                 id="hw-comp-dropzone-${aid}"
+                 onclick="document.getElementById('hw-comp-file-${aid}').click()"
                  ondragover="event.preventDefault(); this.classList.add('dragover');"
                  ondragleave="this.classList.remove('dragover');"
-                 ondrop="event.preventDefault(); this.classList.remove('dragover'); if(event.dataTransfer.files[0]) handleHwFileSelected(${Number(a.id)}, event.dataTransfer.files[0]);">
-              <span class="cp-tile-icon cp-tile-icon--indigo" style="width:44px; height:44px;">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
+                 ondrop="event.preventDefault(); this.classList.remove('dragover'); if(event.dataTransfer.files[0]) handleHwFileSelected(${aid}, 'comparative', event.dataTransfer.files[0]);">
+              <span class="cp-tile-icon cp-tile-icon--indigo" style="width:40px; height:40px;">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
               </span>
-              <strong style="font-size:15px; color:var(--cp-ink);">Tap to choose a file or drag &amp; drop</strong>
-              <span class="cp-muted" style="font-size:13px;">Supports .py, .java, .c, .cpp, .js, .ts, .pdf, .docx, .zip, .txt, .md</span>
+              <strong style="font-size:14.5px; color:var(--cp-ink);">Choose practice file or drag &amp; drop</strong>
+              <span class="cp-muted" style="font-size:12.5px;">Supports .py, .java, .c, .cpp, .js, .ts, .pdf, .docx, .zip, .txt, .md</span>
               <input type="file"
-                     id="hw-file-${Number(a.id)}"
+                     id="hw-comp-file-${aid}"
                      class="sr-only"
                      accept=".py,.java,.c,.cpp,.h,.js,.ts,.pdf,.docx,.zip,.txt,.md"
-                     onchange="handleHwFileSelected(${Number(a.id)}, this.files && this.files[0])" />
-              <div id="hw-file-chip-${Number(a.id)}" class="cp-upload-file-chip" style="display:${selectedFile ? 'inline-flex' : 'none'};">
-                ${selectedFile ? `<span>${escapeHtml(selectedFile.name)} (${escapeHtml(formatBytes(selectedFile.size))})</span>` : ""}
+                     onchange="handleHwFileSelected(${aid}, 'comparative', this.files && this.files[0])" />
+              <div id="hw-comp-file-chip-${aid}" class="cp-upload-file-chip" style="display:${selectedCompFile ? 'inline-flex' : 'none'};">
+                ${selectedCompFile ? `<span>${escapeHtml(selectedCompFile.name)} (${escapeHtml(formatBytes(selectedCompFile.size))})</span>` : ""}
               </div>
             </div>
           </div>
 
           <details class="cp-m-accordion" style="border-top:none; padding-top:0;">
             <summary>
-              <span>Or Paste Code / Notes / GitHub URL</span>
+              <span>Or Paste Draft Code / Notes / GitHub URL</span>
               <span class="cp-muted">&#9662;</span>
             </summary>
             <div class="cp-stack-xs" style="margin-top:8px;">
-              <textarea id="hw-code-${Number(a.id)}" class="cp-textarea" rows="4" placeholder="Paste code or submission notes (optional)...">${escapeHtml(prevCode)}</textarea>
-              <input type="text" id="hw-git-${Number(a.id)}" class="cp-input" placeholder="Or GitHub repository URL (optional)" value="${escapeHtml(prevGit)}" />
+              <textarea id="hw-comp-code-${aid}" class="cp-textarea" rows="3" placeholder="Paste code or submission notes (optional)...">${escapeHtml(prevCompCode)}</textarea>
+              <input type="text" id="hw-comp-git-${aid}" class="cp-input" placeholder="Or GitHub repository URL (optional)" value="${escapeHtml(prevCompGit)}" />
             </div>
           </details>
 
-          <button id="hw-btn-${Number(a.id)}" type="button" class="cp-btn cp-btn--primary cp-btn--block" onclick="submitStudentHomework(${Number(a.id)})" ${isSubmitting ? "disabled" : ""}>
-            ${isSubmitting ? "Uploading & Submitting..." : "Upload & Submit Assignment"}
+          <button id="hw-comp-btn-${aid}" type="button" class="cp-btn cp-btn--secondary cp-btn--block" onclick="submitStudentHomework(${cid}, ${aid}, 'comparative')" ${isCompSubmitting ? "disabled" : ""}>
+            ${isCompSubmitting ? "Analyzing Draft..." : "Run Comparative Self-Check"}
           </button>
 
-          <div id="hw-status-${Number(a.id)}" style="font-size:13.5px; font-weight:700; min-height:18px; color:${isPending ? 'var(--cp-indigo-ink)' : 'var(--cp-ink-muted)'};">
-            ${isPending ? "Submitted! AI review in progress..." : ""}
+          <div id="hw-comp-status-${aid}" style="font-size:13px; font-weight:700; min-height:18px; color:${isCompPending ? 'var(--cp-indigo-ink)' : 'var(--cp-ink-muted)'};">
+            ${isCompPending ? "Comparative AI review in progress..." : ""}
           </div>
         </div>
+
+        ${compSub ? `
+          <div style="margin-top:12px; padding-top:12px; border-top:1px solid var(--cp-border);">
+            <div class="cp-grid-2-tight" style="margin-bottom:10px;">
+              <div class="cp-metric-tile cp-metric-tile--green">
+                <div class="cp-eyebrow" style="color:var(--cp-green-ink);">AI Score</div>
+                <div class="cp-hw-kpi-val">${escapeHtml(compScore)}<span class="cp-muted" style="font-size:13px;">/100</span></div>
+              </div>
+              <div class="cp-metric-tile cp-metric-tile--purple">
+                <div class="cp-eyebrow" style="color:var(--cp-purple-ink);">Class Rank</div>
+                <div class="cp-hw-kpi-val" style="font-size:20px;">${rankMainText}</div>
+                <div class="cp-muted" style="font-size:12.5px;">${rankSubText}</div>
+              </div>
+            </div>
+            ${deltaInfo ? `
+              <div class="cp-alert cp-alert--info" style="font-size:13px; margin-bottom:10px;">
+                Class Rank updated: <strong>${escapeHtml(deltaInfo.from)} &rarr; ${escapeHtml(deltaInfo.to)}</strong>
+              </div>
+            ` : ""}
+            <details class="cp-m-accordion" open>
+              <summary>
+                <span>Category Ranks &amp; Telemetry</span>
+                <span class="cp-muted">&#9662;</span>
+              </summary>
+              <div style="margin-top:8px;">
+                ${renderCategoryBreakdownHtml(compSub.category_breakdown)}
+                ${renderTelemetryPills(compSub.telemetry_comparison)}
+              </div>
+            </details>
+            <details class="cp-m-accordion" open>
+              <summary>
+                <span>Comparative AI Feedback</span>
+                <span class="cp-muted">&#9662;</span>
+              </summary>
+              <div class="cp-review-md" style="margin-top:8px; background:var(--cp-well);">
+                ${renderSimpleReviewHtml(compSub.deep_review_md)}
+              </div>
+            </details>
+          </div>
+        ` : ""}
       </div>
 
-      ${sub ? `
-        <div class="cp-card">
-          <div class="cp-grid-2-tight" style="margin-bottom:10px;">
-            <div class="cp-metric-tile cp-metric-tile--green">
-              <div class="cp-eyebrow" style="color:var(--cp-green-ink);">AI Rubric</div>
-              <div class="cp-hw-kpi-val">${escapeHtml(myScore)}<span class="cp-muted" style="font-size:13px;">/100</span></div>
-            </div>
-            <div class="cp-metric-tile cp-metric-tile--purple">
-              <div class="cp-eyebrow" style="color:var(--cp-purple-ink);">Class Standing</div>
-              <div class="cp-hw-kpi-val">${standing ? escapeHtml(standing.class_score) : 10}<span class="cp-muted" style="font-size:13px;">/10</span></div>
-              <div class="cp-muted" style="font-size:12.5px;">Rank #${standing ? escapeHtml(standing.rank) : 1} of ${standing ? escapeHtml(standing.cohort_size) : 1}</div>
+      <!-- CARD 2: FINAL SUBMISSION TO LECTURER (OFFICIAL GRADING) -->
+      <div class="cp-card" id="hw-final-card-${aid}">
+        <div class="cp-card-header" style="margin-bottom:6px;">
+          <h3 style="margin:0; font-size:16px;">Final Submission to Lecturer</h3>
+          <span class="cp-badge cp-badge--green">Official Grading</span>
+        </div>
+        <p class="cp-muted" style="font-size:13px; margin:0 0 12px 0;">Submit your official file to the course lecturer. Only this final file and its standalone AI Score are sent to your lecturer.</p>
+
+        <div class="cp-stack-sm">
+          <div>
+            <label class="cp-label" for="hw-final-file-${aid}">Official Final Assignment File</label>
+            <div class="cp-upload-dropzone"
+                 id="hw-final-dropzone-${aid}"
+                 onclick="document.getElementById('hw-final-file-${aid}').click()"
+                 ondragover="event.preventDefault(); this.classList.add('dragover');"
+                 ondragleave="this.classList.remove('dragover');"
+                 ondrop="event.preventDefault(); this.classList.remove('dragover'); if(event.dataTransfer.files[0]) handleHwFileSelected(${aid}, 'final', event.dataTransfer.files[0]);">
+              <span class="cp-tile-icon cp-tile-icon--green" style="width:40px; height:40px;">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
+              </span>
+              <strong style="font-size:14.5px; color:var(--cp-ink);">Choose final file or drag &amp; drop</strong>
+              <span class="cp-muted" style="font-size:12.5px;">Supports .py, .java, .c, .cpp, .js, .ts, .pdf, .docx, .zip, .txt, .md</span>
+              <input type="file"
+                     id="hw-final-file-${aid}"
+                     class="sr-only"
+                     accept=".py,.java,.c,.cpp,.h,.js,.ts,.pdf,.docx,.zip,.txt,.md"
+                     onchange="handleHwFileSelected(${aid}, 'final', this.files && this.files[0])" />
+              <div id="hw-final-file-chip-${aid}" class="cp-upload-file-chip" style="display:${selectedFinalFile ? 'inline-flex' : 'none'};">
+                ${selectedFinalFile ? `<span>${escapeHtml(selectedFinalFile.name)} (${escapeHtml(formatBytes(selectedFinalFile.size))})</span>` : ""}
+              </div>
             </div>
           </div>
-          ${deltaInfo ? `
-            <div class="cp-alert cp-alert--info" style="font-size:13px; margin-bottom:10px;">
-              Class Standing updated: <strong>${escapeHtml(deltaInfo.from)}/10 &rarr; ${escapeHtml(deltaInfo.to)}/10</strong>
-            </div>
-          ` : ""}
-          <details class="cp-m-accordion" open>
+
+          <details class="cp-m-accordion" style="border-top:none; padding-top:0;">
             <summary>
-              <span>Score Breakdown &amp; Metrics</span>
+              <span>Or Add Submission Notes / Text</span>
               <span class="cp-muted">&#9662;</span>
             </summary>
-            <div style="margin-top:8px;">
-              ${renderCategoryBreakdownHtml(sub.category_breakdown)}
-              ${renderTelemetryPills(sub.telemetry_comparison)}
+            <div class="cp-stack-xs" style="margin-top:8px;">
+              <textarea id="hw-final-code-${aid}" class="cp-textarea" rows="3" placeholder="Optional notes or code for your official submission...">${escapeHtml(prevFinalCode)}</textarea>
             </div>
           </details>
-          <details class="cp-m-accordion" open>
-            <summary>
-              <span>AI Code Review</span>
-              <span class="cp-muted">&#9662;</span>
-            </summary>
-            <div class="cp-review-md" style="margin-top:8px; background:var(--cp-well);">
-              ${renderSimpleReviewHtml(sub.deep_review_md)}
-            </div>
-          </details>
+
+          <button id="hw-final-btn-${aid}" type="button" class="cp-btn cp-btn--green cp-btn--block" onclick="submitStudentHomework(${cid}, ${aid}, 'final')" ${isFinalSubmitting ? "disabled" : ""}>
+            ${isFinalSubmitting ? "Submitting Final to Lecturer..." : "Final Submit to Lecturer"}
+          </button>
+
+          <div id="hw-final-status-${aid}" style="font-size:13px; font-weight:700; min-height:18px; color:${isFinalPending ? 'var(--cp-green-ink)' : 'var(--cp-ink-muted)'};">
+            ${isFinalPending ? "Final submission saved! Standalone AI grading in progress..." : ""}
+          </div>
         </div>
-      ` : ""}
+
+        ${finalSub ? `
+          <div style="margin-top:12px; padding-top:12px; border-top:1px solid var(--cp-border);">
+            <div class="cp-alert cp-alert--success cp-row-between" style="margin-bottom:10px; gap:8px; flex-wrap:wrap;">
+              <span>Delivered to Lecturer (Final v${Number(finalSub.version || 1)})${finalSub.file_name ? `: <strong>${escapeHtml(finalSub.file_name)}</strong>` : ""}</span>
+              ${finalSub.download_url ? `<a class="cp-link" href="${escapeHtml(finalSub.download_url)}" target="_blank" rel="noopener">Download</a>` : ""}
+            </div>
+            <div class="cp-metric-tile cp-metric-tile--green" style="margin-bottom:10px;">
+              <div class="cp-eyebrow" style="color:var(--cp-green-ink);">Standalone AI Score</div>
+              <div class="cp-hw-kpi-val">${escapeHtml(finalScore)}<span class="cp-muted" style="font-size:13px;">/100</span></div>
+            </div>
+            <details class="cp-m-accordion" open>
+              <summary>
+                <span>Standalone AI Evaluation</span>
+                <span class="cp-muted">&#9662;</span>
+              </summary>
+              <div class="cp-review-md" style="margin-top:8px; background:var(--cp-well);">
+                ${renderSimpleReviewHtml(finalSub.deep_review_md)}
+              </div>
+            </details>
+          </div>
+        ` : ""}
+      </div>
     `;
   }
 
-  function setHomeworkStatus(assignId, message, kind = "info") {
-    const el = document.getElementById(`hw-status-${assignId}`);
+  function setHomeworkStatus(assignId, message, kind = "info", subType = "comparative") {
+    const prefix = subType === "final" ? "hw-final" : "hw-comp";
+    const el = document.getElementById(`${prefix}-status-${assignId}`) || document.getElementById(`hw-status-${assignId}`);
     if (!el) return;
     const colorMap = {
       info: "var(--cp-ink-muted)",
@@ -1629,7 +2051,7 @@
       if (!hwRes.ok) return;
       const hwData = await hwRes.json();
       const assignments = (hwData.assignments || []).filter(
-        a => a.course_id == null || Number(a.course_id) === Number(courseId)
+        a => Number(a.course_id) === Number(courseId)
       );
       ASSIGNMENTS_BY_COURSE[courseId] = assignments;
 
@@ -1640,16 +2062,20 @@
           if (!isFirstLoad) newlyDiscovered = { id: a.id, title: a.title };
           KNOWN_ASSIGNMENT_IDS.add(a.id);
         }
-        if (a.my_submission && PENDING_REVIEWS.has(a.id)) {
-          PENDING_REVIEWS.delete(a.id);
+        const compSub = a.my_comparative_submission || a.my_submission;
+        if (compSub && PENDING_REVIEWS.has(hwSlotKey(a.id, "comparative"))) {
+          PENDING_REVIEWS.delete(hwSlotKey(a.id, "comparative"));
         }
-        const standing = a.my_submission && a.my_submission.class_standing;
-        if (standing && typeof standing.class_score === "number") {
+        if (a.my_final_submission && PENDING_REVIEWS.has(hwSlotKey(a.id, "final"))) {
+          PENDING_REVIEWS.delete(hwSlotKey(a.id, "final"));
+        }
+        const standing = compSub && compSub.class_standing;
+        if (standing && standing.rank_label) {
           const prev = LAST_CLASS_SCORES[a.id];
-          if (typeof prev === "number" && prev !== standing.class_score) {
-            CLASS_SCORE_DELTAS[a.id] = { from: prev, to: standing.class_score };
+          if (typeof prev === "string" && prev !== standing.rank_label) {
+            CLASS_SCORE_DELTAS[a.id] = { from: prev, to: standing.rank_label };
           }
-          LAST_CLASS_SCORES[a.id] = standing.class_score;
+          LAST_CLASS_SCORES[a.id] = standing.rank_label;
         }
       }
       HW_INITIALIZED_COURSE_ID = courseId;
@@ -1660,6 +2086,7 @@
       } else if (st.screen === "assignment-detail" && Number(st.courseId) === Number(courseId)) {
         renderAssignmentDetailScreen(courseId, st.assignmentId);
       }
+      renderStudentSidebarTree();
       if (newlyDiscovered) {
         notifyNewAssignment(newlyDiscovered.title, courseId, newlyDiscovered.id);
       }
@@ -1673,21 +2100,112 @@
     await Promise.all(courses.map(c => loadSummariesForCourse(c.id)));
   }
 
+  function removeDeletedSummaryFromState(artifactId, courseId) {
+    const aidNum = Number(artifactId);
+    if (!aidNum) return;
+    const keysToPrune = courseId ? [Number(courseId), String(courseId)] : Object.keys(SUMMARIES_BY_COURSE);
+    for (const key of keysToPrune) {
+      if (Array.isArray(SUMMARIES_BY_COURSE[key])) {
+        SUMMARIES_BY_COURSE[key] = SUMMARIES_BY_COURSE[key].filter(a => Number(a.id) !== aidNum);
+      }
+    }
+    for (const pool of [STATE.my_courses, STATE.all_courses]) {
+      if (!Array.isArray(pool)) continue;
+      for (const c of pool) {
+        if ((!courseId || Number(c.id) === Number(courseId)) && Array.isArray(c.lecture_summaries)) {
+          c.lecture_summaries = c.lecture_summaries.filter(a => Number(a.id) !== aidNum);
+        }
+      }
+    }
+    if (window.ClassPulseNotify) {
+      window.ClassPulseNotify.clearUnreadWhere(
+        (it) => it.kind === "summary" && String(it.itemId) === String(aidNum)
+      );
+    }
+    const st = currentScreenState();
+    if (st.screen === "course-summaries") {
+      renderSummariesScreen(st.courseId, st.scope);
+    } else if (st.screen === "course-hub") {
+      renderCourseHub(st.courseId);
+    }
+    renderStudentSidebarTree();
+  }
+
   async function loadSummariesForCourse(courseId) {
     if (!courseId) return;
     try {
-      const res = await fetch(`/api/courses/${courseId}/lectures?_ts=${Date.now()}`, { cache: "no-store" });
+      const res = await fetch(`/api/courses/${courseId}/lectures?published_only=1&_ts=${Date.now()}`, { cache: "no-store" });
       if (!res.ok) return;
       const data = await res.json();
-      const artifacts = data.artifacts || [];
+      const artifacts = sortSummariesSequential((data.artifacts || []).filter(a => a && a.is_published !== false));
       SUMMARIES_BY_COURSE[courseId] = artifacts;
+      const c = findFullCourseById(courseId);
+      if (c) c.lecture_summaries = artifacts;
       const st = currentScreenState();
       if (st.screen === "course-summaries" && (st.scope === "global" || Number(st.courseId) === Number(courseId))) {
         renderSummariesScreen(st.courseId, st.scope);
+      } else if (st.screen === "course-hub" && Number(st.courseId) === Number(courseId)) {
+        renderCourseHub(courseId);
       }
+      renderStudentSidebarTree();
     } catch (err) {
       console.error("loadSummariesForCourse error:", err);
     }
+  }
+
+  function formatStudentSummaryInline(str) {
+    return escapeHtml(str)
+      .replace(/`([^`]+)`/g, '<code class="cp-review-code">$1</code>')
+      .replace(/\*\*(.+?)\*\*/g, '<strong style="color:var(--cp-ink);">$1</strong>')
+      .replace(/(^|[^*])\*([^*]+?)\*(?!\*)/g, '$1<em>$2</em>');
+  }
+
+  function renderStudentStructuredSummary(a) {
+    const secs = a.structured_sections || {};
+    const blocks = [];
+    const renderItems = (items) => (items || []).map(it =>
+      `<li style="margin:4px 0; color:var(--cp-ink); line-height:1.45;">${formatStudentSummaryInline(it)}</li>`
+    ).join("");
+    if (Array.isArray(secs.executive_summary) && secs.executive_summary.length) {
+      blocks.push(`
+        <div class="cp-well" data-summary-section="executive" style="padding:10px 12px;">
+          <div class="cp-eyebrow" style="color:var(--cp-indigo-ink); margin-bottom:4px;">Executive Summary</div>
+          <ul style="margin:0; padding-left:18px;">${renderItems(secs.executive_summary)}</ul>
+        </div>
+      `);
+    }
+    if (Array.isArray(secs.key_topics) && secs.key_topics.length) {
+      blocks.push(`
+        <div class="cp-well" data-summary-section="topics" style="padding:10px 12px;">
+          <div class="cp-eyebrow" style="color:var(--cp-green-ink); margin-bottom:4px;">Key Topics &amp; Takeaways</div>
+          <ul style="margin:0; padding-left:18px;">${renderItems(secs.key_topics)}</ul>
+        </div>
+      `);
+    }
+    if (Array.isArray(secs.action_items) && secs.action_items.length) {
+      blocks.push(`
+        <div class="cp-well" data-summary-section="actions" style="padding:10px 12px;">
+          <div class="cp-eyebrow" style="color:var(--cp-coral-ink); margin-bottom:4px;">Action Items &amp; Questions</div>
+          <ul style="margin:0; padding-left:18px;">${renderItems(secs.action_items)}</ul>
+        </div>
+      `);
+    }
+    if (Array.isArray(secs.extra_sections)) {
+      for (const ex of secs.extra_sections) {
+        if (ex && Array.isArray(ex.items) && ex.items.length) {
+          blocks.push(`
+            <div class="cp-well" style="padding:10px 12px;">
+              <div class="cp-eyebrow" style="margin-bottom:4px;">${escapeHtml(ex.title || "Notes")}</div>
+              <ul style="margin:0; padding-left:18px;">${renderItems(ex.items)}</ul>
+            </div>
+          `);
+        }
+      }
+    }
+    if (!blocks.length) {
+      return `<div class="cp-review-md" style="margin:8px 0 0 0; background:var(--cp-well);">${renderSimpleReviewHtml(a.summary_markdown)}</div>`;
+    }
+    return `<div class="cp-stack-xs" style="margin-top:8px;">${blocks.join("")}</div>`;
   }
 
   function renderSummaryCardHtml(a, idx) {
@@ -1697,25 +2215,30 @@
     const lecHeading = a.lecture_number && !/^lecture\b/i.test(a.lecture_title || "")
       ? `Lecture ${a.lecture_number} \u2014 ${a.lecture_title || "Summary"}`
       : (a.lecture_title || (a.lecture_number ? `Lecture ${a.lecture_number}` : "Lecture Summary"));
+    const courseLabel = a.course_name || a.course_code || "";
     return `
       <div class="cp-card" data-artifact-id="${Number(a.id)}">
-        <div class="cp-row-between" style="margin-bottom:10px;">
-          <strong style="font-size:16px; color:var(--cp-ink); overflow-wrap:anywhere;">${escapeHtml(lecHeading)}</strong>
+        <div class="cp-row-between" style="margin-bottom:8px; gap:8px; flex-wrap:wrap;">
+          <div>
+            ${courseLabel ? `<div class="cp-badge cp-badge--neutral" style="margin-bottom:4px;">${escapeHtml(courseLabel)}</div>` : ""}
+            <div><strong style="font-size:16px; color:var(--cp-ink); overflow-wrap:anywhere;">${escapeHtml(lecHeading)}</strong></div>
+          </div>
+          <span class="cp-badge cp-badge--green">Published</span>
         </div>
         <div class="cp-row-wrap" style="margin-bottom:10px; gap:8px;">
-          <a class="cp-btn cp-btn--green cp-btn--sm" href="/api/lectures/${Number(a.id)}/download/summary.md">Summary (.md)</a>
-          <a class="cp-btn cp-btn--secondary cp-btn--sm" href="/api/lectures/${Number(a.id)}/download/transcript.txt">Transcript (.txt)</a>
+          <a class="cp-btn cp-btn--green cp-btn--sm" href="/api/lectures/${Number(a.id)}/download/summary.md?published_only=1">Summary (.md)</a>
+          <a class="cp-btn cp-btn--secondary cp-btn--sm" href="/api/lectures/${Number(a.id)}/download/transcript.txt?published_only=1">Transcript (.txt)</a>
         </div>
         <details class="cp-m-accordion" ${idx === 0 ? "open" : ""}>
           <summary>
-            <span>AI Summary</span>
+            <span>Structured Lecture Summary</span>
             <span class="cp-muted">&#9662;</span>
           </summary>
-          <div class="cp-review-md" style="margin:8px 0 0 0; background:var(--cp-well);">${renderSimpleReviewHtml(a.summary_markdown)}</div>
+          ${renderStudentStructuredSummary(a)}
         </details>
         <details class="cp-m-accordion">
           <summary>
-            <span>Corrected Transcript</span>
+            <span>Full Transcript (${(a.corrected_transcript || []).length} segments)</span>
             <span class="cp-muted">&#9662;</span>
           </summary>
           <div style="margin-top:6px;">${segHtml}</div>
@@ -1768,38 +2291,56 @@
     el.innerHTML = artifacts.map((a, idx) => renderSummaryCardHtml(a, idx)).join("");
   }
 
-  async function submitStudentHomework(assignId) {
+  async function submitStudentHomework(courseIdArg, assignIdArg, submissionTypeArg = "comparative") {
+    const assignId = Number(assignIdArg ?? courseIdArg);
+    const subType = submissionTypeArg === "final" ? "final" : "comparative";
+    const slotKey = hwSlotKey(assignId, subType);
+    const prefix = subType === "final" ? "hw-final" : "hw-comp";
+    const defaultBtnText = subType === "final" ? "Final Submit to Lecturer" : "Run Comparative Self-Check";
+
+    const explicitCourseId = (assignIdArg !== undefined && assignIdArg !== null) ? Number(courseIdArg) : Number(CURRENT_COURSE_ID || (ACTIVE_SESSION && ACTIVE_SESSION.course_id) || 0);
     if (!STATE.student) {
-      setHomeworkStatus(assignId, "Sign in with your Full Name & ID Number first.", "error");
+      setHomeworkStatus(assignId, "Sign in with your Full Name & ID Number first.", "error", subType);
       focusStudentSignIn();
       return;
     }
-    if (SUBMITTING_ASSIGNMENTS.has(assignId)) return;
+    if (SUBMITTING_ASSIGNMENTS.has(slotKey)) return;
 
-    const codeEl = document.getElementById(`hw-code-${assignId}`);
-    const gitEl = document.getElementById(`hw-git-${assignId}`);
-    const fileEl = document.getElementById(`hw-file-${assignId}`);
-    const btnEl = document.getElementById(`hw-btn-${assignId}`);
+    const codeEl = document.getElementById(`${prefix}-code-${assignId}`);
+    const gitEl = subType === "comparative" ? document.getElementById(`hw-comp-git-${assignId}`) : null;
+    const fileEl = document.getElementById(`${prefix}-file-${assignId}`);
+    const btnEl = document.getElementById(`${prefix}-btn-${assignId}`);
 
     const code = codeEl ? codeEl.value.trim() : "";
     const git = gitEl ? gitEl.value.trim() : "";
-    const pickedFile = SELECTED_HW_FILES[assignId] || (fileEl && fileEl.files && fileEl.files[0]) || null;
+    const pickedFile = SELECTED_HW_FILES[slotKey] || (fileEl && fileEl.files && fileEl.files[0]) || null;
 
     if (!code && !git && !pickedFile) {
       setHomeworkStatus(
         assignId,
-        "Please choose a file, paste code/text, or enter a GitHub URL before submitting.",
-        "error"
+        subType === "final"
+          ? "Please choose your official final file or enter notes before submitting to the lecturer."
+          : "Please choose a file, paste code/text, or enter a GitHub URL before running comparative self-check.",
+        "error",
+        subType
       );
       return;
     }
 
-    SUBMITTING_ASSIGNMENTS.add(assignId);
+    const assignObj = getCourseAssignments(explicitCourseId).find(x => Number(x.id) === assignId) || null;
+    const targetCourseId = Number((assignObj && assignObj.course_id) || explicitCourseId || CURRENT_COURSE_ID || 0);
+
+    SUBMITTING_ASSIGNMENTS.add(slotKey);
     if (btnEl) {
       btnEl.disabled = true;
-      btnEl.textContent = "Uploading & Submitting...";
+      btnEl.textContent = subType === "final" ? "Submitting Final to Lecturer..." : "Analyzing Draft...";
     }
-    setHomeworkStatus(assignId, "Uploading submission...", "pending");
+    setHomeworkStatus(
+      assignId,
+      subType === "final" ? "Uploading official submission & running standalone AI grading..." : "Uploading draft & calculating ordinal class rank...",
+      "pending",
+      subType
+    );
 
     try {
       let res;
@@ -1807,24 +2348,30 @@
         const fd = new FormData();
         fd.append("file", pickedFile);
         fd.append("student_id", STATE.student.id);
+        fd.append("submission_type", subType);
         fd.append("generate_review", "true");
-        fd.append("async", "true");
+        if (targetCourseId) fd.append("course_id", String(targetCourseId));
+        if (assignObj && assignObj.assignment_number) fd.append("assignment_number", String(assignObj.assignment_number));
+        if (assignObj && assignObj.title) fd.append("assignment_title", String(assignObj.title));
         if (code) fd.append("content_text", code);
         if (git) fd.append("github_url", git);
-        res = await fetch(`/api/assignments/${assignId}/submissions?async=1`, {
+        res = await fetch(`/api/assignments/${assignId}/submissions`, {
           method: "POST",
           body: fd,
         });
       } else {
-        res = await fetch(`/api/assignments/${assignId}/submissions?async=1`, {
+        res = await fetch(`/api/assignments/${assignId}/submissions`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             student_id: STATE.student.id,
+            course_id: targetCourseId || null,
+            assignment_number: assignObj ? assignObj.assignment_number : null,
+            assignment_title: assignObj ? assignObj.title : null,
+            submission_type: subType,
             content_text: code,
             github_url: git,
             generate_review: true,
-            async: true,
           }),
         });
       }
@@ -1838,36 +2385,53 @@
       }
 
       if (!res.ok) {
-        setHomeworkStatus(assignId, data.error || `Submission failed (HTTP ${res.status}).`, "error");
+        setHomeworkStatus(assignId, data.error || `Submission failed (HTTP ${res.status}).`, "error", subType);
         return;
       }
 
       if (codeEl) codeEl.value = "";
       if (gitEl) gitEl.value = "";
-      clearHwFile(assignId);
+      clearHwFile(assignId, subType);
 
-      const courseId = CURRENT_COURSE_ID || (ACTIVE_SESSION && ACTIVE_SESSION.course_id);
       if (res.status === 202 || data.status === "PENDING") {
-        PENDING_REVIEWS.add(assignId);
-        setHomeworkStatus(assignId, "Submitted! AI review in progress...", "pending");
-        setTimeout(() => loadAssignmentsForCourse(courseId), 2000);
+        PENDING_REVIEWS.add(slotKey);
+        setHomeworkStatus(assignId, "Submitted! AI grading in progress...", "pending", subType);
+        setTimeout(() => loadAssignmentsForCourse(targetCourseId), 2000);
       } else {
-        PENDING_REVIEWS.delete(assignId);
-        setHomeworkStatus(assignId, "Submission graded!", "success");
-        await loadAssignmentsForCourse(courseId);
+        PENDING_REVIEWS.delete(slotKey);
+        if (targetCourseId && Array.isArray(ASSIGNMENTS_BY_COURSE[targetCourseId])) {
+          const hit = ASSIGNMENTS_BY_COURSE[targetCourseId].find(x => Number(x.id) === assignId);
+          if (hit) {
+            if (subType === "final") {
+              hit.my_final_submission = data;
+            } else {
+              hit.my_comparative_submission = data;
+              hit.my_submission = data;
+            }
+          }
+        }
+        await loadAssignmentsForCourse(targetCourseId);
+        renderAssignmentDetailScreen(targetCourseId, assignId);
+        setHomeworkStatus(
+          assignId,
+          subType === "final" ? "Final submission delivered to lecturer!" : "Comparative self-check & class rank updated!",
+          "success",
+          subType
+        );
       }
     } catch (err) {
       setHomeworkStatus(
         assignId,
         `Network error while submitting: ${err && err.message ? err.message : "Request failed"}`,
-        "error"
+        "error",
+        subType
       );
     } finally {
-      SUBMITTING_ASSIGNMENTS.delete(assignId);
-      const latestBtn = document.getElementById(`hw-btn-${assignId}`);
+      SUBMITTING_ASSIGNMENTS.delete(slotKey);
+      const latestBtn = document.getElementById(`${prefix}-btn-${assignId}`);
       if (latestBtn) {
         latestBtn.disabled = false;
-        latestBtn.textContent = "Upload & Submit Assignment";
+        latestBtn.textContent = defaultBtnText;
       }
     }
   }
@@ -2355,7 +2919,8 @@
   });
 
   socket.on("lecture:summary_ready", (payload) => {
-    const cid = payload?.course_id || CURRENT_COURSE_ID || (ACTIVE_SESSION && ACTIVE_SESSION.course_id);
+    if (!payload || payload.is_published === false) return;
+    const cid = payload.course_id || CURRENT_COURSE_ID || (ACTIVE_SESSION && ACTIVE_SESSION.course_id);
     const cur = currentScreenState();
     const viewingSummaries =
       cur.screen === "course-summaries" &&
@@ -2371,6 +2936,18 @@
     }
     if (cid) loadSummariesForCourse(cid);
   });
+  socket.on("lecture:unpublished", (payload) => {
+    if (payload) {
+      removeDeletedSummaryFromState(payload.id || payload.artifact_id, payload.course_id);
+      if (payload.course_id) loadSummariesForCourse(payload.course_id);
+    }
+  });
+  socket.on("lecture:deleted", (payload) => {
+    if (payload) {
+      removeDeletedSummaryFromState(payload.id || payload.artifact_id, payload.course_id);
+      if (payload.course_id) loadSummariesForCourse(payload.course_id);
+    }
+  });
   socket.on("assignment:created", (payload) => {
     const cid = payload?.course_id || CURRENT_COURSE_ID || (ACTIVE_SESSION && ACTIVE_SESSION.course_id);
     if (!cid) return;
@@ -2382,15 +2959,19 @@
   socket.on("assignment:review_ready", (payload) => {
     if (!payload) return;
     if (STATE.student && Number(payload.student_id) !== Number(STATE.student.id)) return;
-    PENDING_REVIEWS.delete(Number(payload.assignment_id));
+    const aid = Number(payload.assignment_id);
+    PENDING_REVIEWS.delete(aid);
+    PENDING_REVIEWS.delete(hwSlotKey(aid, payload.submission_type || "comparative"));
     if (payload.course_id) loadAssignmentsForCourse(payload.course_id);
   });
   socket.on("assignment:review_error", (payload) => {
     if (!payload) return;
     if (STATE.student && Number(payload.student_id) !== Number(STATE.student.id)) return;
     const aid = Number(payload.assignment_id);
+    const sType = payload.submission_type || "comparative";
     PENDING_REVIEWS.delete(aid);
-    setHomeworkStatus(aid, `AI review failed: ${payload.error || "Unknown error"}`, "error");
+    PENDING_REVIEWS.delete(hwSlotKey(aid, sType));
+    setHomeworkStatus(aid, `AI review failed: ${payload.error || "Unknown error"}`, "error", sType);
   });
   socket.on("assignment:cohort_updated", (payload) => {
     if (payload?.course_id && Number(payload.course_id) === Number(CURRENT_COURSE_ID)) {
@@ -2474,6 +3055,13 @@
     const cid = curState.courseId || CURRENT_COURSE_ID || (ACTIVE_SESSION && ACTIVE_SESSION.course_id);
     if (cid && (PENDING_REVIEWS.size > 0 || (hwPollCounter % 4 === 0 && (curState.screen === "course-assignments" || curState.screen === "assignment-detail")))) {
       loadAssignmentsForCourse(cid);
+    }
+    if (hwPollCounter % 2 === 0 && curState.screen === "course-summaries") {
+      if (curState.scope === "global" || !cid) {
+        loadAllEnrolledSummaries();
+      } else {
+        loadSummariesForCourse(cid);
+      }
     }
   }, 2500);
 </script>

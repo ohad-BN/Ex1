@@ -100,6 +100,16 @@ STANDARD_CATEGORY_BY_LABEL: dict[str, tuple[str, str]] = {
 }
 
 
+def format_ordinal(rank: int) -> str:
+    """Convert positive integer rank into ordinal English string (1st, 2nd, 3rd, 4th...)."""
+    n = max(1, int(rank))
+    if 11 <= (n % 100) <= 13:
+        suffix = "th"
+    else:
+        suffix = {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suffix}"
+
+
 def _normalize_standard_categories(
     raw_scores: dict[str, float],
     raw_notes: dict[str, str],
@@ -505,14 +515,18 @@ class CohortAggregator:
     def compute_relative_class_score(
         scores_list: list[float], score: float
     ) -> dict[str, Any]:
-        """Compute peer-only dynamic 1-10 Class Standing from sorted cohort scores."""
+        """Compute peer-only dynamic 1-10 Class Standing & ordinal rank from sorted cohort scores."""
         target = float(score)
         sorted_scores = sorted(float(x) for x in scores_list)
         if not sorted_scores:
+            ord_str = format_ordinal(1)
             return {
                 "class_score": 10,
                 "class_score_precise": 10.0,
                 "rank": 1,
+                "rank_ordinal": ord_str,
+                "rank_label": f"{ord_str} Place",
+                "rank_summary": f"{ord_str} / 1",
                 "cohort_size": 1,
                 "leader_score": round(target, 1),
                 "cohort_mean": round(target, 1),
@@ -523,12 +537,31 @@ class CohortAggregator:
         s_min = sorted_scores[0]
         mean = round(sum(sorted_scores) / n, 1)
         rank = 1 + sum(1 for x in sorted_scores if x > target + 1e-6)
+        ord_str = format_ordinal(rank)
+        rank_label = f"{ord_str} Place"
+        rank_summary = f"{ord_str} / {n}"
 
         if n <= 1 or abs(s_max - s_min) <= 1e-6 or target >= s_max - 1e-6:
+            if n >= 2 and abs(s_max - s_min) <= 1e-6 and s_max < 60.0:
+                scaled = max(1, min(9, int(round(s_max / 10.0))))
+                return {
+                    "class_score": scaled,
+                    "class_score_precise": round(max(1.0, min(9.9, s_max / 10.0)), 1),
+                    "rank": rank,
+                    "rank_ordinal": ord_str,
+                    "rank_label": rank_label,
+                    "rank_summary": rank_summary,
+                    "cohort_size": n,
+                    "leader_score": round(s_max, 1),
+                    "cohort_mean": mean,
+                }
             return {
                 "class_score": 10,
                 "class_score_precise": 10.0,
                 "rank": rank,
+                "rank_ordinal": ord_str,
+                "rank_label": rank_label,
+                "rank_summary": rank_summary,
                 "cohort_size": n,
                 "leader_score": round(s_max, 1),
                 "cohort_mean": mean,
@@ -546,6 +579,9 @@ class CohortAggregator:
             "class_score": max(1, min(9, int(round(raw)))),
             "class_score_precise": round(max(1.0, min(9.9, raw)), 1),
             "rank": rank,
+            "rank_ordinal": ord_str,
+            "rank_label": rank_label,
+            "rank_summary": rank_summary,
             "cohort_size": n,
             "leader_score": round(s_max, 1),
             "cohort_mean": mean,
@@ -583,6 +619,8 @@ class CohortAggregator:
                     "class_score": rel["class_score"],
                     "class_score_precise": rel["class_score_precise"],
                     "rank": rel["rank"],
+                    "rank_ordinal": rel["rank_ordinal"],
+                    "rank_label": rel["rank_label"],
                     "cohort_size": rel["cohort_size"],
                     "cohort_mean": rel["cohort_mean"],
                     "cohort_best": rel["leader_score"],
@@ -733,42 +771,69 @@ class HomeworkReviewService:
         return stats
 
     def serialize_submission(
-        self, sub: HomeworkSubmission, stats: Optional[ClassStatsAggregate] = None
+        self,
+        sub: HomeworkSubmission,
+        stats: Optional[ClassStatsAggregate] = None,
+        *,
+        for_lecturer: bool = False,
     ) -> dict[str, Any]:
         student = self.db.get(Student, sub.student_id)
+        assignment = self.db.get(Assignment, sub.assignment_id)
+        course = (
+            self.db.get(Course, assignment.course_id)
+            if assignment is not None and assignment.course_id is not None
+            else None
+        )
         try:
             metrics = json.loads(sub.metrics_json or "{}")
         except json.JSONDecodeError:
             metrics = {}
         overall_score = float(metrics.get("overall_score", 0.0) or 0.0)
-        cohort_snapshot = (
-            CohortAggregator.build_anonymized_cohort_snapshot(
-                stats, student_score=overall_score
+        sub_type = (getattr(sub, "submission_type", None) or "comparative").lower()
+        has_file = bool(sub.source_type == "file" and sub.source_ref)
+        file_name = Path(sub.source_ref).name if has_file else ""
+        download_url = f"/api/submissions/{sub.id}/download" if has_file else ""
+
+        if for_lecturer or sub_type == "final":
+            cohort_snapshot = None
+            class_standing = None
+            category_breakdown: list[dict[str, Any]] = []
+            telemetry_comparison: dict[str, dict[str, float]] = {}
+        else:
+            cohort_snapshot = (
+                CohortAggregator.build_anonymized_cohort_snapshot(
+                    stats, student_score=overall_score
+                )
+                if stats is not None
+                else None
             )
-            if stats is not None
-            else None
-        )
-        scores_list = (
-            CohortAggregator._load_list(stats.scores_list_json)
-            if stats is not None
-            else [overall_score]
-        )
-        class_standing = CohortAggregator.compute_relative_class_score(
-            scores_list or [overall_score], overall_score
-        )
-        category_breakdown = (
-            CohortAggregator.build_category_comparison(stats, metrics)
-            if stats is not None
-            else []
-        )
-        telemetry_comparison = (
-            CohortAggregator.build_telemetry_comparison(stats, metrics)
-            if stats is not None
-            else {}
-        )
+            scores_list = (
+                CohortAggregator._load_list(stats.scores_list_json)
+                if stats is not None
+                else [overall_score]
+            )
+            class_standing = CohortAggregator.compute_relative_class_score(
+                scores_list or [overall_score], overall_score
+            )
+            category_breakdown = (
+                CohortAggregator.build_category_comparison(stats, metrics)
+                if stats is not None
+                else []
+            )
+            telemetry_comparison = (
+                CohortAggregator.build_telemetry_comparison(stats, metrics)
+                if stats is not None
+                else {}
+            )
+
         return {
             "id": sub.id,
             "assignment_id": sub.assignment_id,
+            "course_id": assignment.course_id if assignment is not None else None,
+            "course_name": course.name if course is not None else "",
+            "assignment_number": int(assignment.assignment_number or 1) if assignment is not None else 1,
+            "assignment_title": assignment.title if assignment is not None else "",
+            "submission_type": sub_type,
             "student_id": sub.student_id,
             "student_name": student.full_name if student else f"Student #{sub.student_id}",
             "student_email": (
@@ -779,6 +844,9 @@ class HomeworkReviewService:
             "version": sub.version,
             "source_type": sub.source_type,
             "source_ref": sub.source_ref,
+            "file_name": file_name,
+            "has_file": has_file,
+            "download_url": download_url,
             "metrics": metrics,
             "ai_rubric_grade": round(overall_score, 1),
             "class_standing": class_standing,
@@ -794,23 +862,68 @@ class HomeworkReviewService:
         assignment: Assignment,
         student_id: Optional[int] = None,
         include_submissions: bool = False,
+        for_lecturer: bool = False,
     ) -> dict[str, Any]:
         stats = self._ensure_stats(assignment.id)
-        cohort = CohortAggregator.build_anonymized_cohort_snapshot(stats)
+        cohort = (
+            {
+                "submission_count": 0,
+                "mean_overall_score": 0.0,
+                "student_percentile": None,
+                "topic_averages": {},
+                "category_averages": {},
+                "category_bests": {},
+                "top_error_tags": [],
+            }
+            if for_lecturer
+            else CohortAggregator.build_anonymized_cohort_snapshot(stats)
+        )
         try:
             topics = json.loads(assignment.topics_json or "[]")
         except json.JSONDecodeError:
             topics = []
 
-        my_sub = None
+        my_comp = None
+        my_final = None
         if student_id is not None:
-            sub_row = (
+            comp_row = (
                 self.db.query(HomeworkSubmission)
-                .filter_by(assignment_id=assignment.id, student_id=student_id)
+                .filter_by(
+                    assignment_id=assignment.id,
+                    student_id=student_id,
+                    submission_type="comparative",
+                )
                 .one_or_none()
             )
-            if sub_row is not None:
-                my_sub = self.serialize_submission(sub_row, stats=stats)
+            if comp_row is not None:
+                my_comp = self.serialize_submission(comp_row, stats=stats, for_lecturer=False)
+
+            final_row = (
+                self.db.query(HomeworkSubmission)
+                .filter_by(
+                    assignment_id=assignment.id,
+                    student_id=student_id,
+                    submission_type="final",
+                )
+                .one_or_none()
+            )
+            if final_row is not None:
+                my_final = self.serialize_submission(final_row, stats=None, for_lecturer=False)
+
+        final_subs_all = (
+            self.db.query(HomeworkSubmission)
+            .filter_by(assignment_id=assignment.id, submission_type="final")
+            .order_by(HomeworkSubmission.submitted_at.desc())
+            .all()
+        )
+        final_scores: list[float] = []
+        for fs_row in final_subs_all:
+            try:
+                m_obj = json.loads(fs_row.metrics_json or "{}")
+                final_scores.append(float(m_obj.get("overall_score", 0.0) or 0.0))
+            except (json.JSONDecodeError, TypeError, ValueError):
+                pass
+        final_mean = round(sum(final_scores) / len(final_scores), 1) if final_scores else 0.0
 
         course = (
             self.db.get(Course, assignment.course_id)
@@ -826,31 +939,49 @@ class HomeworkReviewService:
             "rubric_text": assignment.rubric_text,
             "topics": topics,
             "cohort_stats": cohort,
-            "my_submission": my_sub,
+            "final_submission_count": len(final_subs_all),
+            "final_mean_score": final_mean,
+            "my_comparative_submission": my_comp,
+            "my_final_submission": my_final,
+            "my_submission": my_comp or my_final,
             "created_at": assignment.created_at.strftime("%Y-%m-%d %H:%M UTC"),
         }
         if include_submissions:
-            subs = (
-                self.db.query(HomeworkSubmission)
-                .filter_by(assignment_id=assignment.id)
-                .order_by(HomeworkSubmission.submitted_at.desc())
-                .all()
-            )
-            payload["submissions"] = [self.serialize_submission(s, stats=stats) for s in subs]
+            if for_lecturer:
+                # Strict separation: Lecturers see ONLY explicit Final Submissions with standalone AI Score
+                payload["submissions"] = [
+                    self.serialize_submission(s, stats=None, for_lecturer=True)
+                    for s in final_subs_all
+                ]
+            else:
+                subs = (
+                    self.db.query(HomeworkSubmission)
+                    .filter_by(assignment_id=assignment.id)
+                    .order_by(HomeworkSubmission.submitted_at.desc())
+                    .all()
+                )
+                payload["submissions"] = [self.serialize_submission(s, stats=stats) for s in subs]
         return payload
 
     def list_course_assignments(
-        self, course_id: int, student_id: Optional[int] = None, include_submissions: bool = False
+        self,
+        course_id: int,
+        student_id: Optional[int] = None,
+        include_submissions: bool = False,
+        for_lecturer: bool = False,
     ) -> list[dict[str, Any]]:
         rows = (
             self.db.query(Assignment)
-            .filter_by(course_id=course_id)
+            .filter(Assignment.course_id == int(course_id))
             .order_by(Assignment.assignment_number.asc(), Assignment.id.asc())
             .all()
         )
         return [
             self.serialize_assignment(
-                a, student_id=student_id, include_submissions=include_submissions
+                a,
+                student_id=student_id,
+                include_submissions=include_submissions,
+                for_lecturer=for_lecturer,
             )
             for a in rows
         ]
@@ -863,8 +994,14 @@ class HomeworkReviewService:
         file_path: Optional[Path] = None,
         github_url: Optional[str] = None,
         generate_review: bool = True,
+        submission_type: str = "comparative",
     ) -> HomeworkSubmission:
-        """Stage-1 extraction -> O(1) incremental cohort update -> optional Stage-2 review."""
+        """Stage-1 extraction -> comparative (student-only) OR final (lecturer-facing) submission."""
+        clean_type = (
+            "final"
+            if str(submission_type or "").strip().lower() == "final"
+            else "comparative"
+        )
         assignment = self.db.get(Assignment, assignment_id)
         if assignment is None:
             raise HomeworkPipelineError("Assignment not found.", status_code=404)
@@ -893,10 +1030,12 @@ class HomeworkReviewService:
             stage1_prompt,
             HomeworkMetricsResponse,
             system_instruction=(
-                "Grade this single submission strictly against the rubric. "
-                "Populate both assignment topic_scores and all 4 standardized categories "
-                "('Materials & Details', 'Execution Style', 'Technical Logic & Architecture', 'Testing & Verification') "
-                "with concise 1-sentence diagnostic notes in HomeworkMetricsResponse JSON."
+                "Grade this student submission rigorously and realistically across the full 0-100 scale based ONLY "
+                "on the actual submitted code/text relative to the assignment title and rubric. Do NOT inflate scores: "
+                "empty/stub/trivial or off-topic submissions must score 15-49, partial solutions 50-74, solid solutions 75-87, "
+                "and only comprehensive, clean, tested solutions 88-98. Populate both assignment topic_scores and all 4 "
+                "standardized categories ('Materials & Details', 'Execution Style', 'Technical Logic & Architecture', "
+                "'Testing & Verification') with concise 1-sentence diagnostic notes in HomeworkMetricsResponse JSON."
             ),
             model=self.llm_client.fast_model,
         )
@@ -906,15 +1045,20 @@ class HomeworkReviewService:
         stats = self._ensure_stats(assignment.id)
         existing = (
             self.db.query(HomeworkSubmission)
-            .filter_by(assignment_id=assignment.id, student_id=student.id)
+            .filter_by(
+                assignment_id=assignment.id,
+                student_id=student.id,
+                submission_type=clean_type,
+            )
             .one_or_none()
         )
         if existing is not None:
-            try:
-                old_metrics = HomeworkMetrics.model_validate_json(existing.metrics_json)
-                CohortAggregator.revert_metrics(stats, old_metrics)
-            except Exception:
-                pass
+            if clean_type == "comparative":
+                try:
+                    old_metrics = HomeworkMetrics.model_validate_json(existing.metrics_json)
+                    CohortAggregator.revert_metrics(stats, old_metrics)
+                except Exception:
+                    pass
             existing.version += 1
             existing.source_type = src_type
             existing.source_ref = src_ref
@@ -925,6 +1069,7 @@ class HomeworkReviewService:
             submission = HomeworkSubmission(
                 assignment_id=assignment.id,
                 student_id=student.id,
+                submission_type=clean_type,
                 version=1,
                 source_type=src_type,
                 source_ref=src_ref,
@@ -933,7 +1078,8 @@ class HomeworkReviewService:
             )
             self.db.add(submission)
 
-        CohortAggregator.apply_metrics(stats, metrics)
+        if clean_type == "comparative":
+            CohortAggregator.apply_metrics(stats, metrics)
         self.db.commit()
 
         if generate_review:
@@ -975,10 +1121,51 @@ class HomeworkReviewService:
         }
 
     def generate_deep_review(self, submission_id: int) -> str:
-        """Stage-2 comparative review comparing student metrics against O(1) cohort stats."""
+        """Stage-2 review: standalone rubric evaluation for Final submissions, comparative ranking for Practice."""
         sub = self.db.get(HomeworkSubmission, submission_id)
         if sub is None:
             raise HomeworkPipelineError("Submission not found.", status_code=404)
+
+        sub_type = (getattr(sub, "submission_type", None) or "comparative").lower()
+        if sub_type == "final":
+            assignment = self.db.get(Assignment, sub.assignment_id)
+            metrics_obj = HomeworkMetrics.model_validate_json(sub.metrics_json)
+            metrics = metrics_obj.model_dump()
+            score = metrics["overall_score"]
+            if self.llm_client.is_configured():
+                standalone_payload = {
+                    "assignment_title": assignment.title if assignment else "",
+                    "rubric_text": assignment.rubric_text if assignment else "",
+                    "student_metrics": metrics,
+                }
+                prompt = (
+                    "Write a SHORT, direct standalone evaluation for the lecturer and student (MAX 110 words total). "
+                    "Do NOT mention class ranking, percentiles, or comparisons against classmates. Use ONLY these 3 Markdown sections:\n"
+                    "### Summary\n(1-2 crisp sentences evaluating submission quality vs. the assignment)\n"
+                    "### What Worked\n(2 short bullet points)\n"
+                    "### Areas to Improve\n(2-3 concrete bullet points)\n\n"
+                    f"Payload JSON:\n{json.dumps(standalone_payload, indent=2)}"
+                )
+                review_md = self.llm_client.generate_text(
+                    prompt,
+                    system_instruction=(
+                        "You are an objective university grader writing a standalone AI evaluation. "
+                        "Never include peer comparisons or class ranks."
+                    ),
+                    model=self.llm_client.fast_model,
+                )
+            else:
+                strengths_md = "\n".join(f"- {s}" for s in metrics.get("strengths", [])[:2])
+                weaknesses_md = "\n".join(f"- {w}" for w in metrics.get("weaknesses", [])[:2])
+                review_md = (
+                    f"### Standalone AI Evaluation\n"
+                    f"AI Score **{score}/100** (Coverage {metrics.get('requirements_coverage_pct', 0)}%). {metrics.get('style_summary', '')}\n\n"
+                    f"### What Worked\n{strengths_md}\n\n"
+                    f"### Areas to Improve\n{weaknesses_md}"
+                )
+            sub.deep_review_md = review_md
+            self.db.commit()
+            return review_md
 
         payload = self.build_stage2_prompt_payload(submission_id)
         metrics = payload["student_metrics"]
@@ -989,7 +1176,7 @@ class HomeworkReviewService:
         if self.llm_client.is_configured():
             prompt = (
                 "Write a SHORT, direct, scannable student review (MAX 110 words total). "
-                "The UI already displays the 0-100 AI Rubric Grade, the 1-10 Class Standing, and the 4 Category bars — "
+                "The UI already displays the 0-100 AI Rubric Grade, ordinal Class Rank (1st, 2nd...), and Category bars — "
                 "so do NOT repeat big numeric tables. Use ONLY these 3 compact Markdown sections:\n"
                 "### Summary\n(1-2 crisp sentences explaining where they stand vs classmates)\n"
                 "### What Worked\n(2 short bullet points)\n"
@@ -1019,15 +1206,16 @@ class HomeworkReviewService:
                 if top_tag
                 else ""
             )
+            ord_rank = standing.get("rank_label") or format_ordinal(standing.get("rank", 1))
             focus_line = (
-                f"Priority focus: **{weakest['label']}** (`{weakest['class_score']}/10` class standing)."
+                f"Priority focus: **{weakest['label']}** (`{weakest.get('rank_ordinal') or format_ordinal(weakest.get('rank', 1))}` of `{weakest['cohort_size']}`)."
                 if weakest
                 else ""
             )
 
             review_md = (
                 f"### Comparative Performance Summary\n"
-                f"AI Rubric **{score}/100** (`{delta_str}` vs. class avg `{mean}`) &bull; Class Standing **{standing['class_score']}/10** (#{standing['rank']} of {standing['cohort_size']}). {focus_line}\n\n"
+                f"AI Score **{score}/100** (`{delta_str}` vs. class avg `{mean}`) &bull; Class Rank **{ord_rank}** (#{standing['rank']} of {standing['cohort_size']}). {focus_line}\n\n"
                 f"### What Worked\n{strengths_md}\n\n"
                 f"### Fix Next\n{weaknesses_md}"
                 + (f"\n{pitfall_line}" if pitfall_line else "")
@@ -1053,10 +1241,7 @@ class HomeworkReviewService:
         assignment = self.create_assignment(
             course_id=course_id,
             title="Ex2 — Object-Oriented Design & Real-Time Architecture",
-            rubric_text=(
-                "Evaluate OOP encapsulation/Adapter design, unit test coverage (pytest), "
-                "error handling & path portability, and concurrency modularity."
-            ),
+            rubric_text="",
             topics=[
                 "OOP Design & Patterns",
                 "Automated Testing",
@@ -1097,6 +1282,14 @@ class HomeworkReviewService:
                 student_id=st.id,
                 content_text=sample_code,
                 generate_review=True,
+                submission_type="comparative",
+            )
+            self.submit_homework(
+                assignment_id=assignment.id,
+                student_id=st.id,
+                content_text=sample_code,
+                generate_review=True,
+                submission_type="final",
             )
 
         return assignment

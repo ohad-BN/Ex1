@@ -479,6 +479,7 @@ class AttendanceService:
             visual_count=visual_count,
             tolerance=tolerance,
             has_snapshot=latest_snap is not None,
+            discrepancy_approved=bool(latest_snap.discrepancy_approved) if latest_snap else False,
         )
 
     def purge_expired_headcount_photos(self, retention_hours: int) -> int:

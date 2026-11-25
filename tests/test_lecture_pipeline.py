@@ -110,8 +110,8 @@ def test_gemini_client_pacing_and_429_exponential_backoff() -> None:
         clock_fn=clock.time,
         sleep_fn=clock.sleep,
     )
-    assert client_429.generate_text("hello") == "Recovered via gemini-3.1-flash-lite"
-    assert client_429.fast_model == "gemini-3.1-flash-lite"
+    assert client_429.generate_text("hello") == "Recovered via gemini-2.5-flash"
+    assert client_429.fast_model == "gemini-2.5-flash"
 
 
 def test_lecture_2pass_correction_chat_crosslink_and_course_endpoint(lecture_app) -> None:
@@ -153,6 +153,10 @@ def test_lecture_2pass_correction_chat_crosslink_and_course_endpoint(lecture_app
     assert resp.status_code == 201
     data = resp.get_json()
     assert data["status"] == "COMPLETED"
+    assert data["is_published"] is False
+    assert data["structured_sections"]["executive_summary"]
+    assert data["structured_sections"]["key_topics"]
+    assert data["structured_sections"]["action_items"]
 
     joined_corrected = " ".join(seg["text"] for seg in data["corrected_transcript"])
     assert "SOLID Principles" in joined_corrected
@@ -164,6 +168,14 @@ def test_lecture_2pass_correction_chat_crosslink_and_course_endpoint(lecture_app
     assert "Ohad Ben Nun" in data["summary_markdown"]
     assert "Why prefer Bridge Pattern over inheritance here?" in data["summary_markdown"]
 
+    pre_pub_events = [e["name"] for e in sio.get_received()]
+    assert "lecture:summary_ready" not in pre_pub_events
+
+    art_id = data["id"]
+    pub_resp = client.post(f"/api/lectures/{art_id}/publish", json={"publish": True})
+    assert pub_resp.status_code == 200
+    assert pub_resp.get_json()["is_published"] is True
+
     events = [e["name"] for e in sio.get_received()]
     assert "lecture:summary_ready" in events
     sio.disconnect()
@@ -171,8 +183,6 @@ def test_lecture_2pass_correction_chat_crosslink_and_course_endpoint(lecture_app
     course_lecs = client.get(f"/api/courses/{course.id}/lectures")
     assert course_lecs.status_code == 200
     assert len(course_lecs.get_json()["artifacts"]) == 1
-
-    art_id = data["id"]
     md_dl = client.get(f"/api/lectures/{art_id}/download/summary.md")
     assert md_dl.status_code == 200
     assert "attachment" in md_dl.headers.get("Content-Disposition", "")

@@ -321,9 +321,12 @@ class TiledSCRFDDetector(FaceDetector):
         return self._apply_nms(candidates)
 
     def _detect_padded_closeup_locked(
-        self, image: np.ndarray, threshold: float = 0.20
+        self,
+        image: np.ndarray,
+        threshold: float = 0.20,
+        pad_ratio: float = 0.35,
     ) -> list[BoundingBox]:
-        """Single fast border-padded pass catching close-up portraits/selfies where face fills frame."""
+        """Fast border-padded pass catching close-up portraits/selfies where face fills frame."""
         orig_h, orig_w = image.shape[:2]
         longest = max(orig_h, orig_w, 1)
         scale = min(1.0, 720.0 / float(longest))
@@ -337,8 +340,8 @@ class TiledSCRFDDetector(FaceDetector):
             else image
         )
         wh, ww = work.shape[:2]
-        pad_y = max(48, int(round(wh * 0.35)))
-        pad_x = max(48, int(round(ww * 0.35)))
+        pad_y = max(48, int(round(wh * pad_ratio)))
+        pad_x = max(48, int(round(ww * pad_ratio)))
         padded = cv2.copyMakeBorder(
             work, pad_y, pad_y, pad_x, pad_x, cv2.BORDER_CONSTANT, value=(128, 128, 128)
         )
@@ -363,10 +366,36 @@ class TiledSCRFDDetector(FaceDetector):
                 )
         return self._apply_nms(candidates)
 
+    def _detect_upscaled_locked(
+        self, image: np.ndarray, threshold: float = 0.18, factor: float = 1.6
+    ) -> list[BoundingBox]:
+        """Upscale small/webcam photos so SCRFD catches smaller or slightly blurred faces."""
+        orig_h, orig_w = image.shape[:2]
+        if max(orig_h, orig_w) >= 850:
+            return []
+        up_w = max(1, int(round(orig_w * factor)))
+        up_h = max(1, int(round(orig_h * factor)))
+        up_img = cv2.resize(image, (up_w, up_h), interpolation=cv2.INTER_CUBIC)
+        inv = 1.0 / factor
+        candidates: list[BoundingBox] = []
+        for x1, y1, x2, y2, score in self._run_scrfd_crop_locked(up_img, threshold=threshold):
+            candidates.append(
+                BoundingBox(
+                    label_id=0,
+                    x1=max(0.0, x1 * inv),
+                    y1=max(0.0, y1 * inv),
+                    x2=min(float(orig_w), x2 * inv),
+                    y2=min(float(orig_h), y2 * inv),
+                    confidence=score,
+                    source="auto",
+                )
+            )
+        return self._apply_nms(candidates)
+
     def detect(
         self, image: np.ndarray, *, conf_threshold: Optional[float] = None
     ) -> list[BoundingBox]:
-        """Run full-frame + overlapping tiled SCRFD detection plus close-up & contrast recovery."""
+        """Run full-frame + overlapping tiled SCRFD detection plus close-up, upscale & lighting recovery."""
         if image is None or image.size == 0:
             return []
         eff_thresh = self.conf_threshold if conf_threshold is None else float(conf_threshold)
@@ -377,16 +406,32 @@ class TiledSCRFDDetector(FaceDetector):
                     image, self.fallback_conf_threshold, include_tiles=True
                 )
             if not boxes and conf_threshold is None:
-                boxes = self._detect_padded_closeup_locked(image, threshold=0.16)
+                boxes = self._detect_padded_closeup_locked(image, threshold=0.16, pad_ratio=0.35)
+            if not boxes and conf_threshold is None:
+                boxes = self._detect_padded_closeup_locked(image, threshold=0.15, pad_ratio=0.60)
+            if not boxes and conf_threshold is None:
+                boxes = self._detect_upscaled_locked(image, threshold=0.16, factor=1.6)
             if not boxes and conf_threshold is None:
                 try:
                     lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
                     l_ch, a_ch, b_ch = cv2.split(lab)
-                    clahe = cv2.createCLAHE(clipLimit=2.2, tileGridSize=(8, 8))
+                    clahe = cv2.createCLAHE(clipLimit=2.4, tileGridSize=(8, 8))
                     enhanced = cv2.cvtColor(
                         cv2.merge((clahe.apply(l_ch), a_ch, b_ch)), cv2.COLOR_LAB2BGR
                     )
-                    boxes = self._detect_padded_closeup_locked(enhanced, threshold=0.16)
+                    boxes = self._detect_at_threshold_locked(enhanced, 0.16, include_tiles=True)
+                    if not boxes:
+                        boxes = self._detect_padded_closeup_locked(enhanced, threshold=0.14, pad_ratio=0.45)
+                except Exception:
+                    pass
+            if not boxes and conf_threshold is None:
+                try:
+                    table = np.array(
+                        [min(255, int(((i / 255.0) ** (1.0 / 1.5)) * 255.0)) for i in range(256)],
+                        dtype=np.uint8,
+                    )
+                    bright = cv2.LUT(image, table)
+                    boxes = self._detect_padded_closeup_locked(bright, threshold=0.15, pad_ratio=0.40)
                 except Exception:
                     pass
             return boxes
@@ -394,13 +439,20 @@ class TiledSCRFDDetector(FaceDetector):
     def detect_with_orientation(
         self, image: np.ndarray
     ) -> tuple[list[BoundingBox], np.ndarray, bool]:
-        """Detect faces upright first; if 0 found, probe 90/270/180 rotations rapidly."""
+        """Detect upright high-confidence faces first; probe 90/270/180 before extreme low-threshold fallback."""
         if image is None or image.size == 0:
             return [], image, False
 
-        boxes = self.detect(image)
-        if boxes:
-            return boxes, image, False
+        with self._lock:
+            upright_boxes = self._detect_at_threshold_locked(
+                image, self.conf_threshold, include_tiles=True
+            )
+            if not upright_boxes:
+                upright_boxes = self._detect_padded_closeup_locked(
+                    image, threshold=self.conf_threshold, pad_ratio=0.35
+                )
+        if upright_boxes:
+            return upright_boxes, image, False
 
         best_boxes: list[BoundingBox] = []
         best_img: np.ndarray = image
@@ -413,9 +465,13 @@ class TiledSCRFDDetector(FaceDetector):
         ):
             rot_img = cv2.rotate(image, rot_code)
             with self._lock:
-                probe_boxes = self._detect_padded_closeup_locked(
-                    rot_img, threshold=min(0.22, self.conf_threshold)
+                probe_boxes = self._detect_at_threshold_locked(
+                    rot_img, min(0.28, self.conf_threshold), include_tiles=False
                 )
+                if not probe_boxes:
+                    probe_boxes = self._detect_padded_closeup_locked(
+                        rot_img, threshold=min(0.25, self.conf_threshold), pad_ratio=0.35
+                    )
             if not probe_boxes:
                 continue
 
@@ -428,7 +484,10 @@ class TiledSCRFDDetector(FaceDetector):
 
         if best_boxes:
             return best_boxes, best_img, True
-        return [], image, False
+
+        # Only after normal orientation & rotations fail, run deep close-up / contrast / gamma recovery upright
+        fallback_boxes = self.detect(image)
+        return fallback_boxes, image, False
 
     @staticmethod
     def render_annotated_image(

@@ -14,6 +14,9 @@ class AuditVerdict:
     status: str
     summary_note: str
     has_snapshot: bool = True
+    discrepancy_requires_approval: bool = False
+    discrepancy_excess: int = 0
+    discrepancy_approved: bool = False
 
     @property
     def roster_count(self) -> int:
@@ -34,6 +37,9 @@ class AuditVerdict:
             "summary_note": self.summary_note,
             "explanation": self.summary_note,
             "has_snapshot": self.has_snapshot,
+            "discrepancy_requires_approval": self.discrepancy_requires_approval,
+            "discrepancy_excess": self.discrepancy_excess,
+            "discrepancy_approved": self.discrepancy_approved,
         }
 
 
@@ -47,6 +53,7 @@ class AttendanceReconciler:
         visual_count: int,
         tolerance: int = 2,
         has_snapshot: bool = True,
+        discrepancy_approved: bool = False,
     ) -> AuditVerdict:
         delta = qr_count - visual_count
         if not has_snapshot:
@@ -58,7 +65,13 @@ class AttendanceReconciler:
                 status="AWAITING_PHOTO",
                 summary_note="No classroom headcount photo uploaded yet.",
                 has_snapshot=False,
+                discrepancy_requires_approval=False,
+                discrepancy_excess=0,
+                discrepancy_approved=False,
             )
+
+        excess = max(0, qr_count - visual_count)
+        requires_approval = bool(qr_count > visual_count and not discrepancy_approved)
 
         if abs(delta) <= tolerance:
             status = "VERIFIED"
@@ -79,6 +92,17 @@ class AttendanceReconciler:
                 f"than QR check-ins ({qr_count}). Some students may not have scanned."
             )
 
+        if requires_approval and status != "DISCREPANCY_ALERT":
+            note = (
+                f"Notice: {qr_count} registered students vs. {visual_count} detected face(s) in "
+                f"classroom ({excess} excess). Lecturer approval requested in Attendance Roster."
+            )
+        elif discrepancy_approved and qr_count > visual_count:
+            note = (
+                f"Lecturer approved attendance discrepancy ({qr_count} registered vs. "
+                f"{visual_count} detected face(s))."
+            )
+
         return AuditVerdict(
             roster_total=roster_total,
             qr_count=qr_count,
@@ -87,4 +111,7 @@ class AttendanceReconciler:
             status=status,
             summary_note=note,
             has_snapshot=True,
+            discrepancy_requires_approval=requires_approval,
+            discrepancy_excess=excess,
+            discrepancy_approved=bool(discrepancy_approved),
         )

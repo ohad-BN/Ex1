@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -46,20 +48,26 @@ def integration_status():
 
 @lectures_bp.get("/api/sessions/<int:session_id>/lectures")
 def list_session_lectures(session_id: int):
-    _sess, _lec, _stu, err = verify_session_read_access(session_id, allow_open_attendance=True)
+    _sess, lec, stu, err = verify_session_read_access(session_id, allow_open_attendance=True)
     if err is not None:
         return err
     svc = _get_lecture_service()
-    return jsonify({"artifacts": svc.list_session_artifacts(session_id)})
+    is_student_view = (stu is not None and lec is None) or str(
+        request.args.get("published_only", "")
+    ).lower() in ("1", "true", "yes")
+    return jsonify({"artifacts": svc.list_session_artifacts(session_id, published_only=is_student_view)})
 
 
 @lectures_bp.get("/api/courses/<int:course_id>/lectures")
 def list_course_lectures(course_id: int):
-    _course, _lec, _stu, _all_subs, err = verify_course_read_access(course_id)
+    _course, lec, stu, _all_subs, err = verify_course_read_access(course_id)
     if err is not None:
         return err
     svc = _get_lecture_service()
-    return jsonify({"artifacts": svc.list_course_artifacts(course_id)})
+    is_student_view = (stu is not None and lec is None) or str(
+        request.args.get("published_only", "")
+    ).lower() in ("1", "true", "yes")
+    return jsonify({"artifacts": svc.list_course_artifacts(course_id, published_only=is_student_view)})
 
 
 @lectures_bp.get("/api/lectures/<int:artifact_id>/download/summary.md")
@@ -68,11 +76,16 @@ def download_lecture_summary_md(artifact_id: int):
     artifact = db.get(LectureArtifact, artifact_id)
     if artifact is None:
         return jsonify({"error": "Lecture artifact not found."}), 404
-    _sess, _lec, _stu, err = verify_session_read_access(
+    _sess, lec, stu, err = verify_session_read_access(
         artifact.session_id, allow_open_attendance=True
     )
     if err is not None:
         return err
+    is_student_view = (stu is not None and lec is None) or str(
+        request.args.get("published_only", "")
+    ).lower() in ("1", "true", "yes")
+    if is_student_view and not artifact.is_published:
+        return jsonify({"error": "This lecture summary has not been published to students yet."}), 403
     svc = _get_lecture_service()
     try:
         filename, content = svc.build_summary_download(artifact_id)
@@ -91,11 +104,16 @@ def download_lecture_transcript_txt(artifact_id: int):
     artifact = db.get(LectureArtifact, artifact_id)
     if artifact is None:
         return jsonify({"error": "Lecture artifact not found."}), 404
-    _sess, _lec, _stu, err = verify_session_read_access(
+    _sess, lec, stu, err = verify_session_read_access(
         artifact.session_id, allow_open_attendance=True
     )
     if err is not None:
         return err
+    is_student_view = (stu is not None and lec is None) or str(
+        request.args.get("published_only", "")
+    ).lower() in ("1", "true", "yes")
+    if is_student_view and not artifact.is_published:
+        return jsonify({"error": "This lecture summary has not been published to students yet."}), 403
     svc = _get_lecture_service()
     try:
         filename, content = svc.build_transcript_download(artifact_id)
@@ -114,9 +132,13 @@ def delete_lecture_artifact(artifact_id: int):
     artifact = db.get(LectureArtifact, artifact_id)
     if artifact is None:
         return jsonify({"error": "Lecture artifact not found."}), 404
-    _sess, _lec, err = require_session_access(artifact.session_id)
+    session, _lec, err = require_session_access(artifact.session_id)
     if err is not None:
         return err
+
+    session_id = artifact.session_id
+    session_code = session.session_code if session else ""
+    course_id = session.course_id if session else None
 
     if artifact.media_path and not artifact.media_path.startswith(("sample://", "inline://")):
         media_file = Path(artifact.media_path)
@@ -127,6 +149,17 @@ def delete_lecture_artifact(artifact_id: int):
                 pass
     db.delete(artifact)
     db.commit()
+
+    del_payload = {
+        "id": artifact_id,
+        "artifact_id": artifact_id,
+        "session_id": session_id,
+        "course_id": course_id,
+    }
+    if session_code:
+        socketio.emit("lecture:deleted", del_payload, to=f"session_{session_code}")
+    if course_id is not None:
+        socketio.emit("lecture:deleted", del_payload, to=f"course_notify_{course_id}")
     return jsonify({"status": "deleted", "artifact_id": artifact_id})
 
 
@@ -150,7 +183,11 @@ def summarize_session_lecture(session_id: int):
 
     if "media" in request.files and request.files["media"].filename:
         file_storage = request.files["media"]
-        clean_name = secure_filename(file_storage.filename) or "recording.bin"
+        orig_path = Path(file_storage.filename)
+        raw_suffix = orig_path.suffix.lower()
+        safe_ext = raw_suffix if re.fullmatch(r"\.[a-z0-9]{1,10}", raw_suffix) else ".bin"
+        safe_stem = secure_filename(orig_path.stem) or f"recording_{uuid.uuid4().hex[:8]}"
+        clean_name = f"{safe_stem}{safe_ext}"
         dest_dir = Path(cfg.UPLOAD_DIR) / f"session_{session.id}"
         dest_dir.mkdir(parents=True, exist_ok=True)
         saved_path = dest_dir / clean_name
@@ -179,10 +216,9 @@ def summarize_session_lecture(session_id: int):
     def _emit_status(payload_dict: dict[str, Any]) -> None:
         socketio.emit("lecture:status", payload_dict, to=room)
 
-    def _emit_summary_ready(payload_dict: dict[str, Any]) -> None:
-        socketio.emit("lecture:summary_ready", payload_dict, to=room)
-        if course_room is not None:
-            socketio.emit("lecture:summary_ready", payload_dict, to=course_room)
+    def _emit_draft_ready(payload_dict: dict[str, Any]) -> None:
+        # Notify the lecturer session workspace that the draft completed, without auto-publishing to students
+        socketio.emit("lecture:status", payload_dict, to=room)
 
     if async_mode and saved_path is not None:
         provisional = LectureArtifact(
@@ -190,6 +226,7 @@ def summarize_session_lecture(session_id: int):
             source_type="upload",
             media_path=str(saved_path),
             status="TRANSCRIBING",
+            is_published=False,
         )
         db.add(provisional)
         db.commit()
@@ -212,7 +249,7 @@ def summarize_session_lecture(session_id: int):
                     on_status=_emit_status,
                 )
                 serialized_bg = bg_svc.serialize_artifact(artifact)
-                _emit_summary_ready(serialized_bg)
+                _emit_draft_ready(serialized_bg)
                 return serialized_bg
 
         job_id = current_app.extensions["task_manager"].submit(
@@ -232,5 +269,49 @@ def summarize_session_lecture(session_id: int):
         return jsonify({"error": exc.message}), exc.status_code
 
     serialized = svc.serialize_artifact(artifact)
-    _emit_summary_ready(serialized)
+    _emit_draft_ready(serialized)
     return jsonify(serialized), 201
+
+
+@lectures_bp.post("/api/lectures/<int:artifact_id>/publish")
+def publish_lecture_artifact(artifact_id: int):
+    """Explicitly publish or unpublish a completed lecture summary for enrolled students."""
+    db = current_app.extensions["db_session"]
+    artifact = db.get(LectureArtifact, artifact_id)
+    if artifact is None:
+        return jsonify({"error": "Lecture artifact not found."}), 404
+    session, _lec, err = require_session_access(artifact.session_id)
+    if err is not None:
+        return err
+    assert session is not None
+
+    payload = request.get_json(silent=True) or {}
+    raw_pub = payload.get("publish", True)
+    publish_flag = (
+        raw_pub
+        if isinstance(raw_pub, bool)
+        else str(raw_pub).strip().lower() not in ("false", "0", "no", "")
+    )
+    svc = _get_lecture_service()
+    try:
+        updated = svc.publish_artifact(artifact_id, publish=publish_flag)
+    except LecturePipelineError as exc:
+        return jsonify({"error": exc.message}), exc.status_code
+
+    serialized = svc.serialize_artifact(updated)
+    room = f"session_{session.session_code}"
+    course_room = f"course_notify_{session.course_id}" if session.course_id is not None else None
+    if updated.is_published:
+        socketio.emit("lecture:summary_ready", serialized, to=room)
+        if course_room is not None:
+            socketio.emit("lecture:summary_ready", serialized, to=course_room)
+    else:
+        unpub_payload = {
+            "id": updated.id,
+            "session_id": updated.session_id,
+            "course_id": session.course_id,
+        }
+        socketio.emit("lecture:unpublished", unpub_payload, to=room)
+        if course_room is not None:
+            socketio.emit("lecture:unpublished", unpub_payload, to=course_room)
+    return jsonify(serialized), 200

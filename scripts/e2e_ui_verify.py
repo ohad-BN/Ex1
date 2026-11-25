@@ -486,8 +486,9 @@ class EphemeralServer:
                 student_id=None,
             )
 
-            # Lecture AI Artifact (built-in sample)
-            lec_svc.summarize_session_recording(session_id=ariel1.id, use_sample=True)
+            # Lecture AI Artifact (built-in sample -> explicitly published so student screenshot sees published view)
+            seeded_art = lec_svc.summarize_session_recording(session_id=ariel1.id, use_sample=True)
+            lec_svc.publish_artifact(seeded_art.id, publish=True)
 
             # Homework Assignment + 3 Sample Submissions
             hw_svc.seed_sample_course_assignment(cs204.id)
@@ -1528,11 +1529,11 @@ def run_tier1(
         results.fail(f"Broken teacher tab ordering: {labels}")
 
     html_src = tab_check["html"]
-    for bad in ('id="tab-ai-hub"', "Course Overview &amp; Roster", "Course Overview & Roster", "Reset Device", "/chat/export.txt", "OOP modularity, automated pytest coverage, error handling."):
+    for bad in ('id="tab-ai-hub"', "Course Overview &amp; Roster", "Course Overview & Roster", "Reset Device", "/chat/export.txt", "OOP modularity, automated pytest coverage, error handling.", "Use Ariel Classroom Sample", "Evaluate OOP encapsulation", 'id="btn-sample-headcount"'):
         if bad in html_src:
             results.fail(f"Forbidden string/ID found in teacher_portal: {bad}")
 
-    # Verify restructured compact zero-scroll sidebar, removed Lectures item, and enlarged tiles
+    # Verify restructured compact zero-scroll sidebar, removed Lectures item, greeting & enlarged tiles
     ux_metrics = cdp.eval_js(
         """(() => {
             const sb = document.getElementById("teacher-sidebar");
@@ -1541,6 +1542,8 @@ def run_tier1(
             const profileBtn = document.getElementById("lecturer-profile-trigger");
             const closeBtn = document.getElementById("btn-lecturer-close-app");
             const tile = document.querySelector("#tab-overview .cp-hub-tile");
+            const greetTxt = (document.getElementById("lecturer-greeting-prefix")?.textContent || "").trim();
+            const hasCameraBtn = Boolean(document.getElementById("btn-webcam-headcount"));
             return {
                 sidebarScrollH: sb ? sb.scrollHeight : 0,
                 sidebarClientH: sb ? sb.clientHeight : 0,
@@ -1548,9 +1551,15 @@ def run_tier1(
                 myCoursesInitiallyCollapsed: Boolean(myCoursesList && myCoursesList.hidden),
                 hasProfilePopover: Boolean(profileBtn && closeBtn),
                 tileHeight: tile ? Math.round(tile.getBoundingClientRect().height) : 0,
+                greetOk: /^(Good Morning|Good Afternoon|Good Evening|Good Night|Hello),$/.test(greetTxt),
+                hasCameraBtn,
             };
         })()"""
     )
+    if ux_metrics["greetOk"] and ux_metrics["hasCameraBtn"]:
+        results.ok("Lecturer dynamic greeting & direct camera capture button verified")
+    else:
+        results.fail(f"Lecturer greeting/camera check failed: {ux_metrics}")
     if ux_metrics["sidebarScrollH"] <= ux_metrics["sidebarClientH"] + 2:
         results.ok(f"Lecturer sidebar has ZERO vertical scrollbar ({ux_metrics['sidebarScrollH']} <= {ux_metrics['sidebarClientH']})")
     else:
@@ -2011,17 +2020,20 @@ def run_tier3(
     if cdp.wait_for("Boolean(document.querySelector('#hw-submissions-list button[onclick*=\"openReviewModal\"]'))", 5.0):
         hw_ok = cdp.eval_js(
             """(() => {
+                const hwListTxt = document.getElementById("hw-submissions-list").innerText;
+                const noClassScoreCol = !hwListTxt.includes("Class Score (1-10)");
                 document.querySelector('#hw-submissions-list button[onclick*="openReviewModal"]').click();
                 const body = document.getElementById("modal-hw-review-body").innerText.trim();
                 const open = document.getElementById("modal-hw-review").classList.contains("open");
+                const noStandingInModal = !body.includes("Class Standing:") && body.includes("AI Score:");
                 document.querySelector('#modal-hw-review button[onclick*="closeModal"], #modal-hw-review [data-modal-close]').click();
-                return open && body.length > 20;
+                return open && body.length > 20 && noClassScoreCol && noStandingInModal;
             })()"""
         )
         if hw_ok:
-            results.ok("Interactive #modal-hw-review rendered seeded AI review & closed")
+            results.ok("Interactive #modal-hw-review rendered standalone Final AI Score review & hid comparative rankings from lecturer")
         else:
-            results.fail("Interactive #modal-hw-review failed to render review content")
+            results.fail("Interactive #modal-hw-review leaked comparative data or failed to render Final AI review")
     else:
         results.fail("Interactive #modal-hw-review trigger missing")
 
@@ -2044,6 +2056,70 @@ def run_tier3(
         results.ok("Interactive #modal-account-security loaded real audit logs & closed")
     else:
         results.fail("Interactive #modal-account-security failed to populate audit logs")
+
+    # 3a. Lecture AI Tab: verify structured summary sections & Draft -> Publish to Students workflow
+    cdp.eval_js('document.querySelector(\'[data-tab-target="tab-ai-lectures"]\').click()')
+    if cdp.wait_for("Boolean(document.querySelector('#lecture-artifacts-list [data-summary-section=\"executive\"]'))", 5.0):
+        lec_ui = cdp.eval_js(
+            """(() => {
+                const listEl = document.getElementById("lecture-artifacts-list");
+                return {
+                    hasExec: Boolean(listEl.querySelector('[data-summary-section="executive"]')),
+                    hasTopics: Boolean(listEl.querySelector('[data-summary-section="topics"]')),
+                    hasActions: Boolean(listEl.querySelector('[data-summary-section="actions"]')),
+                };
+            })()"""
+        )
+        if all(lec_ui.values()):
+            results.ok("Lecturer Lecture Summaries render structured Executive / Topics / Action sections cleanly")
+        else:
+            results.fail(f"Lecturer Lecture Summary structured sections missing: {lec_ui}")
+
+        s_alice = requests.Session()
+        s_alice.cookies.set("cp_device", seed.alice_device_cookie)
+        cdp.eval_js(
+            """(() => {
+                document.getElementById("lecture-transcript-input").value = "[00:08] Draft Verification Note about Polymorphism and Liskov Substitution.";
+                document.getElementById("btn-upload-lecture-summary").click();
+            })()"""
+        )
+        draft_seen = cdp.wait_for("Boolean(document.querySelector('#lecture-artifacts-list [data-publish-artifact]'))", 5.0)
+        if draft_seen:
+            draft_id = cdp.eval_js("Number(document.querySelector('#lecture-artifacts-list [data-publish-artifact]').getAttribute('data-publish-artifact'))")
+            alice_before = s_alice.get(f"{seed.base_url}/api/courses/{seed.cs204_id}/lectures", timeout=5).json()["artifacts"]
+            if all(a["id"] != draft_id for a in alice_before):
+                results.ok("Newly created Lecture Summary stays Draft & hidden from students until Lecturer publishes")
+            else:
+                results.fail("Draft Lecture Summary leaked to student before Publish to Students was clicked!")
+            cdp.eval_js(f"document.querySelector('[data-publish-artifact=\"{draft_id}\"]').click()")
+            pub_seen = cdp.wait_for(f"Boolean(document.querySelector('[data-unpublish-artifact=\"{draft_id}\"]'))", 5.0)
+            alice_after = s_alice.get(f"{seed.base_url}/api/courses/{seed.cs204_id}/lectures?published_only=1", timeout=5).json()["artifacts"]
+            if pub_seen and any(a["id"] == draft_id for a in alice_after):
+                results.ok("Clicking 'Publish to Students' made structured Lecture Summary visible to students")
+            else:
+                results.fail("Clicking 'Publish to Students' failed to unlock student access!")
+
+            # Unpublish test: clicking Unpublish keeps summary in Lecturer drafts & immediately hides from Student API
+            cdp.eval_js(f"document.querySelector('[data-unpublish-artifact=\"{draft_id}\"]').click()")
+            reverted_to_draft = cdp.wait_for(f"Boolean(document.querySelector('[data-publish-artifact=\"{draft_id}\"]'))", 5.0)
+            alice_after_unpub = s_alice.get(f"{seed.base_url}/api/courses/{seed.cs204_id}/lectures?published_only=1", timeout=5).json()["artifacts"]
+            if reverted_to_draft and all(a["id"] != draft_id for a in alice_after_unpub):
+                results.ok("Clicking 'Unpublish' kept summary intact in Lecturer drafts & hid it from students")
+            else:
+                results.fail("Clicking 'Unpublish' failed to revert Lecturer UI or hide summary from students!")
+
+            # Cascade delete test: deleting artifact as Lecturer immediately removes it from Student API
+            cdp.eval_js(f"document.querySelector('button[onclick*=\"deleteLectureArtifact({draft_id})\"]').click()")
+            gone_ui = cdp.wait_for(f"!document.querySelector('[data-lecture-artifact-id=\"{draft_id}\"]')", 5.0)
+            alice_after_del = s_alice.get(f"{seed.base_url}/api/courses/{seed.cs204_id}/lectures?published_only=1", timeout=5).json()["artifacts"]
+            if gone_ui and all(a["id"] != draft_id for a in alice_after_del):
+                results.ok("Deleting Lecture Summary as Lecturer cascaded immediately to Student API")
+            else:
+                results.fail("Deleted Lecture Summary remained visible in Teacher UI or Student API!")
+        else:
+            results.fail("New lecture summary draft did not render 'Publish to Students' button")
+    else:
+        results.fail("Lecturer Lecture Summary structured sections did not render on #tab-ai-lectures")
 
     # 3b. Professor Phone Headcount QR modal -> auto-close on phone connect -> mobile +1/-1 stepper
     cdp.eval_js('document.querySelector(\'[data-tab-target="tab-attendance"]\').click()')
@@ -2137,6 +2213,18 @@ def run_tier3(
         if ev_sv["fatal_errors"]:
             results.fail(f"[t3_student_app:{view_id}] Runtime/Network error: {ev_sv['fatal_errors']}")
         audit_theme_and_r2_dom(cdp, f"student_app:{view_id}", results, allow_theme_fail)
+        if view_id == "screen-course-assignments":
+            grp_ok = cdp.wait_for("Boolean(document.querySelector('#student-assignments-list [data-assignment-course-group]'))", 4.0)
+            if grp_ok:
+                results.ok("Student Global Assignments screen groups assignments cleanly under Course sections")
+            else:
+                results.fail("Student Global Assignments screen did not render [data-assignment-course-group] sections!")
+        elif view_id == "screen-course-summaries":
+            stu_sec_ok = cdp.wait_for("Boolean(document.querySelector('#student-lecture-summaries [data-summary-section=\"executive\"]'))", 4.0)
+            if stu_sec_ok:
+                results.ok("Student Lecture Summaries screen renders structured summary sections cleanly")
+            else:
+                results.fail("Student Lecture Summaries screen missing structured summary sections!")
     cdp.eval_js(
         f"""(() => {{
             openCourseHub({seed.cs204_id});
@@ -2278,6 +2366,13 @@ def run_tier3(
 
     # 6b. Progressive Disclosure Drill-Down, Web+Mobile Back Button & Upload Dropzone Verifications
     if onboard_ok:
+        stu_greet_ok = cdp.eval_js(
+            "/^(Good Morning|Good Afternoon|Good Evening|Good Night|Hello),$/.test((document.getElementById('student-greeting-prefix')?.textContent || '').trim())"
+        )
+        if stu_greet_ok:
+            results.ok("Student dynamic time-based greeting verified in sidebar")
+        else:
+            results.fail("Student dynamic time-based greeting missing")
         # Back steps cleanly from Lecture -> Lectures -> Course Hub -> Courses Home (where Back hides)
         back_steps_ok = cdp.eval_js(
             """(() => {
@@ -2308,23 +2403,45 @@ def run_tier3(
         else:
             results.fail("Browser Back on Courses Home left Student App!")
 
-        # Level 0 omits raw course codes; Level 2 Course Info displays it
+        # Level 0 omits auto-populated Available School Courses list, provides manual Course Number join card, & Level 2 Course Info isolates CS204
         drill_ok = cdp.eval_js(
             f"""(() => {{
                 const lvl0Text = document.getElementById("courses-list").innerText;
+                const availWrapText = document.getElementById("available-courses-wrap")?.innerText || "";
                 const noCodeOnLvl0 = !lvl0Text.includes("CS204");
+                const noAutoAvailList = !availWrapText.includes("Available School Courses");
+                const hasManualJoinCard = Boolean(document.getElementById("join-course-code-input") && document.getElementById("btn-join-course-by-number"));
                 openCourseHub({seed.cs204_id});
                 document.getElementById("hub-tile-info").click();
                 const infoCode = document.getElementById("course-info-number")?.innerText?.trim() || "";
                 document.getElementById("student-back-btn").click();
                 document.getElementById("hub-tile-assignments").click();
-                return {{ noCodeOnLvl0, infoCode, hasAssignmentsScreen: document.getElementById("screen-course-assignments").classList.contains("active") }};
+                return {{ noCodeOnLvl0, noAutoAvailList, hasManualJoinCard, infoCode, hasAssignmentsScreen: document.getElementById("screen-course-assignments").classList.contains("active") }};
             }})()"""
         )
-        if drill_ok["noCodeOnLvl0"] and drill_ok["infoCode"] == "CS204" and drill_ok["hasAssignmentsScreen"]:
-            results.ok("Student Course Info isolates course number while Level 0 hides raw codes & Assignments opens cleanly")
+        if drill_ok["noCodeOnLvl0"] and drill_ok["noAutoAvailList"] and drill_ok["hasManualJoinCard"] and drill_ok["infoCode"] == "CS204" and drill_ok["hasAssignmentsScreen"]:
+            results.ok("Student Course Home hides auto-list, shows manual Course Number join card, isolates CS204 Info & Assignments")
         else:
-            results.fail(f"Student drill-down / Course Info check failed: {drill_ok}")
+            results.fail(f"Student drill-down / Course Join / Info check failed: {drill_ok}")
+
+        # Verify Assignment Detail renders separated Comparative Self-Check (ordinal rank, zero X/10) + Final Submit to Lecturer
+        if cdp.wait_for("Boolean(document.querySelector('#student-assignments-list [data-assignment-id]'))", 5.0):
+            dual_ui = cdp.eval_js(
+                """(() => {
+                    document.querySelector('#student-assignments-list [data-assignment-id]').click();
+                    const detailTxt = document.getElementById("screen-assignment-detail")?.innerText || "";
+                    const hasComp = Boolean(document.querySelector('[id^="hw-comp-btn-"]'));
+                    const hasFinal = Boolean(document.querySelector('[id^="hw-final-btn-"]'));
+                    const hasOrdinalOrReady = /1st Place|2nd Place|3rd Place|Run Comparative Self-Check/.test(detailTxt);
+                    const noSlashTen = !/\b\d+\/10(?!\d)/.test(detailTxt);
+                    return { hasComp, hasFinal, hasOrdinalOrReady, noSlashTen };
+                })()"""
+            )
+            if all(dual_ui.values()):
+                results.ok("Student Assignment Detail cleanly separates Comparative Self-Check (ordinal rank, no /10) & Final Submit to Lecturer")
+            else:
+                results.fail(f"Student dual submission detail check failed: {dual_ui}")
+            cdp.eval_js("handleStudentBack()")
 
         # Check drawer Back closes drawer without losing screen, AND check Desktop Back button visibility
         cdp.eval_js("document.getElementById('student-drawer-toggle').click()")
@@ -2342,6 +2459,26 @@ def run_tier3(
             results.ok("Student persistent Back button verified on BOTH Mobile (drawer close) and Desktop")
         else:
             results.fail(f"Student Back button check failed (drawer={drawer_closed_stayed}, desktop={desktop_back_vis})")
+
+        # Verify 3-section Hierarchical Indented Sidebar Tree & zero desktop sidebar overflow
+        tree_ok = cdp.eval_js(
+            f"""(() => {{
+                const drawer = document.getElementById("student-nav-drawer");
+                document.getElementById("nav-student-assignments").click();
+                const assignOpen = !document.getElementById("nav-tree-assignments").hidden && Boolean(document.querySelector('#nav-tree-assignments [data-tree-assign-course="{seed.cs204_id}"]'));
+                document.getElementById("nav-student-summaries").click();
+                const sumOpen = !document.getElementById("nav-tree-summaries").hidden && Boolean(document.querySelector('#nav-tree-summaries [data-tree-summary-course="{seed.cs204_id}"]'));
+                document.getElementById("nav-student-courses").click();
+                document.querySelector('#nav-tree-courses [data-tree-course-id="{seed.cs204_id}"]').click();
+                const coursesL2Open = !document.getElementById("nav-tree-courses").hidden && Boolean(document.querySelector('#nav-tree-course-sub-{seed.cs204_id} [data-tree-course-sub="assignments"]'));
+                const noScroll = drawer ? drawer.scrollHeight <= drawer.clientHeight + 2 : false;
+                return {{ assignOpen, sumOpen, coursesL2Open, noScroll }};
+            }})()"""
+        )
+        if all(tree_ok.values()):
+            results.ok("Student Sidebar 3-section indented hierarchical tree & zero-scroll verified")
+        else:
+            results.fail(f"Student Sidebar hierarchical tree check failed: {tree_ok}")
 
     # 7. Remaining views theme & R2 audit: portal_home & projector
     cdp.set_viewport("desktop")

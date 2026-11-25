@@ -35,9 +35,17 @@ def _subscribe_user_notification_rooms() -> None:
     )
     if parsed_student is not None:
         sid = parsed_student[1]
+        room_course_ids: set[int] = set()
         enrs = db.query(CourseEnrollment).filter_by(student_id=sid, status="approved").all()
         for enr in enrs:
-            join_room(f"course_notify_{enr.course_id}")
+            room_course_ids.add(enr.course_id)
+        att_rows = db.query(AttendanceRecord).filter_by(student_id=sid).all()
+        for rec in att_rows:
+            sess_obj = db.get(ClassSession, rec.session_id)
+            if sess_obj and sess_obj.course_id is not None:
+                room_course_ids.add(sess_obj.course_id)
+        for cid_val in room_course_ids:
+            join_room(f"course_notify_{cid_val}")
 
 
 @socketio.on("connect")

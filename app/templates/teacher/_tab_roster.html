@@ -95,6 +95,21 @@
           </h2>
           <span id="enrolled-students-count-pill" class="cp-code-pill code-pill">{{ selected_course.students|length }} Students</span>
         </div>
+        <div id="roster-discrepancy-banner"
+             class="cp-alert cp-alert--err cp-row-between"
+             style="display:none; margin-bottom:12px; gap:10px;"
+             role="alert">
+          <div style="min-width:0; flex:1;">
+            <strong>Attendance vs. Headcount Discrepancy:</strong>
+            <span id="roster-discrepancy-text">More students checked in than detected heads in this lecture.</span>
+          </div>
+          <button type="button"
+                  id="btn-approve-roster-discrepancy"
+                  class="cp-btn cp-btn--primary cp-btn--sm"
+                  onclick="approveHeadcountDiscrepancy(this)">
+            Approve Discrepancy
+          </button>
+        </div>
         <div class="cp-table-scroll" style="max-height:420px; overflow-y:auto;">
           <table class="cp-table">
             <thead>
