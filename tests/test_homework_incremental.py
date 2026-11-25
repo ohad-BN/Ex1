@@ -32,6 +32,8 @@ def hw_app(tmp_path: Path):
     cfg = Config(
         SECRET_KEY="phase8-homework-secret",
         DATABASE_URL=f"sqlite:///{db_file.as_posix()}",
+        UPLOAD_DIR=tmp_path / "uploads",
+        REPORT_DIR=tmp_path / "reports",
         GEMINI_API_KEY="",
     )
     app = create_app(cfg, face_detector=StubDetector())

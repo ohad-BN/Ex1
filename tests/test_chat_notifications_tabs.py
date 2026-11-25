@@ -22,6 +22,8 @@ def notify_app(tmp_path: Path):
     cfg = Config(
         SECRET_KEY="chat-notify-test-secret-32chars-min",
         DATABASE_URL=f"sqlite:///{db_file.as_posix()}",
+        UPLOAD_DIR=tmp_path / "uploads",
+        REPORT_DIR=tmp_path / "reports",
     )
     app = create_app(cfg, face_detector=StubDetector())
     app.config["TESTING"] = True
@@ -76,6 +78,8 @@ def test_legacy_synced_to_zoom_column_dropped_on_startup(tmp_path: Path) -> None
     cfg = Config(
         SECRET_KEY="legacy-migration-secret-32chars!",
         DATABASE_URL=f"sqlite:///{db_file.as_posix()}",
+        UPLOAD_DIR=tmp_path / "uploads",
+        REPORT_DIR=tmp_path / "reports",
     )
     app = create_app(cfg, face_detector=StubDetector())
     app.config["TESTING"] = True

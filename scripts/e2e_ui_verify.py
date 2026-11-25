@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """ClassPulse Opaque-Box E2E + Headless Chromium CDP Verification Suite.
 
-Covers Tiers 1-4 per docs/UI_OVERHAUL_DESIGN_PLAN.md (Sections 3, 4, 6, 7):
+Covers Tiers 1-4 verification checks per docs/software_test_plan_stp.md:
   - Tier 1: Feature coverage (all 8 views/routes, 6 teacher tabs, 4 modals, 3 student views),
             template parity check, and runtime/console/network cleanliness.
   - Tier 2: Multi-viewport boundary geometry across 7 viewports (overflow, clipped controls,
@@ -23,6 +23,8 @@ import argparse
 import atexit
 import base64
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
+import inspect
 import json
 import os
 from pathlib import Path
@@ -187,10 +189,75 @@ class SeedContext:
     fresh_checkin_url: Callable[[str], str]
 
 
+E2E_LOG_DIR = PROJECT_ROOT / "tests" / "logs"
+E2E_LOG_FILE = E2E_LOG_DIR / "e2e_failures.log"
+E2E_JSON_FILE = E2E_LOG_DIR / "e2e_failure_report.json"
+
+
+def reset_e2e_logs() -> str:
+    """Refresh E2E failure diagnostic logs at the start of every verification run."""
+    E2E_LOG_DIR.mkdir(parents=True, exist_ok=True)
+    started = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    E2E_LOG_FILE.write_text(
+        f"ClassPulse E2E Verification Failure Diagnostics Log\nRun Started: {started}\n"
+        + ("=" * 78)
+        + "\n",
+        encoding="utf-8",
+    )
+    E2E_JSON_FILE.write_text(
+        json.dumps({"run_started_at": started, "total_failures": 0, "failures": []}, indent=2),
+        encoding="utf-8",
+    )
+    return started
+
+
+def _classify_e2e_failure(msg: str, location: str) -> dict[str, str]:
+    low = msg.lower()
+    if "5xx" in low or " 500" in low:
+        return {
+            "category": "HTTP 500 Internal Server Error",
+            "summary": "Backend emitted an HTTP 5xx error during live E2E browser flow.",
+            "likely_culprit": f"Server route handler invoked prior to {location}",
+        }
+    if "console" in low or "runtime/network" in low or "pageerror" in low:
+        return {
+            "category": "Browser Runtime / Network Error",
+            "summary": "Headless Chromium reported a fatal JS exception or failed HTTP response.",
+            "likely_culprit": "app/templates/ or app/static/js/ loaded in active view",
+        }
+    if "geometry" in low or "overflow" in low or "clipped" in low or "overlap" in low:
+        return {
+            "category": "Viewport Geometry / Layout Defect",
+            "summary": "Rendered DOM violated viewport overflow, overlap, or button clipping checks.",
+            "likely_culprit": "app/static/css/classpulse.css",
+        }
+    if "403" in low or "401" in low or "leak" in low or "cross-tenant" in low or "comparative" in low:
+        return {
+            "category": "Data Isolation / RBAC Breach",
+            "summary": "Role/tenant boundary or privacy isolation invariant failed in live UI check.",
+            "likely_culprit": "app/routes/ or template visibility logic",
+        }
+    if "expected" in low or "missing" in low or "r2" in low or "r3" in low:
+        return {
+            "category": "E2E Contract / UI State Mismatch",
+            "summary": "Live DOM state or HTTP contract did not match expected E2E invariant.",
+            "likely_culprit": location,
+        }
+    return {
+        "category": "E2E Verification Failure",
+        "summary": msg[:240],
+        "likely_culprit": location,
+    }
+
+
 @dataclass
 class AuditResults:
     passes: list[str] = field(default_factory=list)
     failures: list[str] = field(default_factory=list)
+    failure_records: list[dict[str, Any]] = field(default_factory=list)
+    run_started_at: str = field(
+        default_factory=lambda: datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    )
     warnings: list[str] = field(default_factory=list)
     screenshots: list[Path] = field(default_factory=list)
     tokens_by_view: dict[str, dict[str, str]] = field(default_factory=dict)
@@ -202,6 +269,83 @@ class AuditResults:
     def fail(self, msg: str) -> None:
         self.failures.append(msg)
         print(f"[FAIL] {msg}")
+        caller = None
+        for frame in inspect.stack()[1:]:
+            if frame.function not in ("fail", "theme_issue"):
+                caller = frame
+                break
+        file_rel = "scripts/e2e_ui_verify.py"
+        line_no = 0
+        func_name = ""
+        snippet: list[dict[str, Any]] = []
+        if caller is not None:
+            try:
+                file_rel = Path(caller.filename).resolve().relative_to(PROJECT_ROOT).as_posix()
+            except Exception:
+                file_rel = caller.filename
+            line_no = int(caller.lineno)
+            func_name = caller.function
+            p = Path(caller.filename)
+            if p.is_file() and line_no > 0:
+                lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
+                for ln in range(max(1, line_no - 3), min(len(lines), line_no + 3) + 1):
+                    snippet.append({"line": ln, "is_target": ln == line_no, "code": lines[ln - 1]})
+
+        location = f"{file_rel}:{line_no}"
+        m_exp = re.search(r"expected\s+([^,]+),\s*got\s+(.+)$", msg, re.IGNORECASE)
+        exp_val = m_exp.group(1).strip() if m_exp else ""
+        act_val = m_exp.group(2).strip() if m_exp else ""
+        rca = _classify_e2e_failure(msg, location)
+        record = {
+            "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "location": location,
+            "function": func_name,
+            "message": msg,
+            "expected": exp_val,
+            "actual": act_val,
+            "code_snippet": snippet,
+            "root_cause_analysis": rca,
+        }
+        self.failure_records.append(record)
+
+        bar = "=" * 78
+        block_lines = [
+            bar,
+            f"[E2E FAILURE DIAGNOSTIC] {func_name or 'check'} @ {location}",
+            f"Message   : {msg}",
+        ]
+        if exp_val or act_val:
+            block_lines.append(f"Expected  : {exp_val}")
+            block_lines.append(f"Actual    : {act_val}")
+        if snippet:
+            block_lines.append("Code Snippet:")
+            for row in snippet:
+                marker = ">>>" if row["is_target"] else "   "
+                block_lines.append(f"  {marker} {row['line']:>4} | {row['code']}")
+        block_lines.append(
+            f"Root Cause: {rca['category']} | {rca['summary']} (Culprit: {rca['likely_culprit']})"
+        )
+        block_lines.append(bar)
+        block = "\n".join(block_lines)
+        print(block)
+
+        try:
+            E2E_LOG_DIR.mkdir(parents=True, exist_ok=True)
+            with E2E_LOG_FILE.open("a", encoding="utf-8") as fh:
+                fh.write(block + "\n\n")
+            E2E_JSON_FILE.write_text(
+                json.dumps(
+                    {
+                        "run_started_at": self.run_started_at,
+                        "total_failures": len(self.failure_records),
+                        "failures": self.failure_records,
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+        except OSError:
+            pass
 
     def theme_issue(self, msg: str, allow_theme_fail: bool) -> None:
         if allow_theme_fail:
@@ -2711,7 +2855,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     print(f"Screenshots directory: {shots_dir if shots_dir is not None else 'n/a (Tier 4 not selected)'}")
     print(f"Mode: {'smoke-only (Tier 1)' if args.smoke_only else f'tier={args.tier}'}, allow_theme_fail={args.allow_theme_fail}")
 
-    results = AuditResults()
+    started_at = reset_e2e_logs()
+    results = AuditResults(run_started_at=started_at)
     srv = EphemeralServer()
     cdp: Optional[CDPDriver] = None
 
@@ -2761,6 +2906,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         print("\nFailures:")
         for f in results.failures:
             print(f"  - {f}")
+        print(f"\nE2E Diagnostic reports: {E2E_LOG_FILE} & {E2E_JSON_FILE}")
     print("=" * 68)
 
     return 0 if not results.failures else 1

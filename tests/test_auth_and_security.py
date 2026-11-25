@@ -22,6 +22,8 @@ def auth_app(tmp_path: Path):
     cfg = Config(
         SECRET_KEY="phase12-auth-secret-very-strong-key",
         DATABASE_URL=f"sqlite:///{db_file.as_posix()}",
+        UPLOAD_DIR=tmp_path / "uploads",
+        REPORT_DIR=tmp_path / "reports",
     )
     app = create_app(cfg, face_detector=StubDetector())
     app.config["TESTING"] = True
@@ -185,6 +187,42 @@ def test_professor_password_reset_and_change_password(auth_app) -> None:
         c.post(
             "/api/auth/lecturer/login",
             json={"identifier": "maya.b", "password": "UpdatedPass2!"},
+        ).status_code
+        == 200
+    )
+
+    # Active second session is revoked when lecturer changes password directly
+    c_other = auth_app.test_client()
+    assert (
+        c_other.post(
+            "/api/auth/lecturer/login",
+            json={"identifier": "maya.b", "password": "UpdatedPass2!"},
+        ).status_code
+        == 200
+    )
+    assert c_other.get("/api/auth/lecturer/me").status_code == 200
+
+    assert (
+        c.post(
+            "/api/auth/lecturer/change-password",
+            json={"current_password": "WrongPassword1!", "new_password": "RotatedPass3!"},
+        ).status_code
+        == 401
+    )
+    chg = c.post(
+        "/api/auth/lecturer/change-password",
+        json={
+            "current_password": "UpdatedPass2!",
+            "new_password": "RotatedPass3!",
+            "confirm_password": "RotatedPass3!",
+        },
+    )
+    assert chg.status_code == 200
+    assert c_other.get("/api/auth/lecturer/me").status_code == 401
+    assert (
+        c_other.post(
+            "/api/auth/lecturer/login",
+            json={"identifier": "maya.b", "password": "RotatedPass3!"},
         ).status_code
         == 200
     )
@@ -442,6 +480,14 @@ def test_course_staff_join_code_csrf_upload_magic_and_retention(auth_app, tmp_pa
         assert with_hdr.status_code == 200
     finally:
         auth_app.config["TEST_ENFORCE_CSRF"] = False
+
+    # Retention purge requires lecturer auth and deletes only expired snapshots cleanly
+    anon_purge = auth_app.test_client().post("/api/maintenance/purge-expired-photos", json={"retention_hours": 1})
+    assert anon_purge.status_code == 401
+    purge_ok = owner.post("/api/maintenance/purge-expired-photos", json={"retention_hours": 1})
+    assert purge_ok.status_code == 200
+    assert purge_ok.get_json()["deleted_files"] == 0
+    assert purge_ok.get_json()["retention_hours"] == 1
 
     # Audit logs, readiness probes, OpenAPI spec & production secret check
     assert owner.get("/api/auth/lecturer/audit-logs").get_json()["logs"]

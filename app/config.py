@@ -49,7 +49,7 @@ class Config:
 
     # Production, security & privacy retention flags (Phases 2-5)
     CLASSPULSE_ENV: str = os.getenv("CLASSPULSE_ENV", os.getenv("FLASK_ENV", "development")).lower()
-    ENABLE_DEMO_SEED: bool = os.getenv("ENABLE_DEMO_SEED", "true").lower() in ("1", "true", "yes")
+    ENABLE_DEMO_SEED: bool = os.getenv("ENABLE_DEMO_SEED", "false").lower() in ("1", "true", "yes")
     HEADCOUNT_RETENTION_HOURS: int = int(os.getenv("HEADCOUNT_RETENTION_HOURS", "0"))
     ENABLE_CSRF: bool = os.getenv("ENABLE_CSRF", "true").lower() in ("1", "true", "yes")
 

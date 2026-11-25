@@ -189,6 +189,7 @@ def test_headcount_upload_and_interactive_box_patch_and_excel_export(
     assert "Student 1" in csv_text
 
 
+@pytest.mark.slow
 def test_real_scrfd_detector_on_ariel_classroom_photo() -> None:
     """Suite 3 (Real-Life Integration): Run TiledSCRFDDetector on the Ariel classroom photo."""
     root_dir = Path(__file__).resolve().parent.parent
@@ -207,14 +208,13 @@ def test_real_scrfd_detector_on_ariel_classroom_photo() -> None:
         assert 0.0 <= box.y1 < box.y2 <= float(h)
 
 
+@pytest.mark.slow
 def test_real_scrfd_orientation_recovery_on_rotated_mobile_photo() -> None:
     """Phase 3: When a mobile photo arrives rotated 90 degrees, detect_with_orientation recovers upright faces."""
     import cv2
 
     root_dir = Path(__file__).resolve().parent.parent
-    sample_photo = root_dir / "data" / "uploads" / "session_12_d234004172_raw.jpg"
-    if not sample_photo.exists():
-        sample_photo = root_dir / "data" / "samples" / "classroom_ariel.jpg"
+    sample_photo = root_dir / "data" / "samples" / "classroom_ariel.jpg"
     if not sample_photo.exists():
         pytest.skip("Sample classroom photo not present")
 

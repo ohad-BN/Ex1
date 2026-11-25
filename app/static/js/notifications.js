@@ -1,4 +1,18 @@
 (function () {
+  const CP_STORAGE_EPOCH = "fresh_reset_2026_11_25_v1";
+  try {
+    if (window.localStorage.getItem("cp_storage_epoch") !== CP_STORAGE_EPOCH) {
+      const keysToRemove = [];
+      for (let i = 0; i < window.localStorage.length; i += 1) {
+        const k = window.localStorage.key(i);
+        if (k && k.startsWith("cp_")) keysToRemove.push(k);
+      }
+      keysToRemove.forEach((k) => window.localStorage.removeItem(k));
+      window.sessionStorage.clear();
+      window.localStorage.setItem("cp_storage_epoch", CP_STORAGE_EPOCH);
+    }
+  } catch (_err) {}
+
   let _cfg = {
     role: "student",
     baseTitle: document.title || "ClassPulse",

@@ -1,101 +1,66 @@
-# Scope of Work (SoW) — ClassPulse Web-Based Teaching Tool
+# Scope of Work (SOW) — ClassPulse
 
-**Document ID:** `Ex1-SOW-1.0`  
-**Course:** Introduction to Software Engineering (OOP / OOD) — Ex2 Assignment  
-**Author:** Ohad Ben Nun  
-**Target Demo Deadline:** 25/11/2026
-
----
-
-## 1. Project Objectives
-
-* **Context:** Academic Software Engineering design-and-demo assignment (*Ex2: Vibe Coding & Deep Designing: Web-based Teaching Tool*, Ariel University).
-* **Primary Objective:** Design, document, containerize, and demonstrate an end-to-end, KISS-compliant Python web application running on the author's local PC via Docker and accessible over the public internet via an HTTPS tunnel.
-* **Core Pedagogical Focus:** Replace fragmented classroom management tools with a unified platform centered on **tamper-resistant QR attendance and automated computer-vision classroom headcount reconciliation** (Feature 1), extended cleanly with real-time interaction (Features 2–3) and cost-efficient AI/LLM workflows (Features 4–5).
+**Course:** Introduction to Software Engineering (OOP / OOD) — Ariel University  
+**Instructor:** Prof. Boaz Ben-Moshe  
+**Authors:** Ohad Ben Nun & Einav Shlomov  
+**Chain Role:** `1. SOW (Agree)` — *Why, what, and boundaries*
 
 ---
 
-## 2. Priority Tiers & Feature Scope
+## 1. Objective
 
-To guarantee a rock-solid 10-minute live classroom demonstration while cleanly structuring advanced capabilities, deliverables are divided into strict priority tiers:
-
-### Tier 0 — Mission-Critical Infrastructure & Feature 1 (Top Priority)
-1. **Containerized Local Server & Tunnel:**
-   * Python 3.12 web server packaged via `Dockerfile` + `docker-compose.yml`.
-   * Reverse HTTPS/WSS tunnel (`cloudflared`) exposing the local server cleanly to students' mobile devices without router configuration or static IP requirements.
-   * Persistent Docker volume storage for SQLite (WAL mode) database, uploaded classroom photos, and exported reports.
-2. **Rotating QR Self-Attendance & Onboarding:**
-   * Projector-ready QR code regenerating every **5 seconds** with HMAC-SHA256 signed time-bucket tokens and a 1-step grace window (5–10 seconds) for autofocus/network latency.
-   * First-time student sign-in via Name + Email saved to DB, issuing a signed `HttpOnly` device cookie to recognize returning students and prevent single-device multi-student proxy check-ins.
-3. **Computer-Vision Headcount & Cross-Reference Audit:**
-   * Lecturer captures or uploads a classroom photo (desktop webcam, smartphone camera input, or image file).
-   * Tiled **InsightFace SCRFD** detector counts faces across front and back lecture-hall rows.
-   * Interactive bounding-box overlay allows the lecturer to verify/adjust counts if a student is occluded.
-   * Cross-references `Course Roster`, `QR Check-ins`, and `Visual Face Count`, computing discrepancies and exporting a formatted `.xlsx` / `.csv` spreadsheet report.
-
-### Tier 1 — Live Classroom Engagement (High-Value Extensions)
-4. **Feature 3 — Real-Time Polling (`Flask-SocketIO`):**
-   * Pre-class poll bank editor (create, reorder, save drafts ahead of the lecture).
-   * On-the-spot KISS quick poll launcher (1-click Yes/No, A/B/C/D, or custom question).
-   * Reconnect-safe real-time voting and live animated histogram updates over WebSockets.
-5. **Feature 2 — Timestamped Classroom Chat & Live Popout:**
-   * Real-time student Q&A/comment feed (`Flask-SocketIO`) with timestamps (`+MM:SS`), categories (Question / Comment / Suggestion), and peer upvotes.
-   * Includes a compact "Live Q&A Popout" companion overlay and structured `.txt` timeline export without requiring external Zoom API keys.
-
-### Tier 2 — Post-Class AI & Incremental Analytics (Bonus Extensions)
-6. **Feature 4 — AI Lecture Transcriber & Summarizer:**
-   * Accepts uploaded class video/audio recordings (`.mp4`/`.m4a`/`.mp3`/`.wav`) or `.vtt`/`.txt` transcripts.
-   * Sends recordings to **Google Gemini API** (`google-genai` Files API) for `[MM:SS]` timestamped transcription (with local `faster-whisper` offline fallback), followed by Gemini domain correction and structured summary generation (`.md` / `.txt` downloads) for the lecturer and students.
-7. **Feature 5 — LLM Homework Deep Review & Cohort Comparison:**
-   * Accepts uploaded submissions (`.pdf`/`.py`/`.java`/`.zip`) or GitHub repository URLs.
-   * Implements **Incremental Aggregation**: Stage-1 LLM extracts structured Pydantic JSON metrics per single submission -> Python backend updates anonymized `ClassStatsAggregate` in $O(1)$ time -> Stage-2 LLM synthesizes personalized comparative feedback against cohort averages and common mistakes without ever exposing peer source code or identities.
+ClassPulse replaces fragmented classroom tools (manual attendance sheets, disconnected chats, cloud-only recordings, isolated homework grades) with a self-hosted, Dockerized Python web platform running on the lecturer's machine and exposed over HTTPS/WSS via Cloudflare Tunnel.
 
 ---
 
-## 3. Out-of-Scope Boundaries
+## 2. Delivered Feature Scope by Priority Tier
 
-To comply with Ex2 Guidelines (*"No need integrate with Moodle, Zoom or מידע אישי"* and *"You should only design what can be implemented"*), the following are explicitly **excluded**:
-* **Moodle / University SSO / Personal ID (`תעודת זהות`):** No scraping or storing national ID numbers or university portal credentials. Students identify via Name and Email only.
-* **No External LMS or Zoom API Integration:** Per Ex2 Guidelines (*"No need integrate with Moodle, Zoom or מידע אישי"*), ClassPulse does **not** connect to Moodle, Zoom OAuth/Cloud APIs, or institutional SSO; recordings are uploaded directly by the user and Q&A stays native inside ClassPulse.
-* **Biometric Identity Recognition (Face-to-Name Matching):** The CV pipeline performs **anonymous face/head counting** (`count = N`), NOT facial recognition identifying which face belongs to which student, avoiding GDPR/biometric privacy risks and cold-start photo enrollment friction.
-* **Cloud Hosting / Kubernetes:** Deployment targets a single lecturer PC running Docker Compose + Tunnel.
-
----
-
-## 4. Deliverables
-
-| Category | Deliverable | File / Output |
+| Priority | Module | Delivered Capabilities |
 | :--- | :--- | :--- |
-| **Documentation** | Repository Problem & Scope Definition | `README.md` |
-| **Documentation** | Technical Tools Report & Verification Protocol | `docs/technical_tools_report.md` |
-| **Documentation** | Scope of Work (this document) | `docs/scope_of_work_sow.md` |
-| **Documentation** | Software Requirements Specification | `docs/software_requirements_specification_srs.md` |
-| **Documentation** | Use Cases & Client Stories | `docs/use_cases_client_stories.md` |
-| **Documentation** | Component Architecture, Class & Sequence Diagrams | `docs/software_design_and_architecture.md` |
-| **Documentation** | Software Test Plan (Class-Mapped) | `docs/software_test_plan_stp.md` |
-| **Software** | Dockerized Python Web App + Tunnel Compose Stack | `Dockerfile`, `docker-compose.yml`, `app/` |
-| **Verification** | Automated `pytest` Suite & Real-Life Tool Verification Results | `tests/`, `reports/` |
-| **Evaluation** | 10-Minute Live Classroom Demo & Final Results Summary | Live classroom execution + closing conclusion |
+| **P0 (Core)** | **Infrastructure & Multi-Tenant Auth** | Docker Compose (`web` + `cloudflared`), SQLite WAL persistence, Lecturer registration/sign-in (`scrypt`), lockout/reset/audit logs, Course Staff (TA) RBAC, clean-slate startup (`ENABLE_DEMO_SEED=false`). |
+| **P0 (Core)** | **Rolling QR Attendance** | Projector QR rotating every 5s (`HMAC-SHA256` + grace window), `Full Name + Student ID` onboarding, `cp_device` cookie anti-proxy binding, late threshold, 2/3-col CSV & `.xlsx` rosters, manual Course Number join + approval. |
+| **P0 (Core)** | **CV Headcount & Reports** | Tiled InsightFace SCRFD (`det_10g`) + 90° orientation recovery, webcam/upload capture, Phone Camera Companion QR (`ctok`) + `+1/-1` stepper, manual canvas edit, discrepancy approval, `.xlsx`/`.csv` export, photo retention purge. |
+| **P1 (Live)** | **Real-Time Polls & Q&A** | Pre-class poll bank (`DRAFT`/`ACTIVE`/`CLOSED`), 1-click quick polls, single-vote idempotency, reconnect `poll:sync`, live `+MM:SS` Q&A + upvotes/pinning + popout, remote Offline Questions, cross-lecture notifications. |
+| **P2 (AI)** | **Lecture Transcriber & Summaries** | Video/audio/transcript upload (`.mp4`/`.mp3`/`.wav`/`.vtt`/`.md`), Gemini Files API transcription + fast daily-quota failover + `faster-whisper`/local fallback, structured cards, Draft -> Publish -> Unpublish -> Cascade-Delete sync. |
+| **P2 (AI)** | **Dual-Mode Assignments** | Strict separation between **Comparative Practice** (student-only feedback, $O(1)$ cohort stats, ordinal rank `1st Place`/`2nd Place`, hidden from lecturer) and **Final Submission to Lecturer** (standalone AI score + downloadable file). |
 
 ---
 
-## 5. Project Milestones
+## 3. Explicit Out-of-Scope Boundaries
 
-| Milestone | Phase | Key Activities | Target Completion |
-| :--- | :--- | :--- | :--- |
-| **M1** | **Design & Documentation (Current)** | Finalize `README.md`, Tools Report, SoW, SRS, Use Cases, Component/Class/Sequence Diagrams, and Class-Mapped STP. | Nov 12, 2026 |
-| **M2** | **Tool Verification & Core MVP** | Execute hands-on tool tests (SCRFD on Ariel lecture photo, `cloudflared` tunnel, `flask-socketio` + `gthread`). Implement Docker stack, DB models, Rotating QR + Device Auth, CV Headcount + Excel Export (Feature 1). | Nov 17, 2026 |
-| **M3** | **Engagement & AI Modules** | Implement Pre-prepared & Quick Polls (Feature 3), Realtime Chat + Popout (Feature 2), Google Gemini Audio Transcriber & Summarizer (Feature 4), and Incremental Homework Review (Feature 5). | Nov 22, 2026 |
-| **M4** | **Testing, Rehearsal & Demo** | Run full STP automated suite (`pytest`), verify live mobile tunnel stress test, finalize demo script & results report, submit before deadline. | Nov 25, 2026 |
+- **No Institutional LMS / Zoom Coupling:** Zero integration with Moodle, university SSO, or Zoom OAuth/Cloud APIs; all attendance, Q&A, and recording workflows run natively.
+- **No Biometric Face-to-Name Identification:** SCRFD performs anonymous crowd headcounting (`count = N`), never facial recognition matching students to names.
+- **Single-Host Deployment:** Packaged for one lecturer PC (`docker compose up`), not multi-region Kubernetes clustering.
 
 ---
 
-## 6. Key Risks & Mitigations
+## 4. Project Deliverables Chain
 
-| Risk | Likelihood | Impact | Mitigation Strategy |
-| :--- | :--- | :--- | :--- |
-| **Distant/occluded faces missed in wide classroom photos** | High | High | Use InsightFace SCRFD (`det_10g`) with overlapping tile slicing + NMS, plus interactive manual +/- click adjustment on the lecturer preview canvas. |
-| **5-second QR timeout frustrates students with slow cameras** | Medium | High | Accept both current (`t`) and immediate previous (`t-1`) 5-second HMAC buckets (5–10s effective grace window) while keeping visual rotation every 5s. |
-| **No institutional Zoom admin access / offline Gemini outage** | Certain | Medium | Decouple completely from Zoom APIs; ingest uploaded recordings directly, send to Google Gemini API when online, and keep `faster-whisper` + rule-based fallback locally. |
-| **Google AI Studio Free Tier `429 RESOURCE_EXHAUSTED` rate limits** | Medium | Medium | Chunk lecture transcripts cleanly, apply exponential backoff & token budgeting, and use single-call structured JSON extraction for Feature 5. |
-| **Tunnel URL changes on container restart mid-demo** | Medium | Medium | Support persistent Named Cloudflare Tunnel via `TUNNEL_TOKEN` for fixed URL, or auto-generate the dynamic QR host URL from request headers (`X-Forwarded-Host`). |
+| Document / Artifact | Role | Link |
+| :--- | :--- | :--- |
+| **SOW** *(this doc)* | Agree — Scope, priorities, boundaries, risks | [`docs/scope_of_work_sow.md`](scope_of_work_sow.md) |
+| **SRS** | Specify — Requirements & Use Cases (`UC-01`–`UC-10`) | [`docs/software_requirements_specification_srs.md`](software_requirements_specification_srs.md) |
+| **SDD** | Architect — System structure, 18-model ERD, stack rationale | [`docs/software_design_and_architecture.md`](software_design_and_architecture.md) |
+| **EDD** | Detail — Component algorithms & internal mechanics | [`docs/engineering_design_edd.md`](engineering_design_edd.md) |
+| **API** | Interface — REST endpoints, Socket.IO events & auth | [`docs/api_reference.md`](api_reference.md) |
+| **STP/STD** | Verify — 10-suite test matrix, E2E, Fault Localization | [`docs/software_test_plan_stp.md`](software_test_plan_stp.md) |
+| **README** | Operate — Quick start, API keys, usage & tests | [`README.md`](../README.md) |
+| **Application & Benchmarks** | Deliverable code, runner & empirical CV/WS verification | [`app/`](../app/), [`run_all_tests.py`](../run_all_tests.py), [`reports/tool_verification_results.md`](../reports/tool_verification_results.md) |
+
+---
+
+## 5. Milestones & Key Risks
+
+| Milestone | Scope | Status |
+| :--- | :--- | :--- |
+| **M1 — Architecture & Docs** | Engineering chain, schema & tool selection | Complete |
+| **M2 — Core MVP (P0)** | Docker + tunnel, rolling QR, SCRFD headcount, `.xlsx` export | Complete |
+| **M3 — Live & AI Modules (P1/P2)** | Polls, Q&A, Video summaries, Comparative vs. Final homework | Complete |
+| **M4 — Multi-Tenant Overhaul & QA** | Tenant/comparative isolation, 10-suite `run_all_tests.py`, Chromium E2E | Complete |
+
+| Risk | Mitigation Implemented |
+| :--- | :--- |
+| Missed distant/occluded faces in wide lecture halls | Overlapping 3x2 Tiled SCRFD + IoU NMS + manual canvas boxes & phone `+1/-1` stepper |
+| Slow phone camera handshake misses 5s QR tick | Server-side grace buckets (`QR_GRACE_BUCKETS`) + persistent `cp_device` cookie |
+| Gemini Free Tier rate limits or offline lectures | Zero-sleep daily-quota failover (`gemini-2.5-flash-lite` -> `gemini-2.5-flash`) + `faster-whisper`/local summarizer |
+| Proxy attendance from shared smartphones | Signed `cp_device` cookie + DB unique `(session_id, student_id)` and `(session_id, device_id)` constraints |

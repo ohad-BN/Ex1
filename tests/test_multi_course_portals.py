@@ -23,6 +23,8 @@ def school_app(tmp_path: Path):
     cfg = Config(
         SECRET_KEY="phase10-school-secret",
         DATABASE_URL=f"sqlite:///{db_file.as_posix()}",
+        UPLOAD_DIR=tmp_path / "uploads",
+        REPORT_DIR=tmp_path / "reports",
     )
     app = create_app(cfg, face_detector=StubDetector())
     app.config["TESTING"] = True
@@ -85,10 +87,13 @@ def test_qr_checkin_auto_enrolls_student_in_course_and_populates_student_app(
     school_app,
 ) -> None:
     """Phase 10A/10C: Scanning a lecture QR automatically enrolls the student in the parent Course and shows it in /student."""
+    from app.services.course_service import CourseService
+
+    CourseService(school_app.extensions["db_session"]).ensure_default_school_courses()
     client = school_app.test_client()
     qr: RollingQRService = school_app.extensions["qr_service"]
 
-    # Ensure default courses (CS204 -> ARIEL1) exist in public catalog
+    # Seeded CS204 -> ARIEL1 & CS101 appear in public catalog
     courses_resp = client.get("/api/student/courses/catalog").get_json()
     assert len(courses_resp["courses"]) >= 2
 

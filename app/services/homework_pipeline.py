@@ -237,26 +237,29 @@ class SubmissionExtractor:
     def extract_from_zip_bytes(self, raw_bytes: bytes) -> str:
         chunks: list[str] = []
         total_len = 0
-        with zipfile.ZipFile(io.BytesIO(raw_bytes)) as zf:
-            ordered = sorted(
-                zf.infolist(),
-                key=lambda i: (Path(i.filename).suffix.lower() in (".md", ".txt"), i.filename),
-            )
-            for info in ordered:
-                if info.is_dir() or self._should_skip_zip_member(info.filename):
-                    continue
-                ext = Path(info.filename).suffix.lower()
-                if ext not in ALLOWED_TEXT_EXTENSIONS:
-                    continue
-                data = zf.read(info.filename)
-                text = data.decode("utf-8", errors="ignore").strip()
-                if not text:
-                    continue
-                section = f"\n--- FILE: {info.filename} ---\n{text}\n"
-                chunks.append(section)
-                total_len += len(section)
-                if total_len >= self.max_chars:
-                    break
+        try:
+            with zipfile.ZipFile(io.BytesIO(raw_bytes)) as zf:
+                ordered = sorted(
+                    zf.infolist(),
+                    key=lambda i: (Path(i.filename).suffix.lower() in (".md", ".txt"), i.filename),
+                )
+                for info in ordered:
+                    if info.is_dir() or self._should_skip_zip_member(info.filename):
+                        continue
+                    ext = Path(info.filename).suffix.lower()
+                    if ext not in ALLOWED_TEXT_EXTENSIONS:
+                        continue
+                    data = zf.read(info.filename)
+                    text = data.decode("utf-8", errors="ignore").strip()
+                    if not text:
+                        continue
+                    section = f"\n--- FILE: {info.filename} ---\n{text}\n"
+                    chunks.append(section)
+                    total_len += len(section)
+                    if total_len >= self.max_chars:
+                        break
+        except (zipfile.BadZipFile, OSError, RuntimeError) as exc:
+            raise HomeworkPipelineError("Could not read .zip archive.", status_code=400) from exc
         return "".join(chunks)[: self.max_chars]
 
     def extract_from_file(self, file_path: Path) -> str:

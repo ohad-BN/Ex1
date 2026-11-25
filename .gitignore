@@ -6,6 +6,9 @@ venv/
 .venv/
 .pytest_cache/
 
+# Automated test failure diagnostic logs
+tests/logs/
+
 # Environment & secrets (CRITICAL: never commit real API keys or tokens)
 .env
 .env.*

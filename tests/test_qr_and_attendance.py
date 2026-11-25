@@ -15,6 +15,8 @@ def app_ctx(tmp_path: Path):
     cfg = Config(
         SECRET_KEY="phase3-test-secret",
         DATABASE_URL=f"sqlite:///{db_file.as_posix()}",
+        UPLOAD_DIR=tmp_path / "uploads",
+        REPORT_DIR=tmp_path / "reports",
         QR_STEP_SECONDS=5,
         QR_GRACE_BUCKETS=1,
     )

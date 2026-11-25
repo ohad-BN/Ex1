@@ -1,122 +1,70 @@
-# ClassPulse — Smart Classroom Engagement & Attendance Platform
+# ClassPulse
 
-**Course:** Introduction to Software Engineering (OOP / OOD) — Ex2: *Vibe Coding & Deep Designing: Web-based Teaching Tool*  
-**Institution:** Ariel University  
-**Instructor:** Prof. Boaz Ben-Moshe  
-**Author:** Ohad Ben Nun Einav Shlomov
+Dockerized smart-classroom platform for **5s anti-proxy QR attendance**, **computer-vision headcounting**, **live polls & Q&A**, **AI lecture summaries**, and **comparative vs. final homework grading**.  
+See the [Product Demo Video](docs/demo/ClassPulse_Product_Demo.mp4) and [Live API Reference](docs/api_reference.md).
 
 ---
 
-## 1. Problem Statement & Motivation
+## 1. Quick Start
 
-Current university teaching workflows rely on fragmented tools (Zoom, Moodle, ad-hoc Google Forms, manual Excel sheets, and passive cloud recordings) that fail to provide simple, unified, real-time, and LLM-ready classroom engagement:
+### Option A — Docker Compose *(Recommended)*
+```bash
+cp .env.example .env        # Configure SECRET_KEY & optional GEMINI_API_KEY
+docker compose up --build   # Starts web (:5000) + Cloudflare public HTTPS tunnel
+```
+- **Lecturer Portal:** `http://localhost:5000` (or the `https://*.trycloudflare.com` URL printed by `classpulse_tunnel`).
 
-1. **Attendance Fraud & Friction:** Static sign-in sheets or static QR links allow students outside the classroom to mark attendance remotely ("proxy attendance"), while manual roll calls waste 10–15 minutes of lecture time. Furthermore, lecturers lack an automated way to verify self-reported check-ins against the actual physical headcount in the lecture hall.
-2. **Disconnected Real-Time Interaction:** Students hesitate to interrupt lectures verbally, yet chat tools are fragmented across Zoom, WhatsApp, and live rooms, and launching quick comprehension checks takes too much setup overhead.
-3. **Unstructured Post-Lecture Knowledge:** Automated video summaries (such as Zoom's built-in summary) often miss technical terminology, bilingual code/English-Hebrew nuance, and contextual questions asked during class.
-4. **Shallow, Non-Comparative Homework Feedback:** Students receive isolated grades without understanding how their design, coverage, and error patterns compare anonymously against the rest of the cohort, while re-evaluating an entire class's raw code on every upload is prohibitively expensive in LLM tokens.
-
-**ClassPulse** solves these gaps with a **KISS (Keep It Simple, Stupid), mobile-first Python web application** hosted directly on the lecturer's PC inside **Docker**, exposed safely over HTTPS to students' smartphones via an encrypted **reverse tunnel**, and engineered around **Feature 1 (Anti-Proxy Attendance & Computer-Vision Headcount Verification)** as the mission-critical core.
-
----
-
-## 2. Project Scope & Priority Tiers
-
-In alignment with the Ex2 design guidelines (*design what can be implemented, prioritize core attendance, and keep the student UX frictionless*), project scope is structured into three clear priority tiers:
-
-| Priority | Module | Scope Summary | Status Target |
-| :--- | :--- | :--- | :--- |
-| **P0 (Core MVP)** | **Infrastructure & Tunnel** | Python 3.12 Flask + Flask-SocketIO backend, SQLite (WAL mode) persistence, Docker Compose deployment on host PC, and Cloudflare Tunnel (`cloudflared`) HTTPS/WSS ingress. | **Must-Have (Live Demo Core)** |
-| **P0 (Core MVP)** | **Feature 1: Rotating QR Attendance & CV Headcount** | 5-second rolling HMAC-signed QR code, first-time student onboarding (Name + Email stored in DB + device cookie binding), classroom photo face-counting via InsightFace SCRFD + tiled inference, visual bounding-box review, cross-reference audit report, and `.xlsx`/`.csv` spreadsheet export. | **Must-Have (Top Priority)** |
-| **P1 (Live Engagement)** | **Feature 3: Real-Time Polls (`Flask-SocketIO`)** | Simplified Kahoot-style live polling with **pre-class poll bank preparation**, instant on-the-spot quick polls, DB-backed state sync on mobile reconnect, and live histogram visualization. | **High-Value Demo Extension** |
-| **P1 (Live Engagement)** | **Feature 2: Classroom Chat & Live Popout** | Real-time timestamped Q&A/comment feed (`Flask-SocketIO`) with `+MM:SS` lecture timestamps, peer upvoting, pinning, `.txt` export, and a compact Live Q&A Companion Popout window. | **High-Value Demo Extension** |
-| **P2 (Post-Class AI)** | **Feature 4: AI Lecture Transcriber & Summarizer** | Upload class recordings (`.mp4`/`.m4a`/`.mp3`/`.wav`/`.vtt`), transcribe with `[MM:SS]` timestamps via **Google Gemini API** (Files API + `gemini-3.8-flash`, with local `faster-whisper` offline fallback), and synthesize lecturer-ready summaries linked with student chat questions (`.md`/`.txt` download). | **Bonus AI Module** |
-| **P2 (Post-Class AI)** | **Feature 5: LLM Homework Deep Review** | Supports file upload (`.pdf`/`.py`/`.java`/`.zip`) and GitHub repo URLs. Uses **Incremental Aggregation**: Stage-1 LLM extracts structured JSON metrics per submission; backend updates anonymized class-wide statistics in $O(1)$ math; Stage-2 LLM generates a deep comparative review against class averages/percentiles. | **Bonus AI Module** |
-
-### Explicit Boundaries & Constraints
-* **No Institutional Credential Scraping:** Per assignment Guideline 1, the system does **not** require scraping Moodle or university private student-ID databases (`מידע אישי`); students onboard with Name + Email on first scan, and an optional sanitized roster CSV (`Name, Email`) can be imported by the lecturer.
-* **Host-First Portability:** Everything runs inside containers on the lecturer's Windows/macOS/Linux PC with zero cloud hosting fees and zero router port-forwarding required.
-
----
-
-## 3. Baseline Technology Stack
-
-| Layer | Selected Technology | Rationale |
-| :--- | :--- | :--- |
-| **Language & Runtime** | Python 3.12 | Fast prototyping, unified ecosystem for Web, Computer Vision, Audio ASR, and LLM SDKs. |
-| **Web & Real-Time Engine** | Flask + Flask-SocketIO (`simple-websocket` + Gunicorn `gthread`) | Lightweight, avoids Python 3.12 `eventlet` deprecation and `gevent` monkey-patching conflicts with AI/CV C-extensions. |
-| **Database** | SQLite (WAL mode) via SQLAlchemy 2.0 | Zero-config single-file persistence inside a Docker volume; easily handles 50–150 concurrent classroom users; swappable to PostgreSQL via connection string. |
-| **Containerization** | Docker & Docker Compose | Reproducible local PC deployment packaging Python, ONNX Runtime, FFmpeg, and Tunnel sidecar. |
-| **Public Tunnel** | Cloudflare Tunnel (`cloudflare/cloudflared`) | Provides free HTTPS/WSS (`*.trycloudflare.com` quick tunnel or fixed custom domain) with **no browser warning interstitial** that breaks QR scanning on mobile phones. |
-| **Face / Head Counting (Feature 1)** | InsightFace **SCRFD** (`det_10g` ONNX) + Overlapping Tile Slicing + NMS | Industry-leading small/distant face recall in crowded lecture halls while running on CPU via `onnxruntime`. |
-| **Reports & Spreadsheets** | `openpyxl` + Python `csv` | Generates styled offline `.xlsx` workbooks (Attendance Roster + Discrepancy Audit Summary) and `.csv` exports. |
-| **Audio Transcription & LLM (Features 4 & 5)** | Google AI Studio (`google-genai` SDK, `gemini-3.8-flash`, with local `faster-whisper` offline fallback) | Native audio/file upload (`files.upload`) for timestamped lecture transcription, structured lecture summary synthesis, and Pydantic `response_schema` JSON extraction for Feature 5 homework analytics. |
-
----
-
-## 4. Architectural Recommendations & "Better Ideas"
-
-During design validation against real-world APIs and classroom constraints, several critical improvements were incorporated over the initial baseline ideas:
-
-1. **Feature 1 — 5-Second QR Grace Window + Device Binding:**
-   * *Problem:* Strict 5-second hard expiry causes false rejections when a student's phone camera takes 2–3 seconds to focus and complete a TLS handshake. Meanwhile, without device binding, one student could scan for three friends.
-   * *Better Solution:* Compute HMAC-SHA256 tokens over 5-second discrete time buckets (`floor(ts / 5)`), accepting both bucket `N` and `N-1` (5–10s effective window), paired with an `HttpOnly` signed browser device cookie and unique `(session_id, email)` + `(session_id, device_id)` DB constraints.
-2. **Feature 1 — Tiled SCRFD + Human-in-the-Loop Verification Overlay:**
-   * *Problem:* Standard OpenCV Haar Cascades or MediaPipe BlazeFace miss tiny, partially occluded faces in rows 4–8 of wide-angle lecture-hall photos.
-   * *Better Solution:* Run **InsightFace SCRFD** across overlapping 2x2/3x2 high-resolution tiles merged with Non-Maximum Suppression (NMS), then render numbered bounding boxes back to the lecturer UI so edge cases (e.g., hidden student behind a monitor) can be clicked/adjusted in seconds before exporting the audit spreadsheet.
-3. **Feature 2 — Native Classroom Chat + Live Companion Popout (Zero Zoom API Coupling):**
-   * *Design Decision:* Rather than depending on Zoom REST/SDK permissions or external tenant tokens, ClassPulse uses a **Native Classroom Chat Tab (`Flask-SocketIO`)** as the single source of truth accessible to both in-person and remote students via the tunnel, paired with a compact **Live Q&A Popout** window and `+MM:SS` timeline `.txt` export fed directly into Feature 4's lecture summary.
-4. **Feature 3 — Reconnect-Safe `Flask-SocketIO` State Hydration:**
-   * *Problem:* Mobile phones lock screens and drop WebSocket connections over cellular/Wi-Fi networks.
-   * *Better Solution:* Persist every poll (`DRAFT`, `ACTIVE`, `LOCKED`, `CLOSED`) and vote in SQLite. On WebSocket `connect`/`join`, the server pushes a `poll:sync` snapshot so late joiners and woken phones immediately see the live poll, timer, and existing vote status without duplicate voting.
-5. **Feature 4 — Direct Recording Upload → Google Gemini Audio Transcription → Lecturer Summary:**
-   * *Design Decision:* Avoid brittle third-party Zoom Cloud OAuth dependencies completely. The lecturer simply uploads a local class recording (`.mp4`, `.m4a`, `.mp3`, `.wav`, or `.vtt`); ClassPulse extracts compact audio via `ffmpeg`, sends it to **Google Gemini API** (`google-genai` Files API + `gemini-3.8-flash`) for accurate `[MM:SS]` CS-aware transcription (keeping `faster-whisper` as an offline fallback), and generates a structured Markdown summary & `.txt` transcript for download.
-6. **Feature 5 — Incremental JSON Aggregation + GitHub Repo Ingestion:**
-   * Adopting the two-stage **Incremental Aggregation** architecture avoids $O(N^2)$ token cost by computing compact Pydantic-validated JSON metrics once per submission, updating a single anonymized `ClassStatsAggregate` row mathematically in Python (including clean delta-subtraction on resubmissions), and supporting both file uploads (`.pdf`/`.zip`/code) and GitHub repo URLs (matching Ex2 Q&A #4).
-
----
-
-## 5. Planned Project Structure
-
-```text
-Ex1/
-├── README.md                                       # Problem definition, scope, priority tiers, architecture overview
-├── Dockerfile                                      # Multi-stage Python 3.12 + FFmpeg + ONNX Runtime image
-├── docker-compose.yml                              # Web app + cloudflared tunnel sidecar + persistent volumes
-├── requirements.txt                                # Pinned Python dependencies
-├── .env.example                                    # Environment template (SECRET_KEY, GEMINI_API_KEY, TUNNEL_TOKEN)
-│
-├── docs/                                           # Software Engineering Documentation Suite (Ex2 To-Do #3–#9)
-│   ├── technical_tools_report.md                   # To-Do #3: Tools comparison, API limits & verification protocol
-│   ├── scope_of_work_sow.md                        # To-Do #4: Scope of Work, priorities, milestones & risks
-│   ├── software_requirements_specification_srs.md  # To-Do #5: Functional & Non-Functional Requirements (REQ/NFR)
-│   ├── use_cases_client_stories.md                 # To-Do #6: Personas, Use Cases (UC-01..UC-10) & User Stories
-│   ├── software_design_and_architecture.md         # To-Do #7 & #8: Components, Class Diagrams & Sequence Diagrams
-│   ├── software_test_plan_stp.md                   # To-Do #9: Testing Strategy mapped to Software Classes
-│   └── implementation_plan.md                      # Step-by-step component implementation roadmap
-│
-├── app/                                            # Modular Flask + Flask-SocketIO application
-│   ├── __init__.py                                 # App factory, SQLAlchemy & SocketIO initialization
-│   ├── config.py                                   # Environment-driven configuration & secrets
-│   ├── models.py                                   # SQLAlchemy ORM models (Student, Session, Attendance, Poll, etc.)
-│   ├── routes/                                     # REST & HTML Blueprints (attendance, courses, polls, chat, lectures, hw)
-│   ├── sockets/                                    # Socket.IO event handlers (polls, live chat, attendance counter)
-│   ├── services/                                   # Core domain services (QR/HMAC, SCRFD vision, Gemini/Whisper, HW)
-│   ├── templates/                                  # Mobile-first student & desktop lecturer Jinja2/HTMX/JS views
-│   └── static/                                     # Client CSS/JS (Socket.IO client, QR projector, bbox editor)
-│
-├── tests/                                          # (Upcoming M3) Automated Pytest suites mapped to STP Suites 1–8
-└── data/                                           # Persistent Docker volume mount (SQLite DB, uploads, reports)
+### Option B — Local Python 3.12
+```bash
+pip install -r requirements.txt
+cp .env.example .env
+python run.py
 ```
 
 ---
 
-## 6. Software Engineering Documentation Index
+## 2. Environment Keys & Where to Get Them
 
-* **Technical-Related Tools Report (To-Do #3):** [`docs/technical_tools_report.md`](docs/technical_tools_report.md)
-* **Scope of Work — SoW (To-Do #4):** [`docs/scope_of_work_sow.md`](docs/scope_of_work_sow.md)
-* **Software Requirements Specification — SRS (To-Do #5):** [`docs/software_requirements_specification_srs.md`](docs/software_requirements_specification_srs.md)
-* **Main Use Cases & Client Stories (To-Do #6):** [`docs/use_cases_client_stories.md`](docs/use_cases_client_stories.md)
-* **Software Components, Low-Level Class & Sequence Diagrams (To-Do #7 & #8):** [`docs/software_design_and_architecture.md`](docs/software_design_and_architecture.md)
-* **Software Testing Strategy & Class Traceability Matrix (To-Do #9):** [`docs/software_test_plan_stp.md`](docs/software_test_plan_stp.md)
-* **Step-by-Step Implementation Plan (Phases 0–9):** [`docs/implementation_plan.md`](docs/implementation_plan.md)
+Edit `.env` (copied from [`.env.example`](.env.example)):
+
+| Variable | Required? | Purpose | Where to Get It |
+| :--- | :---: | :--- | :--- |
+| `SECRET_KEY` | **Yes** | Signs QR tokens & session cookies (`>=32` chars in prod) | Run: `python -c "import secrets; print(secrets.token_hex(32))"` |
+| `GEMINI_API_KEY` | Optional | AI lecture audio/video summaries & deep homework review | Free key at [Google AI Studio](https://aistudio.google.com/apikey) *(falls back locally if empty)* |
+| `TUNNEL_TOKEN` | Optional | Fixed custom domain for Cloudflare Tunnel | [Cloudflare Zero Trust](https://one.dash.cloudflare.com/) -> *Networks -> Tunnels* *(empty = free Quick Tunnel)* |
+| `ENABLE_DEMO_SEED` | Optional | Set `true` only if you want sample demo courses on empty DB | Local flag (default `false` for clean slate) |
+
+---
+
+## 3. Features & How to Use
+
+| Feature | Lecturer Flow (`/teacher/login` -> `/teacher`) | Student Flow (`/student` or Scan QR) |
+| :--- | :--- | :--- |
+| **Courses & Rosters** | Create course + lectures, import `.csv`/`.xlsx` rosters, approve pending students, assign TAs. | Sign in with **Full Name + ID Number**; join via **Course Number** or QR scan. |
+| **QR Attendance & CV Headcount** | Open **Projector QR**; snap photo via **Upload / Webcam / Phone Cam QR** (`+1/-1` stepper); export `.xlsx`/`.csv`. | Scan 5s projector QR (`cp_device` cookie auto-checks in on future lectures). |
+| **Polls & Classroom Q&A** | Launch Poll Bank or 1-click Quick Polls; answer/pin Q&A & Offline Questions; popout Q&A view. | Vote live on phone (`poll:sync` survives sleep); post live or **Offline Questions**. |
+| **AI Lecture Summaries** | Upload `.mp4`/`.mp3`/`.vtt`/`.md` -> review structured **Draft** -> click **Publish** (or **Unpublish** / **Delete**). | View published **Executive Summary / Topics / Actions / Transcript** in sidebar. |
+| **Assignments** | Create assignment + rubric; grade **Final Submissions** (standalone AI score + file download). | Test drafts in **Comparative Practice** (private rank `1st Place`) before **Final Submit**. |
+
+---
+
+## 4. Run Tests
+
+```bash
+python run_all_tests.py             # Fast suite (Suites 1–10: backend, JS unit tests & diagnostics)
+python run_all_tests.py --self-test # Non-destructive in-memory fault-localization demo
+python run_all_tests.py --all --e2e # Full suite incl. @slow SCRFD/ffmpeg + Headless Chrome E2E
+```
+
+---
+
+## 5. Engineering Documentation Chain
+
+| Stage | Document | Answers |
+| :--- | :--- | :--- |
+| **1. SOW** | [Scope of Work](docs/scope_of_work_sow.md) | Why, what, priority tiers & boundaries |
+| **2. SRS** | [Requirements & Use Cases](docs/software_requirements_specification_srs.md) | Functional/NFR specs (`REQ-01`–`16`, `UC-01`–`10`) |
+| **3. SDD** | [Design & Architecture](docs/software_design_and_architecture.md) | System structure, 18-model ERD, security & tech stack |
+| **4. EDD** | [Engineering Design](docs/engineering_design_edd.md) | Component internals, algorithms & AI pipelines |
+| **5. API** | [API & WebSocket Reference](docs/api_reference.md) | Auth headers, REST endpoints & Socket.IO events |
+| **6. STP/STD** | [Test Plan & Diagnostics](docs/software_test_plan_stp.md) | 10-suite test matrix, E2E & Fault Localization |

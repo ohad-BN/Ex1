@@ -57,7 +57,7 @@ def _get_attendance_service() -> AttendanceService:
 def portal_selector():
     """School-wide landing hub allowing users to enter Teacher Portal or Student App."""
     svc = _get_course_service()
-    courses = svc.ensure_default_school_courses()
+    courses = svc.list_all_courses()
     lecturer = get_current_lecturer()
     return render_template("portal_home.html", courses=courses, lecturer=lecturer)
 
@@ -472,7 +472,6 @@ def teacher_portal():
 def student_app():
     """Dedicated Multi-Course Student Mobile/Web App."""
     svc = _get_course_service()
-    svc.ensure_default_school_courses()
     device_mgr: DeviceBindingManager = current_app.extensions["device_mgr"]
 
     cookie_val = request.cookies.get(DeviceBindingManager.COOKIE_NAME)
@@ -516,15 +515,26 @@ def student_app():
                         "attendance_recorded": True,
                     }
 
-    return render_template(
-        "student_app.html",
-        dashboard=dashboard,
-        initial_session_code=active_session_code,
-        initial_course_id=initial_course_id,
-        initial_session_id=initial_session_id,
-        checked_in_banner=checked_in_banner,
-        from_qr_route=checked_in_param,
+    resp = make_response(
+        render_template(
+            "student_app.html",
+            dashboard=dashboard,
+            initial_session_code=active_session_code,
+            initial_course_id=initial_course_id,
+            initial_session_id=initial_session_id,
+            checked_in_banner=checked_in_banner,
+            from_qr_route=checked_in_param,
+        )
     )
+    if cookie_val and dashboard.get("student") is None:
+        resp.delete_cookie(
+            DeviceBindingManager.COOKIE_NAME,
+            path="/",
+            httponly=True,
+            samesite="Lax",
+            secure=request.is_secure,
+        )
+    return resp
 
 
 @courses_bp.get("/api/courses")
@@ -543,7 +553,7 @@ def api_list_courses():
 def api_student_courses_catalog():
     """Public non-PII course catalog for student discovery/enrollment."""
     svc = _get_course_service()
-    courses = svc.ensure_default_school_courses()
+    courses = svc.list_all_courses()
     return jsonify(
         {
             "courses": [
@@ -811,7 +821,6 @@ def api_student_login():
     db = current_app.extensions["db_session"]
     device_mgr: DeviceBindingManager = current_app.extensions["device_mgr"]
     svc = _get_course_service()
-    svc.ensure_default_school_courses()
 
     by_email = (
         db.query(Student)

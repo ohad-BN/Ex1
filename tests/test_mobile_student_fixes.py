@@ -22,6 +22,8 @@ def mobile_app(tmp_path: Path):
     cfg = Config(
         SECRET_KEY="mobile-fix-secret",
         DATABASE_URL=f"sqlite:///{db_file.as_posix()}",
+        UPLOAD_DIR=tmp_path / "uploads",
+        REPORT_DIR=tmp_path / "reports",
     )
     app = create_app(cfg, face_detector=StubDetector())
     app.config["TESTING"] = True
@@ -198,7 +200,10 @@ def test_student_app_renders_mobile_back_button_and_history_guard(mobile_app) ->
 
 
 def test_student_app_removes_join_button_and_loading_text(mobile_app) -> None:
-    """Mobile Student App must omit the + Join bar and all 'Loading ...' placeholder text."""
+    """Mobile Student App omits the legacy auto-join bar & 'Loading ...' placeholders while keeping manual course-number join."""
+    from app.services.course_service import CourseService
+
+    CourseService(mobile_app.extensions["db_session"]).ensure_default_school_courses()
     client = mobile_app.test_client()
     _sign_in_student(client, email="cleanui@ariel.ac.il")
 
@@ -209,6 +214,7 @@ def test_student_app_removes_join_button_and_loading_text(mobile_app) -> None:
     assert 'id="join-code-input"' not in html
     assert "joinCourseByCode" not in html
     assert "Join course by code" not in html
+    assert 'id="join-course-code-input"' in html
     assert "Loading course assignments..." not in html
     assert "Loading lecture summaries..." not in html
 

@@ -32,6 +32,8 @@ def test_app(tmp_path: Path):
     cfg = Config(
         SECRET_KEY="pytest-secret",
         DATABASE_URL=f"sqlite:///{db_file.as_posix()}",
+        UPLOAD_DIR=tmp_path / "uploads",
+        REPORT_DIR=tmp_path / "reports",
         MAX_TASK_WORKERS=2,
     )
     app = create_app(cfg)

@@ -100,6 +100,7 @@ def phone_cam_app(tmp_path: Path):
     app = create_app(cfg, face_detector=StubDetector(count=3))
     yield app
     app.extensions["db_session"].close()
+    app.extensions["task_manager"].shutdown(wait=True)
     app.extensions["db_engine"].dispose()
 
 

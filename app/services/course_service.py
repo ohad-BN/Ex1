@@ -61,6 +61,9 @@ class CourseService:
     def __init__(self, db: Session) -> None:
         self.db = db
 
+    def list_all_courses(self) -> list[Course]:
+        return self.db.query(Course).order_by(Course.id.asc()).all()
+
     def ensure_default_school_courses(self) -> list[Course]:
         """Ensure at least two demo school courses exist (owned by the default demo lecturer)."""
         demo_lecturer = self.db.query(Lecturer).filter_by(email="boaz@ariel.ac.il").one_or_none()
@@ -703,7 +706,7 @@ class CourseService:
             else:
                 query = query.filter_by(lecturer_id=lecturer_id)
             return query.order_by(Course.id.desc()).all()
-        return self.ensure_default_school_courses()
+        return self.list_all_courses()
 
     def create_course(
         self,
@@ -1244,7 +1247,6 @@ class CourseService:
         self, student_id: Optional[int]
     ) -> dict[str, Any]:
         """Build the multi-course Student App state for a logged-in student."""
-        self.ensure_default_school_courses()
         student = self.db.get(Student, student_id) if student_id else None
 
         all_courses = self.db.query(Course).order_by(Course.id.asc()).all()

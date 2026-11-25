@@ -29,6 +29,8 @@ def overhaul_app(tmp_path: Path):
     cfg = Config(
         SECRET_KEY="overhaul-isolation-and-ux-secret-key",
         DATABASE_URL=f"sqlite:///{db_file.as_posix()}",
+        UPLOAD_DIR=tmp_path / "uploads",
+        REPORT_DIR=tmp_path / "reports",
         GEMINI_API_KEY="",
     )
     app = create_app(cfg, face_detector=StubDetector())
@@ -295,6 +297,7 @@ def test_lecturer_summary_upload_blocks_empty_and_uploads_markdown(overhaul_app)
     assert b"Abstraction separates interface" in dl.data
 
 
+@pytest.mark.slow
 def test_real_scrfd_closeup_single_face_detection() -> None:
     """Verify SCRFD detects faces accurately even in a tight single-person crop without hanging."""
     sample_path = Path("data/samples/classroom_ariel.jpg")
@@ -318,8 +321,11 @@ def test_real_scrfd_closeup_single_face_detection() -> None:
     assert len(closeup_boxes) >= 1
 
 
-def test_enrollment_request_lecturer_roster_approval_and_rejection(overhaul_app) -> None:
-    """Student Request to Join creates pending enrollment; lecturer Roster Approve unlocks access, Reject blocks."""
+@pytest.mark.parametrize("lookup_by", ["course_id", "course_number"])
+def test_enrollment_request_lecturer_roster_approval_and_rejection(
+    overhaul_app, lookup_by: str
+) -> None:
+    """Student Request to Join (by course_id or case-insensitive course_number) gates access until Roster Approve/Reject."""
     prof = overhaul_app.test_client()
     stu_a = overhaul_app.test_client()
     stu_b = overhaul_app.test_client()
@@ -327,7 +333,7 @@ def test_enrollment_request_lecturer_roster_approval_and_rejection(overhaul_app)
     _reg_lecturer(prof, "Prof. Roster Gate", "roster.gate@ariel.ac.il")
     course = prof.post(
         "/api/courses",
-        json={"course_code": "RST301", "name": "Distributed Systems", "initial_lecture_title": "Lecture 1"},
+        json={"course_code": "RST-301", "name": "Distributed Systems", "initial_lecture_title": "Lecture 1"},
     ).get_json()
     cid = course["id"]
     prof.post(f"/api/courses/{cid}/assignments", json={"title": "Consensus Lab", "rubric_text": ""})
@@ -335,11 +341,20 @@ def test_enrollment_request_lecturer_roster_approval_and_rejection(overhaul_app)
     assert stu_a.post("/api/student/login", json={"full_name": "Approved Stu", "student_id_number": "311222333"}).status_code == 200
     assert stu_b.post("/api/student/login", json={"full_name": "Rejected Stu", "student_id_number": "344555666"}).status_code == 200
 
-    # 1. Both students request to join
-    req_a = stu_a.post("/api/student/enroll-request", json={"course_id": cid})
-    req_b = stu_b.post("/api/student/enroll-request", json={"course_id": cid})
+    if lookup_by == "course_number":
+        bad_req = stu_a.post("/api/student/enroll-request", json={"course_number": "DOES-NOT-EXIST"})
+        assert bad_req.status_code == 404
+        req_payload = {"course_number": "rst-301"}
+    else:
+        req_payload = {"course_id": cid}
+
+    # 1. Both students request to join -> stays in pending_courses, excluded from my_courses
+    req_a = stu_a.post("/api/student/enroll-request", json=req_payload)
+    req_b = stu_b.post("/api/student/enroll-request", json=req_payload)
     assert req_a.status_code == 202 and req_a.get_json()["status"] == "pending"
     assert req_b.status_code == 202 and req_b.get_json()["status"] == "pending"
+    assert any(p["id"] == cid for p in req_a.get_json()["dashboard"]["pending_courses"])
+    assert all(m["id"] != cid for m in req_a.get_json()["dashboard"]["my_courses"])
 
     # Pending requests show up in Lecturer Roster API, while students remain blocked (403) until approved
     pending = prof.get(f"/api/courses/{cid}/enrollment-requests").get_json()["pending_requests"]
@@ -350,16 +365,17 @@ def test_enrollment_request_lecturer_roster_approval_and_rejection(overhaul_app)
     stu_a_id = stu_a.get("/api/student/me").get_json()["student"]["id"]
     stu_b_id = stu_b.get("/api/student/me").get_json()["student"]["id"]
 
-    # 2. Lecturer approves Stu A -> immediate 200 course access + appears in enrolled list
-    app_res = prof.post(f"/api/courses/{cid}/enrollment-requests/{stu_a_id}/approve")
+    # 2. Lecturer approves Stu A -> immediate 200 course access + moves from pending_courses to my_courses
+    app_res = prof.post(f"/api/courses/{cid}/enrollment-requests/{stu_a_id}/approve", json={})
     assert app_res.status_code == 200
     assert app_res.get_json()["status"] == "approved"
     assert stu_a.get(f"/api/courses/{cid}/assignments").status_code == 200
     dash_a = stu_a.get("/api/student/me").get_json()
     assert len(dash_a["my_courses"]) == 1 and dash_a["my_courses"][0]["id"] == cid
+    assert all(p["id"] != cid for p in dash_a["pending_courses"])
 
     # 3. Lecturer rejects Stu B -> still 403 and catalog shows rejected
-    rej_res = prof.post(f"/api/courses/{cid}/enrollment-requests/{stu_b_id}/reject")
+    rej_res = prof.post(f"/api/courses/{cid}/enrollment-requests/{stu_b_id}/reject", json={})
     assert rej_res.status_code == 200
     assert rej_res.get_json()["status"] == "rejected"
     assert stu_b.get(f"/api/courses/{cid}/assignments").status_code == 403
@@ -411,6 +427,7 @@ def test_cross_lecture_chat_switch_lecture_and_blank_rubric(overhaul_app) -> Non
     assert f'SESSION_CODE = "{sess2["session_code"]}"' in html_by_id
 
 
+@pytest.mark.slow
 def test_phone_headcount_png_csrf_and_real_count(tmp_path: Path) -> None:
     """Phone camera PNG upload with CSRF header & valid ctok normalizes to JPEG and runs real SCRFD."""
     sample_path = Path("data/samples/classroom_ariel.jpg")
@@ -422,6 +439,7 @@ def test_phone_headcount_png_csrf_and_real_count(tmp_path: Path) -> None:
         SECRET_KEY="phone-cam-csrf-real-scrfd-secret",
         DATABASE_URL=f"sqlite:///{db_file.as_posix()}",
         UPLOAD_DIR=tmp_path / "uploads",
+        REPORT_DIR=tmp_path / "reports",
         GEMINI_API_KEY="",
         ENABLE_CSRF=True,
     )
@@ -471,6 +489,7 @@ def test_submission_composite_routing_grading_calibration_and_course_isolation(t
         SECRET_KEY="hw-composite-grading-secret",
         DATABASE_URL=f"sqlite:///{db_file.as_posix()}",
         UPLOAD_DIR=tmp_path / "uploads",
+        REPORT_DIR=tmp_path / "reports",
         GEMINI_API_KEY="",
     )
     app = create_app(cfg, face_detector=StubDetector())
@@ -667,6 +686,7 @@ def test_submission_composite_routing_grading_calibration_and_course_isolation(t
         app.extensions["db_engine"].dispose()
 
 
+@pytest.mark.slow
 def test_video_upload_transcription_summary_and_camera_headcount_discrepancy(tmp_path: Path) -> None:
     """Verify video (.mp4) audio extraction, transcription/summary, file+camera headcount, and discrepancy alert/approval."""
     import importlib.util
@@ -713,6 +733,7 @@ def test_video_upload_transcription_summary_and_camera_headcount_discrepancy(tmp
         SECRET_KEY="video-cam-discrepancy-secret",
         DATABASE_URL=f"sqlite:///{db_file.as_posix()}",
         UPLOAD_DIR=tmp_path / "uploads",
+        REPORT_DIR=tmp_path / "reports",
         GEMINI_API_KEY="" if has_fw else "test-video-key",
     )
     llm_override = None if has_fw else GeminiStudioClient(
@@ -827,42 +848,6 @@ def test_video_upload_transcription_summary_and_camera_headcount_discrepancy(tmp
         app.extensions["db_engine"].dispose()
 
 
-def test_manual_course_number_join_request_and_lecturer_approval(overhaul_app) -> None:
-    """Verify students join courses manually via course number (case-insensitive) and trigger lecturer approval flow."""
-    prof = overhaul_app.test_client()
-    _reg_lecturer(prof, "Prof Join", "prof_join@uni.edu")
-    c = prof.post("/api/courses", json={"name": "Networks 101", "course_code": "NET-402", "lecturer_name": "Prof Join"}).get_json()
-
-    stu = overhaul_app.test_client()
-    stu.post("/api/student/login", json={"full_name": "Dana Levi", "student_id_number": "301999111"})
-
-    # Bad course number returns 404
-    r_bad = stu.post("/api/student/enroll-request", json={"course_number": "DOES-NOT-EXIST"})
-    assert r_bad.status_code == 404
-
-    # Case-insensitive course_number sends pending request
-    r_req = stu.post("/api/student/enroll-request", json={"course_number": "net-402"})
-    assert r_req.status_code == 202, r_req.get_data(as_text=True)
-    payload = r_req.get_json()
-    assert payload["status"] == "pending"
-    assert payload["course_id"] == c["id"]
-    assert payload["course_code"] == "NET-402"
-    assert any(p["id"] == c["id"] for p in payload["dashboard"]["pending_courses"])
-    assert all(m["id"] != c["id"] for m in payload["dashboard"]["my_courses"])
-
-    # Lecturer pending list shows Dana Levi
-    pending = prof.get(f"/api/courses/{c['id']}/enrollment-requests").get_json()["pending_requests"]
-    assert len(pending) == 1 and pending[0]["student_id_number"] == "301999111"
-
-    # Approve grants access
-    stu_id = payload["dashboard"]["student"]["id"]
-    r_app = prof.post(f"/api/courses/{c['id']}/enrollment-requests/{stu_id}/approve", json={})
-    assert r_app.status_code == 200
-    me = stu.get("/api/student/me").get_json()
-    assert any(m["id"] == c["id"] for m in me["my_courses"])
-    assert all(p["id"] != c["id"] for p in me["pending_courses"])
-
-
 def test_lecture_summary_draft_publish_and_grouped_assignments_templates(overhaul_app) -> None:
     """Verify draft-only summaries, structured section parsing, publish/unpublish toggle, and course-grouped global assignments."""
     prof = overhaul_app.test_client()
@@ -971,6 +956,7 @@ def test_video_summary_regression_fix_cascade_delete_and_sidebar_tree(tmp_path: 
         SECRET_KEY="regression-cascade-secret",
         DATABASE_URL=f"sqlite:///{db_file.as_posix()}",
         UPLOAD_DIR=tmp_path / "uploads",
+        REPORT_DIR=tmp_path / "reports",
         GEMINI_API_KEY="fake-key",
     )
     app = create_app(cfg, face_detector=StubDetector(), llm_client=fake_llm)
@@ -1044,3 +1030,24 @@ def test_video_summary_regression_fix_cascade_delete_and_sidebar_tree(tmp_path: 
     finally:
         app.extensions["task_manager"].shutdown(wait=True)
         app.extensions["db_engine"].dispose()
+
+
+def test_clean_slate_never_auto_seeds_mock_data(overhaul_app) -> None:
+    """Visiting landing, login, student, and catalog routes must never auto-create demo lecturers or courses."""
+    from app.models import Lecturer
+
+    c = overhaul_app.test_client()
+    assert c.get("/portal").status_code == 200
+    assert c.get("/teacher/login").status_code == 200
+    assert c.get("/student").status_code == 200
+    assert c.get("/api/student/courses/catalog").get_json()["courses"] == []
+    me = c.get("/api/student/me").get_json()
+    assert me["authenticated"] is False
+    assert me["my_courses"] == []
+    assert me["all_courses"] == []
+
+    db = overhaul_app.extensions["db_session"]
+    assert db.query(Lecturer).count() == 0
+    assert db.query(Course).count() == 0
+    assert db.query(ClassSession).count() == 0
+    assert db.query(Student).count() == 0

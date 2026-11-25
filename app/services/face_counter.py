@@ -444,19 +444,27 @@ class TiledSCRFDDetector(FaceDetector):
             return [], image, False
 
         with self._lock:
-            upright_boxes = self._detect_at_threshold_locked(
-                image, self.conf_threshold, include_tiles=True
+            upright_full = self._detect_at_threshold_locked(
+                image, self.conf_threshold, include_tiles=False
             )
+            if len(upright_full) >= 3:
+                upright_boxes = self._detect_at_threshold_locked(
+                    image, self.conf_threshold, include_tiles=True
+                )
+                return upright_boxes, image, False
+            upright_boxes = list(upright_full)
             if not upright_boxes:
                 upright_boxes = self._detect_padded_closeup_locked(
                     image, threshold=self.conf_threshold, pad_ratio=0.35
                 )
-        if upright_boxes:
-            return upright_boxes, image, False
 
-        best_boxes: list[BoundingBox] = []
+        best_boxes: list[BoundingBox] = list(upright_boxes)
         best_img: np.ndarray = image
-        best_score: tuple[int, float] = (0, 0.0)
+        best_rot: bool = False
+        best_score: tuple[int, float] = (
+            len(upright_boxes),
+            sum(b.confidence for b in upright_boxes),
+        )
 
         for rot_code in (
             cv2.ROTATE_90_CLOCKWISE,
@@ -481,9 +489,10 @@ class TiledSCRFDDetector(FaceDetector):
                 best_score = score_key
                 best_boxes = rot_boxes
                 best_img = rot_img
+                best_rot = True
 
         if best_boxes:
-            return best_boxes, best_img, True
+            return best_boxes, best_img, best_rot
 
         # Only after normal orientation & rotations fail, run deep close-up / contrast / gamma recovery upright
         fallback_boxes = self.detect(image)

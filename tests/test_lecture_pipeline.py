@@ -39,6 +39,8 @@ def lecture_app(tmp_path: Path):
     cfg = Config(
         SECRET_KEY="phase7-lecture-secret",
         DATABASE_URL=f"sqlite:///{db_file.as_posix()}",
+        UPLOAD_DIR=tmp_path / "uploads",
+        REPORT_DIR=tmp_path / "reports",
         GEMINI_API_KEY="",
     )
     app = create_app(cfg, face_detector=StubDetector())
@@ -198,7 +200,13 @@ def test_lecture_2pass_correction_chat_crosslink_and_course_endpoint(lecture_app
 def test_vtt_cue_parsing_and_chunked_pass1(tmp_path: Path) -> None:
     """Verify WebVTT cue timestamp parsing and >80-segment chunked Pass-1 correction."""
     db_file = tmp_path / "test_vtt.db"
-    cfg = Config(SECRET_KEY="s", DATABASE_URL=f"sqlite:///{db_file.as_posix()}", GEMINI_API_KEY="")
+    cfg = Config(
+        SECRET_KEY="s",
+        DATABASE_URL=f"sqlite:///{db_file.as_posix()}",
+        UPLOAD_DIR=tmp_path / "uploads",
+        REPORT_DIR=tmp_path / "reports",
+        GEMINI_API_KEY="",
+    )
     app = create_app(cfg, face_detector=StubDetector())
     try:
         svc = LectureSummarizerService(db=app.extensions["db_session"])
@@ -292,6 +300,8 @@ def test_upload_recording_transcribed_and_summarized_by_gemini_api(tmp_path: Pat
     cfg = Config(
         SECRET_KEY="gemini-audio-secret",
         DATABASE_URL=f"sqlite:///{db_file.as_posix()}",
+        UPLOAD_DIR=tmp_path / "uploads",
+        REPORT_DIR=tmp_path / "reports",
         GEMINI_API_KEY="fake-gemini-key",
     )
     app = create_app(cfg, face_detector=StubDetector(), llm_client=gemini_client)

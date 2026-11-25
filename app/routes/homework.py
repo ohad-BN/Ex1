@@ -444,9 +444,20 @@ def download_submission_file(submission_id: int):
         if course is not None and course.lecturer_id is not None:
             lec = get_current_lecturer()
             st_id = _resolve_student_id({})
-            allowed = (
-                (lec is not None and is_lecturer_authorized_for_course(db, course, lec.id))
-                or (lec is None and st_id is not None and int(st_id) == int(sub.student_id))
+            is_authorized_lec = lec is not None and is_lecturer_authorized_for_course(
+                db, course, lec.id
+            )
+            if is_authorized_lec and (sub.submission_type or "comparative") != "final":
+                return (
+                    jsonify(
+                        {
+                            "error": "Comparative practice submissions are private to the student."
+                        }
+                    ),
+                    403,
+                )
+            allowed = is_authorized_lec or (
+                lec is None and st_id is not None and int(st_id) == int(sub.student_id)
             )
             if not allowed:
                 return jsonify({"error": "Access denied for this homework submission."}), 403
@@ -470,9 +481,20 @@ def generate_submission_deep_review(submission_id: int):
         if course is not None and course.lecturer_id is not None:
             lec = get_current_lecturer()
             st_id = _resolve_student_id({})
-            allowed = (
-                (lec is not None and is_lecturer_authorized_for_course(db, course, lec.id))
-                or (lec is None and st_id is not None and int(st_id) == int(sub.student_id))
+            is_authorized_lec = lec is not None and is_lecturer_authorized_for_course(
+                db, course, lec.id
+            )
+            if is_authorized_lec and (sub.submission_type or "comparative") != "final":
+                return (
+                    jsonify(
+                        {
+                            "error": "Comparative practice submissions are private to the student."
+                        }
+                    ),
+                    403,
+                )
+            allowed = is_authorized_lec or (
+                lec is None and st_id is not None and int(st_id) == int(sub.student_id)
             )
             if not allowed:
                 return jsonify({"error": "Access denied for this homework submission."}), 403
